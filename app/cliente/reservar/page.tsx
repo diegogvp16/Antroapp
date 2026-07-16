@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BackLink } from "@/components/back-link";
 import {
   PersonasStepper,
   MIN_PERSONAS,
@@ -61,6 +62,7 @@ function ReservarPage() {
   const [reserva, setReserva] = useState<ReservaResumen | null>(null);
 
   const minDate = todayISO();
+  const backHref = club ? `/cliente/${club.id}` : "/cliente";
 
   useEffect(() => {
     if (!clubId) {
@@ -164,7 +166,8 @@ function ReservarPage() {
 
   if (!clubId) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+        <BackLink href={backHref} />
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>Selecciona un antro primero</CardTitle>
@@ -187,7 +190,8 @@ function ReservarPage() {
 
   if (loadingClub) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+        <BackLink href={backHref} />
         <p className="text-sm text-muted-foreground">Cargando...</p>
       </div>
     );
@@ -195,7 +199,8 @@ function ReservarPage() {
 
   if (clubNotFound || !club) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+        <BackLink href={backHref} />
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>Antro no encontrado</CardTitle>
@@ -222,7 +227,8 @@ function ReservarPage() {
     )}`;
 
     return (
-      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+        <BackLink href={backHref} />
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>¡Reserva confirmada!</CardTitle>
@@ -265,7 +271,8 @@ function ReservarPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+    <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <BackLink href={backHref} />
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Reservar en {club.nombre}</CardTitle>

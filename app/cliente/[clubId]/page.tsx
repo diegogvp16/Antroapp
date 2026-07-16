@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/back-link";
 import {
   Card,
   CardContent,
@@ -57,7 +58,8 @@ export default function ClubDetailPage() {
   }, [clubId]);
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+    <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <BackLink href="/cliente" />
       <Card className="w-full max-w-sm overflow-hidden p-0">
         {loading ? (
           <CardContent className="px-6 py-10 text-center text-muted-foreground">
