@@ -157,7 +157,7 @@ export default function RpPanelPage() {
 
   const whatsappHref = reserva
     ? `https://wa.me/?text=${encodeURIComponent(
-        `Aquí está tu reservación en Antro Demo para ${reserva.cliente_nombre} el ${reserva.fecha} (${reserva.personas} personas). Muestra este código al llegar: ${reserva.qr_code}`,
+        `Aquí está tu reservación en Antro Demo para ${reserva.cliente_nombre} el ${reserva.fecha} (${reserva.personas} personas). Ábrelo aquí para ver tu código: ${window.location.origin}/r/${reserva.qr_code}`,
       )}`
     : "#";
 

@@ -16,10 +16,12 @@ import {
 } from "@/components/ui/card";
 
 const SESSION_KEY = "antroapp_rp_session";
+const MIN_PASSWORD_LENGTH = 4;
 
-export default function RpLoginPage() {
+export default function RpSignupPage() {
   const router = useRouter();
   const [nombre, setNombre] = useState("");
+  const [telefono, setTelefono] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,25 +30,34 @@ export default function RpLoginPage() {
     e.preventDefault();
     setError(null);
 
-    if (!nombre.trim() || !password) {
-      setError("Ingresa tu nombre y contraseña.");
+    if (!nombre.trim() || !telefono.trim() || !password) {
+      setError("Por favor completa todos los campos.");
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(
+        `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`,
+      );
       return;
     }
 
     setSubmitting(true);
     try {
       const supabase = createClient();
-      const { data, error: queryError } = await supabase
+      const { data, error: insertError } = await supabase
         .from("profiles")
+        .insert({
+          nombre: nombre.trim(),
+          telefono: telefono.trim(),
+          password,
+          role: "rp",
+        })
         .select("id, nombre")
-        .eq("nombre", nombre.trim())
-        .eq("password", password)
-        .eq("role", "rp")
-        .maybeSingle();
+        .single();
 
-      if (queryError || !data) {
-        setError("Nombre o contraseña incorrectos.");
-        return;
+      if (insertError || !data) {
+        console.error("Supabase insert error (profiles):", insertError);
+        throw insertError;
       }
 
       localStorage.setItem(
@@ -56,7 +67,9 @@ export default function RpLoginPage() {
       router.push("/rp/panel");
     } catch (err) {
       console.error(err);
-      setError("Ocurrió un error. Intenta de nuevo.");
+      setError(
+        "No pudimos crear tu cuenta. Intenta de nuevo en unos segundos.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -66,10 +79,8 @@ export default function RpLoginPage() {
     <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Acceso RP</CardTitle>
-          <CardDescription>
-            Ingresa con tu nombre y contraseña.
-          </CardDescription>
+          <CardTitle>Registro RP</CardTitle>
+          <CardDescription>Crea tu cuenta para empezar a reservar.</CardDescription>
         </CardHeader>
         <CardContent className="px-6 pb-6">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -79,6 +90,16 @@ export default function RpLoginPage() {
                 id="nombre"
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="telefono">Teléfono</Label>
+              <Input
+                id="telefono"
+                type="tel"
+                value={telefono}
+                onChange={(e) => setTelefono(e.target.value)}
                 required
               />
             </div>
@@ -105,13 +126,13 @@ export default function RpLoginPage() {
               className="mt-2 h-14 w-full text-base"
               disabled={submitting}
             >
-              {submitting ? "Entrando..." : "Entrar"}
+              {submitting ? "Registrando..." : "Registrarme"}
             </Button>
 
             <p className="text-center text-sm text-muted-foreground">
-              ¿No tienes cuenta?{" "}
-              <Link href="/rp/signup" className="font-medium text-foreground underline underline-offset-4">
-                Regístrate aquí
+              ¿Ya tienes cuenta?{" "}
+              <Link href="/rp/login" className="font-medium text-foreground underline underline-offset-4">
+                Inicia sesión aquí
               </Link>
             </p>
           </form>

@@ -107,6 +107,10 @@ export default function ReservarPage() {
   }
 
   if (reserva) {
+    const whatsappHref = `https://wa.me/?text=${encodeURIComponent(
+      `Aquí está tu reservación en Antro Demo para ${reserva.cliente_nombre} el ${reserva.fecha} (${reserva.personas} personas). Ábrelo aquí para ver tu código: ${window.location.origin}/r/${reserva.qr_code}`,
+    )}`;
+
     return (
       <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
         <Card className="w-full max-w-sm">
@@ -134,6 +138,16 @@ export default function ReservarPage() {
                 {reserva.personas}
               </p>
             </div>
+            <Button
+              render={
+                <a href={whatsappHref} target="_blank" rel="noopener noreferrer" />
+              }
+              nativeButton={false}
+              size="lg"
+              className="h-14 w-full text-base"
+            >
+              Compartir por WhatsApp
+            </Button>
           </CardContent>
         </Card>
       </div>
