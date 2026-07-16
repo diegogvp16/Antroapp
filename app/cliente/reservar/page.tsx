@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -18,6 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import type { Club } from "@/types";
 
 function todayISO() {
   const now = new Date();
@@ -32,7 +35,22 @@ interface ReservaResumen {
   qr_code: string;
 }
 
-export default function ReservarPage() {
+export default function ReservarPageWrapper() {
+  return (
+    <Suspense fallback={null}>
+      <ReservarPage />
+    </Suspense>
+  );
+}
+
+function ReservarPage() {
+  const searchParams = useSearchParams();
+  const clubId = searchParams.get("club");
+
+  const [club, setClub] = useState<Club | null>(null);
+  const [loadingClub, setLoadingClub] = useState(true);
+  const [clubNotFound, setClubNotFound] = useState(false);
+
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
   const [fecha, setFecha] = useState("");
@@ -44,11 +62,48 @@ export default function ReservarPage() {
 
   const minDate = todayISO();
 
+  useEffect(() => {
+    if (!clubId) {
+      setLoadingClub(false);
+      return;
+    }
+
+    async function fetchClub() {
+      setLoadingClub(true);
+      setClubNotFound(false);
+      try {
+        const supabase = createClient();
+        const { data, error: queryError } = await supabase
+          .from("clubs")
+          .select("*")
+          .eq("id", clubId)
+          .maybeSingle();
+
+        if (queryError || !data) {
+          setClubNotFound(true);
+          setClub(null);
+        } else {
+          setClub(data as Club);
+        }
+      } catch (err) {
+        console.error("Error cargando club:", err);
+        setClubNotFound(true);
+      } finally {
+        setLoadingClub(false);
+      }
+    }
+
+    fetchClub();
+  }, [clubId]);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setDebugError(null);
 
+    if (!club) {
+      return;
+    }
     if (!nombre.trim() || !telefono.trim() || !fecha) {
       setError("Por favor completa todos los campos.");
       return;
@@ -72,6 +127,7 @@ export default function ReservarPage() {
         cliente_nombre: nombre.trim(),
         cliente_telefono: telefono.trim(),
         rp_id: null,
+        club_id: club.id,
         source: "organica",
         fecha,
         personas,
@@ -106,9 +162,63 @@ export default function ReservarPage() {
     }
   }
 
+  if (!clubId) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>Selecciona un antro primero</CardTitle>
+            <CardDescription>
+              Necesitas elegir un antro antes de reservar.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-6 pb-6">
+            <Link
+              href="/cliente"
+              className="text-sm font-medium text-foreground underline underline-offset-4"
+            >
+              Ver antros disponibles
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (loadingClub) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+        <p className="text-sm text-muted-foreground">Cargando...</p>
+      </div>
+    );
+  }
+
+  if (clubNotFound || !club) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>Antro no encontrado</CardTitle>
+            <CardDescription>
+              Este antro no existe o ya no está disponible.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-6 pb-6">
+            <Link
+              href="/cliente"
+              className="text-sm font-medium text-foreground underline underline-offset-4"
+            >
+              Ver antros disponibles
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (reserva) {
     const whatsappHref = `https://wa.me/?text=${encodeURIComponent(
-      `Aquí está tu reservación en Antro Demo para ${reserva.cliente_nombre} el ${reserva.fecha} (${reserva.personas} personas). Ábrelo aquí para ver tu código: ${window.location.origin}/r/${reserva.qr_code}`,
+      `Aquí está tu reservación en ${club.nombre} para ${reserva.cliente_nombre} el ${reserva.fecha} (${reserva.personas} personas). Ábrelo aquí para ver tu código: ${window.location.origin}/r/${reserva.qr_code}`,
     )}`;
 
     return (
@@ -158,8 +268,10 @@ export default function ReservarPage() {
     <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Reservar en Antro Demo</CardTitle>
-          <CardDescription>Llena tus datos para tu reserva.</CardDescription>
+          <CardTitle>Reservar en {club.nombre}</CardTitle>
+          <CardDescription>
+            Llena tus datos para tu reserva. Depósito: ${club.deposito_monto}
+          </CardDescription>
         </CardHeader>
         <CardContent className="px-6 pb-6">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">

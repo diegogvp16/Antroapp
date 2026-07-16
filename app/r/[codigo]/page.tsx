@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -108,6 +110,21 @@ export default function ReservaPublicaPage() {
                   <span className="text-muted-foreground">Personas:</span>{" "}
                   {reserva.personas}
                 </p>
+              </div>
+
+              <div className="w-full border-t border-border pt-6 text-center">
+                <p className="text-sm text-muted-foreground">
+                  ¿No conoces un RP? Explora los antros disponibles en
+                  AntroApp
+                </p>
+                <Button
+                  render={<Link href="/cliente" />}
+                  nativeButton={false}
+                  variant="outline"
+                  className="mt-3 w-full"
+                >
+                  Ver antros disponibles
+                </Button>
               </div>
             </CardContent>
           </>
