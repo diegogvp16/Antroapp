@@ -13,7 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { Club } from "@/types";
+import type { Club, ClubPhoto } from "@/types";
 
 export default function ClubDetailPage() {
   const params = useParams<{ clubId: string }>();
@@ -22,6 +22,7 @@ export default function ClubDetailPage() {
   const [club, setClub] = useState<Club | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [photos, setPhotos] = useState<ClubPhoto[]>([]);
 
   useEffect(() => {
     async function fetchClub() {
@@ -38,8 +39,22 @@ export default function ClubDetailPage() {
         if (error || !data) {
           setNotFound(true);
           setClub(null);
+          return;
+        }
+
+        const loadedClub = data as Club;
+        setClub(loadedClub);
+
+        const { data: photosData, error: photosError } = await supabase
+          .from("club_photos")
+          .select("*")
+          .eq("club_id", loadedClub.id)
+          .order("orden", { ascending: true });
+
+        if (photosError) {
+          console.error("Error cargando fotos del club:", photosError);
         } else {
-          setClub(data as Club);
+          setPhotos((photosData ?? []) as ClubPhoto[]);
         }
       } catch (err) {
         console.error("Error cargando club:", err);
@@ -84,7 +99,21 @@ export default function ClubDetailPage() {
           </>
         ) : (
           <>
-            <div className="h-40 w-full bg-gradient-to-br from-fuchsia-600 via-purple-600 to-indigo-600" />
+            {photos.length > 0 ? (
+              <div className="flex h-40 w-full gap-1 overflow-x-auto">
+                {photos.map((photo) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={photo.id}
+                    src={photo.url}
+                    alt=""
+                    className="h-40 w-56 flex-shrink-0 object-cover"
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="h-40 w-full bg-gradient-to-br from-fuchsia-600 via-purple-600 to-indigo-600" />
+            )}
             <CardHeader className="px-6 pt-5">
               <CardTitle className="text-2xl">{club.nombre}</CardTitle>
               <CardDescription>{club.direccion}</CardDescription>

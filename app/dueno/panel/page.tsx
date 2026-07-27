@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { Club, Profile } from "@/types";
+import type { Club, ClubPhoto, Profile } from "@/types";
 
 const SELECT_CLASSES =
   "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30";
@@ -49,6 +49,11 @@ export default function DuenoPanelPage() {
   const [staffSubmitting, setStaffSubmitting] = useState(false);
   const [staffError, setStaffError] = useState<string | null>(null);
   const [personal, setPersonal] = useState<Personal[]>([]);
+
+  const [photos, setPhotos] = useState<ClubPhoto[]>([]);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadSession() {
@@ -132,11 +137,28 @@ export default function DuenoPanelPage() {
     }
   }
 
+  async function fetchPhotos(clubId: string) {
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("club_photos")
+        .select("*")
+        .eq("club_id", clubId)
+        .order("orden", { ascending: true });
+
+      if (error) throw error;
+      setPhotos((data ?? []) as ClubPhoto[]);
+    } catch (err) {
+      console.error("Error cargando fotos:", err);
+    }
+  }
+
   useEffect(() => {
     if (checkingSession) return;
     fetchClub().then((loadedClub) => {
       if (loadedClub) {
         fetchPersonal(loadedClub.id);
+        fetchPhotos(loadedClub.id);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,6 +286,80 @@ export default function DuenoPanelPage() {
       );
     } finally {
       setStaffSubmitting(false);
+    }
+  }
+
+  async function handleUploadPhotos(e: ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0 || !club) return;
+
+    setPhotoError(null);
+    setUploadingPhotos(true);
+    try {
+      const supabase = createClient();
+      let nextOrden =
+        photos.length > 0 ? Math.max(...photos.map((p) => p.orden)) + 1 : 0;
+
+      for (const file of Array.from(files)) {
+        const storagePath = `${club.id}/${crypto.randomUUID()}-${file.name}`;
+        const { error: uploadError } = await supabase.storage
+          .from("club-photos")
+          .upload(storagePath, file);
+
+        if (uploadError) throw uploadError;
+
+        const {
+          data: { publicUrl },
+        } = supabase.storage.from("club-photos").getPublicUrl(storagePath);
+
+        const { error: insertError } = await supabase
+          .from("club_photos")
+          .insert({
+            club_id: club.id,
+            url: publicUrl,
+            storage_path: storagePath,
+            orden: nextOrden,
+          });
+
+        if (insertError) throw insertError;
+
+        nextOrden += 1;
+      }
+
+      await fetchPhotos(club.id);
+    } catch (err) {
+      console.error("Error subiendo fotos:", err);
+      setPhotoError("No pudimos subir una o más fotos. Intenta de nuevo.");
+    } finally {
+      setUploadingPhotos(false);
+      e.target.value = "";
+    }
+  }
+
+  async function handleDeletePhoto(photo: ClubPhoto) {
+    setPhotoError(null);
+    setDeletingPhotoId(photo.id);
+    try {
+      const supabase = createClient();
+      const { error: storageError } = await supabase.storage
+        .from("club-photos")
+        .remove([photo.storage_path]);
+
+      if (storageError) throw storageError;
+
+      const { error: deleteError } = await supabase
+        .from("club_photos")
+        .delete()
+        .eq("id", photo.id);
+
+      if (deleteError) throw deleteError;
+
+      setPhotos((prev) => prev.filter((p) => p.id !== photo.id));
+    } catch (err) {
+      console.error("Error borrando foto:", err);
+      setPhotoError("No pudimos borrar la foto. Intenta de nuevo.");
+    } finally {
+      setDeletingPhotoId(null);
     }
   }
 
@@ -486,6 +582,61 @@ export default function DuenoPanelPage() {
                     </span>
                   </CardContent>
                 </Card>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="flex flex-col gap-4">
+          <h2 className="text-lg font-semibold">Fotos de mi antro</h2>
+          <Card>
+            <CardContent className="flex flex-col gap-3 px-6 py-6">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="photos">Subir fotos</Label>
+                <input
+                  id="photos"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleUploadPhotos}
+                  disabled={uploadingPhotos}
+                  className="text-sm"
+                />
+              </div>
+              {uploadingPhotos && (
+                <p className="text-sm text-muted-foreground">Subiendo...</p>
+              )}
+              {photoError && (
+                <p className="text-sm text-destructive" role="alert">
+                  {photoError}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          {photos.length > 0 && (
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+              {photos.map((photo) => (
+                <div
+                  key={photo.id}
+                  className="relative aspect-square overflow-hidden rounded-lg bg-muted"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photo.url}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleDeletePhoto(photo)}
+                    disabled={deletingPhotoId === photo.id}
+                    aria-label="Eliminar foto"
+                    className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80 disabled:opacity-50"
+                  >
+                    ×
+                  </button>
+                </div>
               ))}
             </div>
           )}

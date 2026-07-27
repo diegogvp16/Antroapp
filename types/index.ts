@@ -31,3 +31,12 @@ export interface Club {
   suscripcion_activa: boolean;
   suscripcion_activada_en: string | null;
 }
+
+export interface ClubPhoto {
+  id: string;
+  club_id: string;
+  url: string;
+  storage_path: string;
+  orden: number;
+  created_at: string;
+}
