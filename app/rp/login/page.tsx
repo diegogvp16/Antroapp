@@ -15,11 +15,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-const SESSION_KEY = "antroapp_rp_session";
-
 export default function RpLoginPage() {
   const router = useRouter();
-  const [nombre, setNombre] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,31 +26,25 @@ export default function RpLoginPage() {
     e.preventDefault();
     setError(null);
 
-    if (!nombre.trim() || !password) {
-      setError("Ingresa tu nombre y contraseña.");
+    if (!email.trim() || !password) {
+      setError("Ingresa tu email y contraseña.");
       return;
     }
 
     setSubmitting(true);
     try {
       const supabase = createClient();
-      const { data, error: queryError } = await supabase
-        .from("profiles")
-        .select("id, nombre")
-        .eq("nombre", nombre.trim())
-        .eq("password", password)
-        .eq("role", "rp")
-        .maybeSingle();
+      const { data, error: signInError } =
+        await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
 
-      if (queryError || !data) {
-        setError("Nombre o contraseña incorrectos.");
+      if (signInError || !data.session) {
+        setError("Email o contraseña incorrectos.");
         return;
       }
 
-      localStorage.setItem(
-        SESSION_KEY,
-        JSON.stringify({ id: data.id, nombre: data.nombre }),
-      );
       router.push("/rp/panel");
     } catch (err) {
       console.error(err);
@@ -68,17 +60,18 @@ export default function RpLoginPage() {
         <CardHeader>
           <CardTitle>Acceso RP</CardTitle>
           <CardDescription>
-            Ingresa con tu nombre y contraseña.
+            Ingresa con tu email y contraseña.
           </CardDescription>
         </CardHeader>
         <CardContent className="px-6 pb-6">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="nombre">Nombre</Label>
+              <Label htmlFor="email">Email</Label>
               <Input
-                id="nombre"
-                value={nombre}
-                onChange={(e) => setNombre(e.target.value)}
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
               />
             </div>

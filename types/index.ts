@@ -1,9 +1,10 @@
 export interface Profile {
   id: string;
   nombre: string;
-  telefono: string;
-  role: "rp";
-  password: string;
+  telefono: string | null;
+  role: "cliente" | "rp" | "staff" | "gerente" | "admin";
+  club_id: string | null;
+  created_at: string;
 }
 
 export interface Reservation {

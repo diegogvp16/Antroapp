@@ -15,22 +15,23 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-const SESSION_KEY = "antroapp_rp_session";
-const MIN_PASSWORD_LENGTH = 4;
+const MIN_PASSWORD_LENGTH = 6;
 
 export default function RpSignupPage() {
   const router = useRouter();
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingConfirmation, setPendingConfirmation] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
 
-    if (!nombre.trim() || !telefono.trim() || !password) {
+    if (!nombre.trim() || !telefono.trim() || !email.trim() || !password) {
       setError("Por favor completa todos los campos.");
       return;
     }
@@ -44,27 +45,34 @@ export default function RpSignupPage() {
     setSubmitting(true);
     try {
       const supabase = createClient();
-      const { data, error: insertError } = await supabase
-        .from("profiles")
-        .insert({
-          nombre: nombre.trim(),
-          telefono: telefono.trim(),
+      const { data: signUpData, error: signUpError } =
+        await supabase.auth.signUp({
+          email: email.trim(),
           password,
-          role: "rp",
-        })
-        .select("id, nombre")
-        .single();
+        });
 
-      if (insertError || !data) {
-        console.error("Supabase insert error (profiles):", insertError);
-        throw insertError;
+      if (signUpError || !signUpData.user) {
+        console.error("Supabase signUp error:", signUpError);
+        throw signUpError;
       }
 
-      localStorage.setItem(
-        SESSION_KEY,
-        JSON.stringify({ id: data.id, nombre: data.nombre }),
-      );
-      router.push("/rp/panel");
+      const { error: profileError } = await supabase.from("profiles").insert({
+        id: signUpData.user.id,
+        nombre: nombre.trim(),
+        telefono: telefono.trim(),
+        role: "rp",
+      });
+
+      if (profileError) {
+        console.error("Supabase insert error (profiles):", profileError);
+        throw profileError;
+      }
+
+      if (signUpData.session) {
+        router.push("/rp/panel");
+      } else {
+        setPendingConfirmation(true);
+      }
     } catch (err) {
       console.error(err);
       setError(
@@ -73,6 +81,30 @@ export default function RpSignupPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (pendingConfirmation) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>Cuenta creada</CardTitle>
+            <CardDescription>
+              Revisa tu correo para confirmar tu cuenta antes de iniciar
+              sesión.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-6 pb-6">
+            <Link
+              href="/rp/login"
+              className="text-sm font-medium text-foreground underline underline-offset-4"
+            >
+              Ir a iniciar sesión
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -100,6 +132,16 @@ export default function RpSignupPage() {
                 type="tel"
                 value={telefono}
                 onChange={(e) => setTelefono(e.target.value)}
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
               />
             </div>

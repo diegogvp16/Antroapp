@@ -20,8 +20,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-const SESSION_KEY = "antroapp_rp_session";
-
 interface RpSession {
   id: string;
   nombre: string;
@@ -57,22 +55,40 @@ export default function RpPanelPage() {
   const minDate = todayISO();
 
   useEffect(() => {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) {
-      router.replace("/rp/login");
-      return;
-    }
-    try {
-      setSession(JSON.parse(raw));
+    async function loadSession() {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.replace("/rp/login");
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, nombre")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (profileError || !profile) {
+        console.error("Error cargando perfil RP:", profileError);
+        await supabase.auth.signOut();
+        router.replace("/rp/login");
+        return;
+      }
+
+      setSession({ id: profile.id, nombre: profile.nombre });
       setCheckingSession(false);
-    } catch {
-      localStorage.removeItem(SESSION_KEY);
-      router.replace("/rp/login");
     }
+
+    loadSession();
   }, [router]);
 
-  function handleLogout() {
-    localStorage.removeItem(SESSION_KEY);
+  async function handleLogout() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
     router.replace("/rp/login");
   }
 
