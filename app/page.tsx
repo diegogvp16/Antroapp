@@ -33,7 +33,7 @@ export default function Home() {
             Soy RP
           </Button>
           <Button
-            render={<Link href="/antro" />}
+            render={<Link href="/staff/login" />}
             nativeButton={false}
             size="lg"
             variant="secondary"

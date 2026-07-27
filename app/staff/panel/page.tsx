@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -40,13 +41,53 @@ const SOURCE_CLASSES: Record<Reservation["source"], string> = {
   rp: "border-transparent bg-purple-100 text-purple-800 dark:bg-purple-500/20 dark:text-purple-300",
 };
 
-export default function AntroPage() {
+export default function StaffPanelPage() {
+  const router = useRouter();
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [clubId, setClubId] = useState<string | null>(null);
+  const [clubNombre, setClubNombre] = useState("");
+
   const [reservas, setReservas] = useState<Reservation[]>([]);
   const [rpNombres, setRpNombres] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchReservas = useCallback(async () => {
+  useEffect(() => {
+    async function loadSession() {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.replace("/staff/login");
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, club_id")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (
+        profileError ||
+        !profile ||
+        (profile.role !== "staff" && profile.role !== "gerente") ||
+        !profile.club_id
+      ) {
+        router.replace("/staff/login");
+        return;
+      }
+
+      setClubId(profile.club_id);
+      setCheckingSession(false);
+    }
+
+    loadSession();
+  }, [router]);
+
+  const fetchReservas = useCallback(async (targetClubId: string) => {
     setLoading(true);
     setError(null);
     try {
@@ -57,6 +98,7 @@ export default function AntroPage() {
         .from("reservations")
         .select("*")
         .eq("fecha", hoy)
+        .eq("club_id", targetClubId)
         .order("created_at", { ascending: false });
 
       if (queryError) {
@@ -101,8 +143,31 @@ export default function AntroPage() {
   }, []);
 
   useEffect(() => {
-    fetchReservas();
-  }, [fetchReservas]);
+    if (!clubId) return;
+
+    async function fetchClubNombre() {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("clubs")
+        .select("nombre")
+        .eq("id", clubId)
+        .maybeSingle();
+      if (data) setClubNombre(data.nombre);
+    }
+
+    fetchClubNombre();
+    fetchReservas(clubId);
+  }, [clubId, fetchReservas]);
+
+  async function handleLogout() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.replace("/staff/login");
+  }
+
+  if (checkingSession) {
+    return null;
+  }
 
   const totalReservas = reservas.length;
   const totalOrganicas = reservas.filter((r) => r.source === "organica").length;
@@ -115,20 +180,29 @@ export default function AntroPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-zinc-950 dark:text-zinc-50">
-              Panel del Antro
+              Panel de {clubNombre || "tu antro"}
             </h1>
             <p className="text-sm text-muted-foreground">
-              Reservas de esta noche · Antro Demo
+              Reservas de esta noche
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={fetchReservas}
-            disabled={loading}
-          >
-            {loading ? "Actualizando..." : "Actualizar"}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => clubId && fetchReservas(clubId)}
+              disabled={loading}
+            >
+              {loading ? "Actualizando..." : "Actualizar"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleLogout}
+            >
+              Cerrar sesión
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
