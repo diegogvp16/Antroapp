@@ -25,7 +25,8 @@ export default function ClientePage() {
         const supabase = createClient();
         const { data, error: queryError } = await supabase
           .from("clubs")
-          .select("*");
+          .select("*")
+          .eq("suscripcion_activa", true);
 
         if (queryError) {
           throw queryError;

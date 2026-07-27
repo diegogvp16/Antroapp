@@ -2,7 +2,7 @@ export interface Profile {
   id: string;
   nombre: string;
   telefono: string | null;
-  role: "cliente" | "rp" | "staff" | "gerente" | "admin";
+  role: "cliente" | "rp" | "staff" | "gerente" | "admin" | "dueno";
   club_id: string | null;
   created_at: string;
 }
@@ -27,4 +27,7 @@ export interface Club {
   direccion: string;
   horario: string;
   deposito_monto: number;
+  dueno_id: string | null;
+  suscripcion_activa: boolean;
+  suscripcion_activada_en: string | null;
 }
