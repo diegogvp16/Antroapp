@@ -50,3 +50,10 @@ export interface ClubTable {
   capacidad: number;
   created_at: string;
 }
+
+export interface ConsumptionEntry {
+  id: string;
+  reservation_id: string;
+  monto: number;
+  created_at: string;
+}

@@ -15,16 +15,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { ClubTable, Reservation } from "@/types";
+import type { ClubTable, ConsumptionEntry, Reservation } from "@/types";
 
 const QR_READER_ELEMENT_ID = "qr-reader";
 
 const SELECT_CLASSES =
   "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30";
 
-interface AssignFormValue {
-  mesaId: string;
-  consumo: string;
+function formatHora(iso: string) {
+  return new Date(iso).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 type ScanState =
@@ -82,11 +84,24 @@ export default function StaffPanelPage() {
   const scanLockRef = useRef(false);
 
   const [tables, setTables] = useState<ClubTable[]>([]);
-  const [assignForms, setAssignForms] = useState<Record<string, AssignFormValue>>(
+  const [mesaSelections, setMesaSelections] = useState<Record<string, string>>(
     {},
   );
   const [assigningId, setAssigningId] = useState<string | null>(null);
   const [assignError, setAssignError] = useState<Record<string, string>>({});
+
+  const [consumptionEntries, setConsumptionEntries] = useState<
+    Record<string, ConsumptionEntry[]>
+  >({});
+  const [consumptionInputs, setConsumptionInputs] = useState<
+    Record<string, string>
+  >({});
+  const [addingConsumptionId, setAddingConsumptionId] = useState<
+    string | null
+  >(null);
+  const [consumptionError, setConsumptionError] = useState<
+    Record<string, string>
+  >({});
 
   useEffect(() => {
     async function loadSession() {
@@ -143,6 +158,32 @@ export default function StaffPanelPage() {
 
       const rows = (data ?? []) as Reservation[];
       setReservas(rows);
+
+      const reservationIdsWithMesa = rows
+        .filter((r) => r.mesa_id)
+        .map((r) => r.id);
+
+      if (reservationIdsWithMesa.length > 0) {
+        const { data: entriesData, error: entriesError } = await supabase
+          .from("consumption_entries")
+          .select("*")
+          .in("reservation_id", reservationIdsWithMesa)
+          .order("created_at", { ascending: true });
+
+        if (entriesError) {
+          console.error("Error cargando consumo:", entriesError);
+        } else {
+          const grouped: Record<string, ConsumptionEntry[]> = {};
+          for (const entry of (entriesData ?? []) as ConsumptionEntry[]) {
+            const list = grouped[entry.reservation_id] ?? [];
+            list.push(entry);
+            grouped[entry.reservation_id] = list;
+          }
+          setConsumptionEntries(grouped);
+        }
+      } else {
+        setConsumptionEntries({});
+      }
 
       const rpIds = Array.from(
         new Set(
@@ -294,37 +335,14 @@ export default function StaffPanelPage() {
     }
   }
 
-  function getAssignForm(reservaId: string): AssignFormValue {
-    return assignForms[reservaId] ?? { mesaId: "", consumo: "" };
-  }
-
-  function setAssignField(
-    reservaId: string,
-    field: keyof AssignFormValue,
-    value: string,
-  ) {
-    setAssignForms((prev) => ({
-      ...prev,
-      [reservaId]: { ...getAssignForm(reservaId), [field]: value },
-    }));
-  }
-
   async function handleAssignTable(reserva: Reservation) {
-    const form = getAssignForm(reserva.id);
+    const mesaId = mesaSelections[reserva.id] ?? "";
     setAssignError((prev) => ({ ...prev, [reserva.id]: "" }));
 
-    if (!form.mesaId || !form.consumo) {
+    if (!mesaId) {
       setAssignError((prev) => ({
         ...prev,
-        [reserva.id]: "Selecciona una mesa e ingresa el consumo.",
-      }));
-      return;
-    }
-    const consumoNum = Number(form.consumo);
-    if (!Number.isFinite(consumoNum) || consumoNum < 0) {
-      setAssignError((prev) => ({
-        ...prev,
-        [reserva.id]: "El consumo debe ser un número válido.",
+        [reserva.id]: "Selecciona una mesa.",
       }));
       return;
     }
@@ -334,7 +352,7 @@ export default function StaffPanelPage() {
       const supabase = createClient();
       const { error: updateError } = await supabase
         .from("reservations")
-        .update({ mesa_id: form.mesaId, consumo_monto: consumoNum })
+        .update({ mesa_id: mesaId })
         .eq("id", reserva.id);
 
       if (updateError) throw updateError;
@@ -350,6 +368,61 @@ export default function StaffPanelPage() {
       }));
     } finally {
       setAssigningId(null);
+    }
+  }
+
+  async function fetchConsumptionEntriesForReservation(reservationId: string) {
+    try {
+      const supabase = createClient();
+      const { data, error: entriesError } = await supabase
+        .from("consumption_entries")
+        .select("*")
+        .eq("reservation_id", reservationId)
+        .order("created_at", { ascending: true });
+
+      if (entriesError) throw entriesError;
+
+      setConsumptionEntries((prev) => ({
+        ...prev,
+        [reservationId]: (data ?? []) as ConsumptionEntry[],
+      }));
+    } catch (err) {
+      console.error("Error cargando consumo:", err);
+    }
+  }
+
+  async function handleAddConsumption(reserva: Reservation) {
+    const monto = consumptionInputs[reserva.id] ?? "";
+    setConsumptionError((prev) => ({ ...prev, [reserva.id]: "" }));
+
+    const montoNum = Number(monto);
+    if (!monto || !Number.isFinite(montoNum) || montoNum <= 0) {
+      setConsumptionError((prev) => ({
+        ...prev,
+        [reserva.id]: "Ingresa un monto válido.",
+      }));
+      return;
+    }
+
+    setAddingConsumptionId(reserva.id);
+    try {
+      const supabase = createClient();
+      const { error: insertError } = await supabase
+        .from("consumption_entries")
+        .insert({ reservation_id: reserva.id, monto: montoNum });
+
+      if (insertError) throw insertError;
+
+      setConsumptionInputs((prev) => ({ ...prev, [reserva.id]: "" }));
+      await fetchConsumptionEntriesForReservation(reserva.id);
+    } catch (err) {
+      console.error("Error agregando consumo:", err);
+      setConsumptionError((prev) => ({
+        ...prev,
+        [reserva.id]: "No pudimos agregar el consumo. Intenta de nuevo.",
+      }));
+    } finally {
+      setAddingConsumptionId(null);
     }
   }
 
@@ -639,9 +712,12 @@ export default function StaffPanelPage() {
                     <select
                       id={`mesa-${r.id}`}
                       className={SELECT_CLASSES}
-                      value={getAssignForm(r.id).mesaId}
+                      value={mesaSelections[r.id] ?? ""}
                       onChange={(e) =>
-                        setAssignField(r.id, "mesaId", e.target.value)
+                        setMesaSelections((prev) => ({
+                          ...prev,
+                          [r.id]: e.target.value,
+                        }))
                       }
                     >
                       <option value="" disabled>
@@ -654,18 +730,6 @@ export default function StaffPanelPage() {
                       ))}
                     </select>
                   </div>
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor={`consumo-${r.id}`}>Consumo ($)</Label>
-                    <Input
-                      id={`consumo-${r.id}`}
-                      type="number"
-                      min={0}
-                      value={getAssignForm(r.id).consumo}
-                      onChange={(e) =>
-                        setAssignField(r.id, "consumo", e.target.value)
-                      }
-                    />
-                  </div>
                   {assignError[r.id] && (
                     <p className="text-sm text-destructive" role="alert">
                       {assignError[r.id]}
@@ -677,18 +741,71 @@ export default function StaffPanelPage() {
                     onClick={() => handleAssignTable(r)}
                     disabled={assigningId === r.id}
                   >
-                    {assigningId === r.id
-                      ? "Guardando..."
-                      : "Asignar mesa y registrar consumo"}
+                    {assigningId === r.id ? "Guardando..." : "Asignar mesa"}
                   </Button>
                 </CardContent>
               )}
 
               {r.mesa_id && (
-                <CardContent className="border-t border-border px-6 py-4 text-sm text-muted-foreground">
-                  Mesa:{" "}
-                  {tables.find((t) => t.id === r.mesa_id)?.numero ?? "—"} ·
-                  Consumo: ${r.consumo_monto ?? 0}
+                <CardContent className="flex flex-col gap-3 border-t border-border px-6 py-4">
+                  <p className="text-sm text-muted-foreground">
+                    Mesa: {tables.find((t) => t.id === r.mesa_id)?.numero ?? "—"}
+                  </p>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">
+                      Consumo total: $
+                      {(consumptionEntries[r.id] ?? []).reduce(
+                        (sum, e) => sum + Number(e.monto),
+                        0,
+                      )}
+                    </span>
+                  </div>
+
+                  {(consumptionEntries[r.id] ?? []).length > 0 && (
+                    <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+                      {(consumptionEntries[r.id] ?? []).map((entry) => (
+                        <li key={entry.id}>
+                          {formatHora(entry.created_at)} — ${entry.monto}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <div className="flex items-end gap-2">
+                    <div className="flex flex-1 flex-col gap-1.5">
+                      <Label htmlFor={`consumo-${r.id}`}>
+                        Agregar consumo ($)
+                      </Label>
+                      <Input
+                        id={`consumo-${r.id}`}
+                        type="number"
+                        min={0}
+                        value={consumptionInputs[r.id] ?? ""}
+                        onChange={(e) =>
+                          setConsumptionInputs((prev) => ({
+                            ...prev,
+                            [r.id]: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => handleAddConsumption(r)}
+                      disabled={addingConsumptionId === r.id}
+                    >
+                      {addingConsumptionId === r.id
+                        ? "Agregando..."
+                        : "+ Agregar consumo"}
+                    </Button>
+                  </div>
+                  {consumptionError[r.id] && (
+                    <p className="text-sm text-destructive" role="alert">
+                      {consumptionError[r.id]}
+                    </p>
+                  )}
                 </CardContent>
               )}
             </Card>
