@@ -6,6 +6,8 @@ import { Html5Qrcode } from "html5-qrcode";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
@@ -13,9 +15,17 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { Reservation } from "@/types";
+import type { ClubTable, Reservation } from "@/types";
 
 const QR_READER_ELEMENT_ID = "qr-reader";
+
+const SELECT_CLASSES =
+  "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30";
+
+interface AssignFormValue {
+  mesaId: string;
+  consumo: string;
+}
 
 type ScanState =
   | { status: "scanning" }
@@ -70,6 +80,13 @@ export default function StaffPanelPage() {
   const [checkingIn, setCheckingIn] = useState(false);
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const scanLockRef = useRef(false);
+
+  const [tables, setTables] = useState<ClubTable[]>([]);
+  const [assignForms, setAssignForms] = useState<Record<string, AssignFormValue>>(
+    {},
+  );
+  const [assigningId, setAssigningId] = useState<string | null>(null);
+  const [assignError, setAssignError] = useState<Record<string, string>>({});
 
   useEffect(() => {
     async function loadSession() {
@@ -174,7 +191,24 @@ export default function StaffPanelPage() {
       if (data) setClubNombre(data.nombre);
     }
 
+    async function fetchTables() {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("club_tables")
+          .select("*")
+          .eq("club_id", clubId)
+          .order("numero", { ascending: true });
+
+        if (error) throw error;
+        setTables((data ?? []) as ClubTable[]);
+      } catch (err) {
+        console.error("Error cargando mesas:", err);
+      }
+    }
+
     fetchClubNombre();
+    fetchTables();
     fetchReservas(clubId);
   }, [clubId, fetchReservas]);
 
@@ -257,6 +291,65 @@ export default function StaffPanelPage() {
       setScanState({ status: "lookup-error" });
     } finally {
       setCheckingIn(false);
+    }
+  }
+
+  function getAssignForm(reservaId: string): AssignFormValue {
+    return assignForms[reservaId] ?? { mesaId: "", consumo: "" };
+  }
+
+  function setAssignField(
+    reservaId: string,
+    field: keyof AssignFormValue,
+    value: string,
+  ) {
+    setAssignForms((prev) => ({
+      ...prev,
+      [reservaId]: { ...getAssignForm(reservaId), [field]: value },
+    }));
+  }
+
+  async function handleAssignTable(reserva: Reservation) {
+    const form = getAssignForm(reserva.id);
+    setAssignError((prev) => ({ ...prev, [reserva.id]: "" }));
+
+    if (!form.mesaId || !form.consumo) {
+      setAssignError((prev) => ({
+        ...prev,
+        [reserva.id]: "Selecciona una mesa e ingresa el consumo.",
+      }));
+      return;
+    }
+    const consumoNum = Number(form.consumo);
+    if (!Number.isFinite(consumoNum) || consumoNum < 0) {
+      setAssignError((prev) => ({
+        ...prev,
+        [reserva.id]: "El consumo debe ser un número válido.",
+      }));
+      return;
+    }
+
+    setAssigningId(reserva.id);
+    try {
+      const supabase = createClient();
+      const { error: updateError } = await supabase
+        .from("reservations")
+        .update({ mesa_id: form.mesaId, consumo_monto: consumoNum })
+        .eq("id", reserva.id);
+
+      if (updateError) throw updateError;
+
+      if (clubId) {
+        await fetchReservas(clubId);
+      }
+    } catch (err) {
+      console.error("Error asignando mesa:", err);
+      setAssignError((prev) => ({
+        ...prev,
+        [reserva.id]: "No pudimos guardar. Intenta de nuevo.",
+      }));
+    } finally {
+      setAssigningId(null);
     }
   }
 
@@ -538,6 +631,66 @@ export default function StaffPanelPage() {
                   </span>
                 )}
               </CardContent>
+
+              {r.status === "usada" && !r.mesa_id && (
+                <CardContent className="flex flex-col gap-3 border-t border-border px-6 py-4">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor={`mesa-${r.id}`}>Mesa</Label>
+                    <select
+                      id={`mesa-${r.id}`}
+                      className={SELECT_CLASSES}
+                      value={getAssignForm(r.id).mesaId}
+                      onChange={(e) =>
+                        setAssignField(r.id, "mesaId", e.target.value)
+                      }
+                    >
+                      <option value="" disabled>
+                        Selecciona una mesa
+                      </option>
+                      {tables.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          Mesa {t.numero} (cap. {t.capacidad})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor={`consumo-${r.id}`}>Consumo ($)</Label>
+                    <Input
+                      id={`consumo-${r.id}`}
+                      type="number"
+                      min={0}
+                      value={getAssignForm(r.id).consumo}
+                      onChange={(e) =>
+                        setAssignField(r.id, "consumo", e.target.value)
+                      }
+                    />
+                  </div>
+                  {assignError[r.id] && (
+                    <p className="text-sm text-destructive" role="alert">
+                      {assignError[r.id]}
+                    </p>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => handleAssignTable(r)}
+                    disabled={assigningId === r.id}
+                  >
+                    {assigningId === r.id
+                      ? "Guardando..."
+                      : "Asignar mesa y registrar consumo"}
+                  </Button>
+                </CardContent>
+              )}
+
+              {r.mesa_id && (
+                <CardContent className="border-t border-border px-6 py-4 text-sm text-muted-foreground">
+                  Mesa:{" "}
+                  {tables.find((t) => t.id === r.mesa_id)?.numero ?? "—"} ·
+                  Consumo: ${r.consumo_monto ?? 0}
+                </CardContent>
+              )}
             </Card>
           ))}
         </div>

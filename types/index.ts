@@ -19,6 +19,8 @@ export interface Reservation {
   status: "pendiente" | "confirmada" | "usada";
   qr_code: string;
   created_at: string;
+  mesa_id: string | null;
+  consumo_monto: number | null;
 }
 
 export interface Club {
@@ -38,5 +40,13 @@ export interface ClubPhoto {
   url: string;
   storage_path: string;
   orden: number;
+  created_at: string;
+}
+
+export interface ClubTable {
+  id: string;
+  club_id: string;
+  numero: string;
+  capacidad: number;
   created_at: string;
 }

@@ -14,7 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { Club, ClubPhoto, Profile } from "@/types";
+import type { Club, ClubPhoto, ClubTable, Profile } from "@/types";
 
 const SELECT_CLASSES =
   "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30";
@@ -54,6 +54,13 @@ export default function DuenoPanelPage() {
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
+
+  const [tables, setTables] = useState<ClubTable[]>([]);
+  const [tableNumero, setTableNumero] = useState("");
+  const [tableCapacidad, setTableCapacidad] = useState("");
+  const [tableSubmitting, setTableSubmitting] = useState(false);
+  const [tableError, setTableError] = useState<string | null>(null);
+  const [deletingTableId, setDeletingTableId] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadSession() {
@@ -153,12 +160,29 @@ export default function DuenoPanelPage() {
     }
   }
 
+  async function fetchTables(clubId: string) {
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("club_tables")
+        .select("*")
+        .eq("club_id", clubId)
+        .order("numero", { ascending: true });
+
+      if (error) throw error;
+      setTables((data ?? []) as ClubTable[]);
+    } catch (err) {
+      console.error("Error cargando mesas:", err);
+    }
+  }
+
   useEffect(() => {
     if (checkingSession) return;
     fetchClub().then((loadedClub) => {
       if (loadedClub) {
         fetchPersonal(loadedClub.id);
         fetchPhotos(loadedClub.id);
+        fetchTables(loadedClub.id);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -360,6 +384,66 @@ export default function DuenoPanelPage() {
       setPhotoError("No pudimos borrar la foto. Intenta de nuevo.");
     } finally {
       setDeletingPhotoId(null);
+    }
+  }
+
+  async function handleCreateTable(e: FormEvent) {
+    e.preventDefault();
+    setTableError(null);
+
+    if (!club) return;
+    if (!tableNumero.trim() || !tableCapacidad) {
+      setTableError("Completa todos los campos.");
+      return;
+    }
+    const capacidadNum = Number(tableCapacidad);
+    if (!Number.isInteger(capacidadNum) || capacidadNum < 1) {
+      setTableError("La capacidad debe ser un número entero mayor a 0.");
+      return;
+    }
+
+    setTableSubmitting(true);
+    try {
+      const supabase = createClient();
+      const { error: insertError } = await supabase.from("club_tables").insert({
+        club_id: club.id,
+        numero: tableNumero.trim(),
+        capacidad: capacidadNum,
+      });
+
+      if (insertError) throw insertError;
+
+      setTableNumero("");
+      setTableCapacidad("");
+      await fetchTables(club.id);
+    } catch (err) {
+      console.error("Error creando mesa:", err);
+      setTableError("No pudimos crear la mesa. Intenta de nuevo.");
+    } finally {
+      setTableSubmitting(false);
+    }
+  }
+
+  async function handleDeleteTable(table: ClubTable) {
+    setTableError(null);
+    setDeletingTableId(table.id);
+    try {
+      const supabase = createClient();
+      const { error: deleteError } = await supabase
+        .from("club_tables")
+        .delete()
+        .eq("id", table.id);
+
+      if (deleteError) throw deleteError;
+
+      setTables((prev) => prev.filter((t) => t.id !== table.id));
+    } catch (err) {
+      console.error("Error borrando mesa:", err);
+      setTableError(
+        "No pudimos borrar la mesa. Puede que tenga una reserva asignada.",
+      );
+    } finally {
+      setDeletingTableId(null);
     }
   }
 
@@ -637,6 +721,76 @@ export default function DuenoPanelPage() {
                     ×
                   </button>
                 </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="flex flex-col gap-4">
+          <h2 className="text-lg font-semibold">Mis mesas</h2>
+          <Card>
+            <CardContent className="px-6 py-6">
+              <form
+                onSubmit={handleCreateTable}
+                className="flex flex-col gap-4 sm:flex-row sm:items-end"
+              >
+                <div className="flex flex-1 flex-col gap-1.5">
+                  <Label htmlFor="table_numero">Número / nombre de mesa</Label>
+                  <Input
+                    id="table_numero"
+                    value={tableNumero}
+                    onChange={(e) => setTableNumero(e.target.value)}
+                    placeholder="ej. 5 o VIP 1"
+                    required
+                  />
+                </div>
+                <div className="flex flex-1 flex-col gap-1.5">
+                  <Label htmlFor="table_capacidad">Capacidad</Label>
+                  <Input
+                    id="table_capacidad"
+                    type="number"
+                    min={1}
+                    value={tableCapacidad}
+                    onChange={(e) => setTableCapacidad(e.target.value)}
+                    required
+                  />
+                </div>
+                <Button type="submit" disabled={tableSubmitting}>
+                  {tableSubmitting ? "Creando..." : "Crear mesa"}
+                </Button>
+              </form>
+              {tableError && (
+                <p className="mt-3 text-sm text-destructive" role="alert">
+                  {tableError}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          {tables.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {tables.map((table) => (
+                <Card key={table.id}>
+                  <CardContent className="flex items-center justify-between px-5 py-3 text-sm">
+                    <span className="font-medium">Mesa {table.numero}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-muted-foreground">
+                        Capacidad: {table.capacidad}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleDeleteTable(table)}
+                        disabled={deletingTableId === table.id}
+                      >
+                        {deletingTableId === table.id
+                          ? "Borrando..."
+                          : "Eliminar"}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
               ))}
             </div>
           )}
