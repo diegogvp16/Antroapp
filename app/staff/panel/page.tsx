@@ -15,7 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { ClubTable, ConsumptionEntry, Reservation } from "@/types";
+import type { Club, ClubTable, ConsumptionEntry, Reservation } from "@/types";
 
 const QR_READER_ELEMENT_ID = "qr-reader";
 
@@ -45,6 +45,26 @@ function todayISO() {
   return now.toISOString().slice(0, 10);
 }
 
+// Semana lunes-domingo en hora LOCAL del dispositivo (mismo criterio que
+// todayISO() usa para "hoy"). getDay(): 0=domingo, 1=lunes ... 6=sábado.
+// Si hoy es domingo (0), el lunes de esa semana quedó 6 días atrás;
+// cualquier otro día, retrocedemos (day - 1) días para llegar al lunes.
+function getWeekRange() {
+  const now = new Date();
+  const day = now.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() + diffToMonday);
+
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+
+  return { start: monday, end: sunday };
+}
+
 const STATUS_LABEL: Record<Reservation["status"], string> = {
   pendiente: "Pendiente",
   confirmada: "Confirmada",
@@ -71,6 +91,7 @@ export default function StaffPanelPage() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [clubId, setClubId] = useState<string | null>(null);
   const [clubNombre, setClubNombre] = useState("");
+  const [club, setClub] = useState<Club | null>(null);
 
   const [reservas, setReservas] = useState<Reservation[]>([]);
   const [rpNombres, setRpNombres] = useState<Record<string, string>>({});
@@ -226,10 +247,13 @@ export default function StaffPanelPage() {
       const supabase = createClient();
       const { data } = await supabase
         .from("clubs")
-        .select("nombre")
+        .select("*")
         .eq("id", clubId)
         .maybeSingle();
-      if (data) setClubNombre(data.nombre);
+      if (data) {
+        setClubNombre(data.nombre);
+        setClub(data as Club);
+      }
     }
 
     async function fetchTables() {
@@ -391,6 +415,78 @@ export default function StaffPanelPage() {
     }
   }
 
+  // Calcula y crea la fila en "commissions" para el PRIMER consumo de una
+  // reserva. No se recalcula si se agregan más cargos después — es una
+  // simplificación consciente: la comisión queda fija con el consumo
+  // registrado al momento del primer cargo.
+  async function createCommissionForReservation(
+    reserva: Reservation,
+    consumoMonto: number,
+  ) {
+    if (!club) return;
+    try {
+      const supabase = createClient();
+
+      if (reserva.source === "rp" && reserva.rp_id) {
+        const { start, end } = getWeekRange();
+
+        const { data: weekCommissions, error: weekError } = await supabase
+          .from("commissions")
+          .select("id, reservations!inner(club_id)")
+          .eq("rp_id", reserva.rp_id)
+          .eq("reservations.club_id", club.id)
+          .gte("created_at", start.toISOString())
+          .lte("created_at", end.toISOString());
+
+        if (weekError) throw weekError;
+
+        const countEstaSemana = weekCommissions?.length ?? 0;
+        const desbloqueado =
+          countEstaSemana + 1 >= club.comision_desbloqueo_reservas;
+
+        const montoComision = !desbloqueado
+          ? 0
+          : club.comision_tipo === "fijo"
+            ? club.comision_monto
+            : (club.comision_monto / 100) * consumoMonto;
+
+        const { error: insertCommissionError } = await supabase
+          .from("commissions")
+          .insert({
+            reservation_id: reserva.id,
+            rp_id: reserva.rp_id,
+            tipo: "rp",
+            monto: montoComision,
+            status: "pendiente",
+          });
+
+        if (insertCommissionError) throw insertCommissionError;
+      } else if (reserva.source === "organica") {
+        const montoBono =
+          club.bono_organica_tipo === "fijo"
+            ? club.bono_organica_monto
+            : (club.bono_organica_monto / 100) * consumoMonto;
+
+        const { error: insertCommissionError } = await supabase
+          .from("commissions")
+          .insert({
+            reservation_id: reserva.id,
+            rp_id: null,
+            tipo: "plataforma",
+            monto: montoBono,
+            status: "pendiente",
+          });
+
+        if (insertCommissionError) throw insertCommissionError;
+      }
+    } catch (err) {
+      // No bloqueamos la UI del consumo por esto: el consumo ya se guardó
+      // exitosamente, la comisión es un efecto secundario. Se loguea para
+      // poder diagnosticar si algo falla.
+      console.error("Error creando comisión:", err);
+    }
+  }
+
   async function handleAddConsumption(reserva: Reservation) {
     const monto = consumptionInputs[reserva.id] ?? "";
     setConsumptionError((prev) => ({ ...prev, [reserva.id]: "" }));
@@ -407,11 +503,26 @@ export default function StaffPanelPage() {
     setAddingConsumptionId(reserva.id);
     try {
       const supabase = createClient();
+
+      const { count: existingEntriesCount, error: countError } =
+        await supabase
+          .from("consumption_entries")
+          .select("id", { count: "exact", head: true })
+          .eq("reservation_id", reserva.id);
+
+      if (countError) throw countError;
+
+      const isFirstEntry = (existingEntriesCount ?? 0) === 0;
+
       const { error: insertError } = await supabase
         .from("consumption_entries")
         .insert({ reservation_id: reserva.id, monto: montoNum });
 
       if (insertError) throw insertError;
+
+      if (isFirstEntry) {
+        await createCommissionForReservation(reserva, montoNum);
+      }
 
       setConsumptionInputs((prev) => ({ ...prev, [reserva.id]: "" }));
       await fetchConsumptionEntriesForReservation(reserva.id);
