@@ -472,6 +472,9 @@ export default function StaffPanelPage() {
   const totalOrganicas = reservas.filter((r) => r.source === "organica").length;
   const totalRp = reservas.filter((r) => r.source === "rp").length;
   const totalPersonas = reservas.reduce((sum, r) => sum + r.personas, 0);
+  const totalConsumo = Object.values(consumptionEntries)
+    .flat()
+    .reduce((sum, entry) => sum + Number(entry.monto), 0);
 
   if (scannerOpen) {
     return (
@@ -636,7 +639,7 @@ export default function StaffPanelPage() {
           Escanear QR
         </Button>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <Card size="sm">
             <CardContent className="flex flex-col gap-1 px-4">
               <span className="text-xs text-muted-foreground">Reservas</span>
@@ -659,6 +662,16 @@ export default function StaffPanelPage() {
             <CardContent className="flex flex-col gap-1 px-4">
               <span className="text-xs text-muted-foreground">Personas</span>
               <span className="text-2xl font-bold">{totalPersonas}</span>
+            </CardContent>
+          </Card>
+          <Card size="sm">
+            <CardContent className="flex flex-col gap-1 px-4">
+              <span className="text-xs text-muted-foreground">
+                Consumo total
+              </span>
+              <span className="text-2xl font-bold">
+                ${totalConsumo.toLocaleString("en-US")}
+              </span>
             </CardContent>
           </Card>
         </div>
