@@ -48,6 +48,20 @@ export default function AdminPage() {
   const [staffError, setStaffError] = useState<string | null>(null);
   const [createdStaff, setCreatedStaff] = useState<CreatedStaff[]>([]);
 
+  const [editingBonoClubId, setEditingBonoClubId] = useState<string | null>(
+    null,
+  );
+  const [bonoTipoEdit, setBonoTipoEdit] = useState<
+    Record<string, "fijo" | "porcentaje">
+  >({});
+  const [bonoMontoEdit, setBonoMontoEdit] = useState<Record<string, string>>(
+    {},
+  );
+  const [bonoSubmittingId, setBonoSubmittingId] = useState<string | null>(
+    null,
+  );
+  const [bonoError, setBonoError] = useState<Record<string, string>>({});
+
   useEffect(() => {
     async function loadSession() {
       const supabase = createClient();
@@ -199,6 +213,68 @@ export default function AdminPage() {
     }
   }
 
+  function handleToggleEditBono(club: Club) {
+    if (editingBonoClubId === club.id) {
+      setEditingBonoClubId(null);
+      return;
+    }
+    setBonoTipoEdit((prev) => ({ ...prev, [club.id]: club.bono_organica_tipo }));
+    setBonoMontoEdit((prev) => ({
+      ...prev,
+      [club.id]: String(club.bono_organica_monto),
+    }));
+    setBonoError((prev) => ({ ...prev, [club.id]: "" }));
+    setEditingBonoClubId(club.id);
+  }
+
+  async function handleSaveBono(club: Club) {
+    const tipo = bonoTipoEdit[club.id] ?? "fijo";
+    const montoStr = bonoMontoEdit[club.id] ?? "";
+    setBonoError((prev) => ({ ...prev, [club.id]: "" }));
+
+    if (!montoStr) {
+      setBonoError((prev) => ({ ...prev, [club.id]: "Ingresa un monto." }));
+      return;
+    }
+    const montoNum = Number(montoStr);
+    if (!Number.isFinite(montoNum) || montoNum < 0) {
+      setBonoError((prev) => ({
+        ...prev,
+        [club.id]: "El monto debe ser un número válido.",
+      }));
+      return;
+    }
+    if (tipo === "porcentaje" && montoNum > 100) {
+      setBonoError((prev) => ({
+        ...prev,
+        [club.id]: "El porcentaje no puede ser mayor a 100.",
+      }));
+      return;
+    }
+
+    setBonoSubmittingId(club.id);
+    try {
+      const supabase = createClient();
+      const { error: updateError } = await supabase
+        .from("clubs")
+        .update({ bono_organica_tipo: tipo, bono_organica_monto: montoNum })
+        .eq("id", club.id);
+
+      if (updateError) throw updateError;
+
+      await fetchClubs();
+      setEditingBonoClubId(null);
+    } catch (err) {
+      console.error("Error actualizando bono:", err);
+      setBonoError((prev) => ({
+        ...prev,
+        [club.id]: "No pudimos guardar. Intenta de nuevo.",
+      }));
+    } finally {
+      setBonoSubmittingId(null);
+    }
+  }
+
   if (checkingSession) {
     return null;
   }
@@ -242,6 +318,88 @@ export default function AdminPage() {
                     Depósito: ${club.deposito_monto}
                   </span>
                 </CardContent>
+                <CardContent className="flex items-center justify-between border-t border-border px-5 py-3 text-sm">
+                  <span className="text-muted-foreground">
+                    Bono plataforma:{" "}
+                    {club.bono_organica_tipo === "fijo"
+                      ? `$${club.bono_organica_monto} fijo`
+                      : `${club.bono_organica_monto}% del consumo`}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleToggleEditBono(club)}
+                  >
+                    {editingBonoClubId === club.id
+                      ? "Cancelar"
+                      : "Editar bono de plataforma"}
+                  </Button>
+                </CardContent>
+                {editingBonoClubId === club.id && (
+                  <CardContent className="flex flex-col gap-3 border-t border-border px-5 py-4">
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor={`bono_tipo_${club.id}`}>
+                        Tipo de bono
+                      </Label>
+                      <select
+                        id={`bono_tipo_${club.id}`}
+                        className={SELECT_CLASSES}
+                        value={bonoTipoEdit[club.id] ?? "fijo"}
+                        onChange={(e) =>
+                          setBonoTipoEdit((prev) => ({
+                            ...prev,
+                            [club.id]: e.target.value as "fijo" | "porcentaje",
+                          }))
+                        }
+                      >
+                        <option value="fijo">Fijo</option>
+                        <option value="porcentaje">
+                          Porcentaje del consumo
+                        </option>
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor={`bono_monto_${club.id}`}>
+                        {(bonoTipoEdit[club.id] ?? "fijo") === "fijo"
+                          ? "Monto ($)"
+                          : "Porcentaje (%)"}
+                      </Label>
+                      <Input
+                        id={`bono_monto_${club.id}`}
+                        type="number"
+                        min={0}
+                        max={
+                          (bonoTipoEdit[club.id] ?? "fijo") === "porcentaje"
+                            ? 100
+                            : undefined
+                        }
+                        value={bonoMontoEdit[club.id] ?? ""}
+                        onChange={(e) =>
+                          setBonoMontoEdit((prev) => ({
+                            ...prev,
+                            [club.id]: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    {bonoError[club.id] && (
+                      <p className="text-sm text-destructive" role="alert">
+                        {bonoError[club.id]}
+                      </p>
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => handleSaveBono(club)}
+                      disabled={bonoSubmittingId === club.id}
+                    >
+                      {bonoSubmittingId === club.id
+                        ? "Guardando..."
+                        : "Guardar bono"}
+                    </Button>
+                  </CardContent>
+                )}
               </Card>
             ))}
           </div>

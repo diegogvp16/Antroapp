@@ -469,14 +469,13 @@ export default function DuenoPanelPage() {
     setComisionSaved(false);
 
     if (!club) return;
-    if (!comisionMonto || !comisionDesbloqueo || !bonoMonto) {
+    if (!comisionMonto || !comisionDesbloqueo) {
       setComisionError("Completa todos los campos.");
       return;
     }
 
     const comisionMontoNum = Number(comisionMonto);
     const desbloqueoNum = Number(comisionDesbloqueo);
-    const bonoMontoNum = Number(bonoMonto);
 
     if (!Number.isFinite(comisionMontoNum) || comisionMontoNum < 0) {
       setComisionError("El monto de comisión debe ser un número válido.");
@@ -492,14 +491,6 @@ export default function DuenoPanelPage() {
       );
       return;
     }
-    if (!Number.isFinite(bonoMontoNum) || bonoMontoNum < 0) {
-      setComisionError("El monto de bono debe ser un número válido.");
-      return;
-    }
-    if (bonoTipo === "porcentaje" && bonoMontoNum > 100) {
-      setComisionError("El porcentaje de bono no puede ser mayor a 100.");
-      return;
-    }
 
     setComisionSubmitting(true);
     try {
@@ -510,8 +501,6 @@ export default function DuenoPanelPage() {
           comision_tipo: comisionTipo,
           comision_monto: comisionMontoNum,
           comision_desbloqueo_reservas: desbloqueoNum,
-          bono_organica_tipo: bonoTipo,
-          bono_organica_monto: bonoMontoNum,
         })
         .eq("id", club.id);
 
@@ -934,39 +923,6 @@ export default function DuenoPanelPage() {
                     RP — a partir de la 4ta sí.
                   </p>
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="bono_tipo">
-                    Tipo de bono a la plataforma por reservas orgánicas
-                  </Label>
-                  <select
-                    id="bono_tipo"
-                    className={SELECT_CLASSES}
-                    value={bonoTipo}
-                    onChange={(e) =>
-                      setBonoTipo(e.target.value as "fijo" | "porcentaje")
-                    }
-                  >
-                    <option value="fijo">Fijo</option>
-                    <option value="porcentaje">Porcentaje del consumo</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="bono_monto">
-                    {bonoTipo === "fijo"
-                      ? "Monto de bono a la plataforma ($)"
-                      : "Bono a la plataforma (% del consumo)"}
-                  </Label>
-                  <Input
-                    id="bono_monto"
-                    type="number"
-                    min={0}
-                    max={bonoTipo === "porcentaje" ? 100 : undefined}
-                    value={bonoMonto}
-                    onChange={(e) => setBonoMonto(e.target.value)}
-                    required
-                  />
-                </div>
-
                 {comisionError && (
                   <p className="text-sm text-destructive" role="alert">
                     {comisionError}
@@ -984,6 +940,19 @@ export default function DuenoPanelPage() {
                     : "Guardar reglas de comisión"}
                 </Button>
               </form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="px-6 py-4">
+              <p className="text-sm font-medium">Bono a la plataforma</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {bonoTipo === "fijo"
+                  ? `$${bonoMonto || 0} fijo`
+                  : `${bonoMonto || 0}% del consumo`}{" "}
+                por reserva orgánica válida — acordado con AntroApp, no
+                editable desde aquí.
+              </p>
             </CardContent>
           </Card>
         </section>
