@@ -1,0 +1,206 @@
+"use client";
+
+import { useState, type FormEvent } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+
+const MIN_PASSWORD_LENGTH = 6;
+
+export default function ClienteSignupPage() {
+  const router = useRouter();
+  const [nombre, setNombre] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [emailTaken, setEmailTaken] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setEmailTaken(false);
+
+    if (!nombre.trim() || !email.trim() || !password) {
+      setError("Por favor completa todos los campos.");
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(
+        `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`,
+      );
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const supabase = createClient();
+      const { data: signUpData, error: signUpError } =
+        await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+        });
+
+      if (signUpError || !signUpData.user) {
+        if (signUpError?.code === "user_already_exists") {
+          setEmailTaken(true);
+          return;
+        }
+        console.error("Supabase signUp error:", signUpError);
+        throw signUpError;
+      }
+
+      const { error: profileError } = await supabase.from("profiles").insert({
+        id: signUpData.user.id,
+        nombre: nombre.trim(),
+        telefono: telefono.trim() || null,
+        role: "cliente",
+      });
+
+      if (profileError) {
+        console.error("Supabase insert error (profiles):", profileError);
+        throw profileError;
+      }
+
+      if (signUpData.session) {
+        router.push("/cliente/perfil");
+      } else {
+        setPendingConfirmation(true);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(
+        "No pudimos crear tu cuenta. Intenta de nuevo en unos segundos.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (pendingConfirmation) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>Cuenta creada</CardTitle>
+            <CardDescription>
+              Revisa tu correo para confirmar tu cuenta antes de iniciar
+              sesión.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-6 pb-6">
+            <Link
+              href="/cliente/login"
+              className="text-sm font-medium text-foreground underline underline-offset-4"
+            >
+              Ir a iniciar sesión
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle>Crea tu cuenta</CardTitle>
+          <CardDescription>
+            Guarda tu historial de reservas en AntroApp.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-6 pb-6">
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="nombre">Nombre</Label>
+              <Input
+                id="nombre"
+                value={nombre}
+                onChange={(e) => setNombre(e.target.value)}
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="password">Contraseña</Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="telefono">Teléfono (opcional)</Label>
+              <Input
+                id="telefono"
+                type="tel"
+                value={telefono}
+                onChange={(e) => setTelefono(e.target.value)}
+              />
+            </div>
+
+            {error && (
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            )}
+            {emailTaken && (
+              <p className="text-sm text-destructive" role="alert">
+                Ese correo ya tiene una cuenta.{" "}
+                <Link
+                  href="/cliente/login"
+                  className="font-medium underline underline-offset-4"
+                >
+                  Intenta iniciar sesión en su lugar
+                </Link>
+              </p>
+            )}
+
+            <Button
+              type="submit"
+              size="lg"
+              className="mt-2 h-14 w-full text-base"
+              disabled={submitting}
+            >
+              {submitting ? "Registrando..." : "Registrarme"}
+            </Button>
+
+            <p className="text-center text-sm text-muted-foreground">
+              ¿Ya tienes cuenta?{" "}
+              <Link
+                href="/cliente/login"
+                className="font-medium text-foreground underline underline-offset-4"
+              >
+                Inicia sesión aquí
+              </Link>
+            </p>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

@@ -51,6 +51,7 @@ function ReservarPage() {
   const [club, setClub] = useState<Club | null>(null);
   const [loadingClub, setLoadingClub] = useState(true);
   const [clubNotFound, setClubNotFound] = useState(false);
+  const [clienteId, setClienteId] = useState<string | null>(null);
 
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
@@ -98,6 +99,37 @@ function ReservarPage() {
     fetchClub();
   }, [clubId]);
 
+  useEffect(() => {
+    // Detecta si hay una sesión de Cliente activa, sin bloquear el flujo
+    // anónimo: si algo falla o no hay sesión, el formulario se queda
+    // exactamente igual que hoy (nombre/teléfono vacíos, sin cliente_id).
+    async function checkClienteSession() {
+      try {
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("id, nombre, telefono, role")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (profile && profile.role === "cliente") {
+          setClienteId(profile.id);
+          setNombre((prev) => prev || profile.nombre || "");
+          setTelefono((prev) => prev || profile.telefono || "");
+        }
+      } catch (err) {
+        console.error("Error verificando sesión de cliente:", err);
+      }
+    }
+
+    checkClienteSession();
+  }, []);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -130,6 +162,7 @@ function ReservarPage() {
         cliente_telefono: telefono.trim(),
         rp_id: null,
         club_id: club.id,
+        cliente_id: clienteId,
         source: "organica",
         fecha,
         personas,
@@ -333,6 +366,18 @@ function ReservarPage() {
             >
               {submitting ? "Reservando..." : "Confirmar reserva"}
             </Button>
+
+            {!clienteId && (
+              <p className="text-center text-xs text-muted-foreground">
+                ¿Ya tienes cuenta?{" "}
+                <Link
+                  href="/cliente/login"
+                  className="font-medium underline underline-offset-4"
+                >
+                  Inicia sesión para ver tu historial
+                </Link>
+              </p>
+            )}
           </form>
         </CardContent>
       </Card>

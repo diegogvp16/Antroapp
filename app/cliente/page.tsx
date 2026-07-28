@@ -68,13 +68,21 @@ export default function ClientePage() {
   return (
     <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
       <div className="flex w-full max-w-sm flex-col gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-950 dark:text-zinc-50">
-            Elige un antro
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Reserva tu lugar en segundos.
-          </p>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h1 className="text-2xl font-bold text-zinc-950 dark:text-zinc-50">
+              Elige un antro
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Reserva tu lugar en segundos.
+            </p>
+          </div>
+          <Link
+            href="/cliente/login"
+            className="whitespace-nowrap pt-1 text-sm font-medium text-foreground underline underline-offset-4"
+          >
+            Mi cuenta
+          </Link>
         </div>
 
         {loading && (

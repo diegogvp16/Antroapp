@@ -5,6 +5,7 @@ export interface Profile {
   role: "cliente" | "rp" | "staff" | "gerente" | "admin" | "dueno";
   club_id: string | null;
   created_at: string;
+  activo: boolean;
 }
 
 export interface Reservation {
@@ -21,6 +22,7 @@ export interface Reservation {
   created_at: string;
   mesa_id: string | null;
   consumo_monto: number | null;
+  cliente_id: string | null;
 }
 
 export interface Club {
