@@ -32,6 +32,11 @@ export interface Club {
   dueno_id: string | null;
   suscripcion_activa: boolean;
   suscripcion_activada_en: string | null;
+  comision_tipo: "fijo" | "porcentaje";
+  comision_monto: number;
+  comision_desbloqueo_reservas: number;
+  bono_organica_tipo: "fijo" | "porcentaje";
+  bono_organica_monto: number;
 }
 
 export interface ClubPhoto {

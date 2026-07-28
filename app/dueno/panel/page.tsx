@@ -62,6 +62,17 @@ export default function DuenoPanelPage() {
   const [tableError, setTableError] = useState<string | null>(null);
   const [deletingTableId, setDeletingTableId] = useState<string | null>(null);
 
+  const [comisionTipo, setComisionTipo] = useState<"fijo" | "porcentaje">(
+    "fijo",
+  );
+  const [comisionMonto, setComisionMonto] = useState("");
+  const [comisionDesbloqueo, setComisionDesbloqueo] = useState("");
+  const [bonoTipo, setBonoTipo] = useState<"fijo" | "porcentaje">("fijo");
+  const [bonoMonto, setBonoMonto] = useState("");
+  const [comisionSubmitting, setComisionSubmitting] = useState(false);
+  const [comisionError, setComisionError] = useState<string | null>(null);
+  const [comisionSaved, setComisionSaved] = useState(false);
+
   useEffect(() => {
     async function loadSession() {
       const supabase = createClient();
@@ -119,6 +130,11 @@ export default function DuenoPanelPage() {
       setClubDireccion(loadedClub.direccion);
       setClubHorario(loadedClub.horario);
       setClubDeposito(String(loadedClub.deposito_monto));
+      setComisionTipo(loadedClub.comision_tipo);
+      setComisionMonto(String(loadedClub.comision_monto));
+      setComisionDesbloqueo(String(loadedClub.comision_desbloqueo_reservas));
+      setBonoTipo(loadedClub.bono_organica_tipo);
+      setBonoMonto(String(loadedClub.bono_organica_monto));
       return loadedClub;
     } catch (err) {
       console.error("Error cargando club del dueño:", err);
@@ -444,6 +460,70 @@ export default function DuenoPanelPage() {
       );
     } finally {
       setDeletingTableId(null);
+    }
+  }
+
+  async function handleUpdateComisiones(e: FormEvent) {
+    e.preventDefault();
+    setComisionError(null);
+    setComisionSaved(false);
+
+    if (!club) return;
+    if (!comisionMonto || !comisionDesbloqueo || !bonoMonto) {
+      setComisionError("Completa todos los campos.");
+      return;
+    }
+
+    const comisionMontoNum = Number(comisionMonto);
+    const desbloqueoNum = Number(comisionDesbloqueo);
+    const bonoMontoNum = Number(bonoMonto);
+
+    if (!Number.isFinite(comisionMontoNum) || comisionMontoNum < 0) {
+      setComisionError("El monto de comisión debe ser un número válido.");
+      return;
+    }
+    if (comisionTipo === "porcentaje" && comisionMontoNum > 100) {
+      setComisionError("El porcentaje de comisión no puede ser mayor a 100.");
+      return;
+    }
+    if (!Number.isInteger(desbloqueoNum) || desbloqueoNum < 0) {
+      setComisionError(
+        "Las reservas para desbloquear deben ser un número entero mayor o igual a 0.",
+      );
+      return;
+    }
+    if (!Number.isFinite(bonoMontoNum) || bonoMontoNum < 0) {
+      setComisionError("El monto de bono debe ser un número válido.");
+      return;
+    }
+    if (bonoTipo === "porcentaje" && bonoMontoNum > 100) {
+      setComisionError("El porcentaje de bono no puede ser mayor a 100.");
+      return;
+    }
+
+    setComisionSubmitting(true);
+    try {
+      const supabase = createClient();
+      const { error: updateError } = await supabase
+        .from("clubs")
+        .update({
+          comision_tipo: comisionTipo,
+          comision_monto: comisionMontoNum,
+          comision_desbloqueo_reservas: desbloqueoNum,
+          bono_organica_tipo: bonoTipo,
+          bono_organica_monto: bonoMontoNum,
+        })
+        .eq("id", club.id);
+
+      if (updateError) throw updateError;
+
+      await fetchClub();
+      setComisionSaved(true);
+    } catch (err) {
+      console.error("Error actualizando reglas de comisión:", err);
+      setComisionError("No pudimos guardar los cambios. Intenta de nuevo.");
+    } finally {
+      setComisionSubmitting(false);
     }
   }
 
@@ -794,6 +874,118 @@ export default function DuenoPanelPage() {
               ))}
             </div>
           )}
+        </section>
+
+        <section className="flex flex-col gap-4">
+          <h2 className="text-lg font-semibold">Reglas de comisión</h2>
+          <Card>
+            <CardContent className="px-6 py-6">
+              <form
+                onSubmit={handleUpdateComisiones}
+                className="flex flex-col gap-4"
+              >
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="comision_tipo">
+                    Tipo de comisión para RP
+                  </Label>
+                  <select
+                    id="comision_tipo"
+                    className={SELECT_CLASSES}
+                    value={comisionTipo}
+                    onChange={(e) =>
+                      setComisionTipo(e.target.value as "fijo" | "porcentaje")
+                    }
+                  >
+                    <option value="fijo">Fijo</option>
+                    <option value="porcentaje">Porcentaje del consumo</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="comision_monto">
+                    {comisionTipo === "fijo"
+                      ? "Monto de comisión para RP ($)"
+                      : "Comisión para RP (% del consumo)"}
+                  </Label>
+                  <Input
+                    id="comision_monto"
+                    type="number"
+                    min={0}
+                    max={comisionTipo === "porcentaje" ? 100 : undefined}
+                    value={comisionMonto}
+                    onChange={(e) => setComisionMonto(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="comision_desbloqueo">
+                    Reservas necesarias para desbloquear comisión esta semana
+                  </Label>
+                  <Input
+                    id="comision_desbloqueo"
+                    type="number"
+                    min={0}
+                    value={comisionDesbloqueo}
+                    onChange={(e) => setComisionDesbloqueo(e.target.value)}
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Ej. 4 significa que las primeras 3 reservas validadas de
+                    la semana (lunes a domingo) no generan comisión para el
+                    RP — a partir de la 4ta sí.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="bono_tipo">
+                    Tipo de bono a la plataforma por reservas orgánicas
+                  </Label>
+                  <select
+                    id="bono_tipo"
+                    className={SELECT_CLASSES}
+                    value={bonoTipo}
+                    onChange={(e) =>
+                      setBonoTipo(e.target.value as "fijo" | "porcentaje")
+                    }
+                  >
+                    <option value="fijo">Fijo</option>
+                    <option value="porcentaje">Porcentaje del consumo</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="bono_monto">
+                    {bonoTipo === "fijo"
+                      ? "Monto de bono a la plataforma ($)"
+                      : "Bono a la plataforma (% del consumo)"}
+                  </Label>
+                  <Input
+                    id="bono_monto"
+                    type="number"
+                    min={0}
+                    max={bonoTipo === "porcentaje" ? 100 : undefined}
+                    value={bonoMonto}
+                    onChange={(e) => setBonoMonto(e.target.value)}
+                    required
+                  />
+                </div>
+
+                {comisionError && (
+                  <p className="text-sm text-destructive" role="alert">
+                    {comisionError}
+                  </p>
+                )}
+                {comisionSaved && !comisionError && (
+                  <p className="text-sm text-muted-foreground">
+                    Cambios guardados.
+                  </p>
+                )}
+
+                <Button type="submit" disabled={comisionSubmitting}>
+                  {comisionSubmitting
+                    ? "Guardando..."
+                    : "Guardar reglas de comisión"}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
         </section>
       </div>
     </div>
