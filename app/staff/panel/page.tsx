@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Html5Qrcode } from "html5-qrcode";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,18 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { Reservation } from "@/types";
+
+const QR_READER_ELEMENT_ID = "qr-reader";
+
+type ScanState =
+  | { status: "scanning" }
+  | { status: "camera-error"; message: string }
+  | { status: "not-found" }
+  | { status: "wrong-club" }
+  | { status: "already-checked-in"; reserva: Reservation }
+  | { status: "ready"; reserva: Reservation }
+  | { status: "success" }
+  | { status: "lookup-error" };
 
 function todayISO() {
   const now = new Date();
@@ -51,6 +64,12 @@ export default function StaffPanelPage() {
   const [rpNombres, setRpNombres] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scanState, setScanState] = useState<ScanState>({ status: "scanning" });
+  const [checkingIn, setCheckingIn] = useState(false);
+  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const scanLockRef = useRef(false);
 
   useEffect(() => {
     async function loadSession() {
@@ -165,6 +184,120 @@ export default function StaffPanelPage() {
     router.replace("/staff/login");
   }
 
+  async function handleDecodedText(decodedText: string) {
+    if (scanLockRef.current) return;
+    scanLockRef.current = true;
+    html5QrCodeRef.current?.pause(true);
+
+    try {
+      const supabase = createClient();
+      const { data, error: lookupError } = await supabase
+        .from("reservations")
+        .select("*")
+        .eq("qr_code", decodedText.trim())
+        .maybeSingle();
+
+      if (lookupError || !data) {
+        setScanState({ status: "not-found" });
+        return;
+      }
+
+      const reserva = data as Reservation;
+
+      if (reserva.club_id !== clubId) {
+        setScanState({ status: "wrong-club" });
+        return;
+      }
+
+      if (reserva.status === "usada") {
+        setScanState({ status: "already-checked-in", reserva });
+        return;
+      }
+
+      setScanState({ status: "ready", reserva });
+    } catch (err) {
+      console.error("Error buscando reserva escaneada:", err);
+      setScanState({ status: "lookup-error" });
+    }
+  }
+
+  function openScanner() {
+    scanLockRef.current = false;
+    setScanState({ status: "scanning" });
+    setScannerOpen(true);
+  }
+
+  function closeScanner() {
+    setScannerOpen(false);
+  }
+
+  function resumeScanning() {
+    scanLockRef.current = false;
+    setScanState({ status: "scanning" });
+    html5QrCodeRef.current?.resume();
+  }
+
+  async function handleConfirmCheckIn(reserva: Reservation) {
+    setCheckingIn(true);
+    try {
+      const supabase = createClient();
+      const { error: updateError } = await supabase
+        .from("reservations")
+        .update({ status: "usada" })
+        .eq("id", reserva.id);
+
+      if (updateError) throw updateError;
+
+      setScanState({ status: "success" });
+      if (clubId) {
+        await fetchReservas(clubId);
+      }
+    } catch (err) {
+      console.error("Error confirmando check-in:", err);
+      setScanState({ status: "lookup-error" });
+    } finally {
+      setCheckingIn(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!scannerOpen) return;
+
+    const html5QrCode = new Html5Qrcode(QR_READER_ELEMENT_ID);
+    html5QrCodeRef.current = html5QrCode;
+    let cancelled = false;
+
+    html5QrCode
+      .start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        (decodedText) => {
+          handleDecodedText(decodedText);
+        },
+        undefined,
+      )
+      .catch((err) => {
+        console.error("Error iniciando la cámara:", err);
+        if (!cancelled) {
+          setScanState({
+            status: "camera-error",
+            message:
+              "No pudimos acceder a la cámara. Revisa los permisos del navegador.",
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      html5QrCode
+        .stop()
+        .then(() => html5QrCode.clear())
+        .catch(() => {});
+      html5QrCodeRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scannerOpen]);
+
   if (checkingSession) {
     return null;
   }
@@ -173,6 +306,129 @@ export default function StaffPanelPage() {
   const totalOrganicas = reservas.filter((r) => r.source === "organica").length;
   const totalRp = reservas.filter((r) => r.source === "rp").length;
   const totalPersonas = reservas.reduce((sum, r) => sum + r.personas, 0);
+
+  if (scannerOpen) {
+    return (
+      <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
+        <div className="flex w-full max-w-2xl flex-col gap-6">
+          <Card className="w-full">
+            <CardHeader>
+              <CardTitle>Escanear QR</CardTitle>
+              <CardDescription>
+                Apunta la cámara al código QR de la reserva.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4 px-6 pb-6">
+              {scanState.status === "scanning" && (
+                <div
+                  id={QR_READER_ELEMENT_ID}
+                  className="w-full overflow-hidden rounded-lg"
+                />
+              )}
+
+              {scanState.status === "camera-error" && (
+                <p className="text-sm text-destructive" role="alert">
+                  {scanState.message}
+                </p>
+              )}
+
+              {scanState.status === "not-found" && (
+                <div className="flex flex-col gap-3">
+                  <p className="text-sm text-destructive" role="alert">
+                    Código no válido o no encontrado.
+                  </p>
+                  <Button type="button" onClick={resumeScanning}>
+                    Escanear siguiente
+                  </Button>
+                </div>
+              )}
+
+              {scanState.status === "wrong-club" && (
+                <div className="flex flex-col gap-3">
+                  <p className="text-sm text-destructive" role="alert">
+                    Este código no pertenece a este antro.
+                  </p>
+                  <Button type="button" onClick={resumeScanning}>
+                    Escanear siguiente
+                  </Button>
+                </div>
+              )}
+
+              {scanState.status === "already-checked-in" && (
+                <div className="flex flex-col gap-3">
+                  <p
+                    className="text-sm text-amber-600 dark:text-amber-400"
+                    role="alert"
+                  >
+                    Esta reserva ya hizo check-in.
+                  </p>
+                  <div className="text-sm">
+                    <p className="font-medium">
+                      {scanState.reserva.cliente_nombre}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {scanState.reserva.personas} personas ·{" "}
+                      {scanState.reserva.fecha}
+                    </p>
+                  </div>
+                  <Button type="button" onClick={resumeScanning}>
+                    Escanear siguiente
+                  </Button>
+                </div>
+              )}
+
+              {scanState.status === "ready" && (
+                <div className="flex flex-col gap-3">
+                  <div className="text-sm">
+                    <p className="font-medium">
+                      {scanState.reserva.cliente_nombre}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {scanState.reserva.personas} personas ·{" "}
+                      {scanState.reserva.fecha}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => handleConfirmCheckIn(scanState.reserva)}
+                    disabled={checkingIn}
+                  >
+                    {checkingIn ? "Confirmando..." : "Confirmar llegada"}
+                  </Button>
+                </div>
+              )}
+
+              {scanState.status === "success" && (
+                <div className="flex flex-col gap-3">
+                  <p className="text-sm text-green-600 dark:text-green-400">
+                    ¡Check-in confirmado!
+                  </p>
+                  <Button type="button" onClick={resumeScanning}>
+                    Escanear siguiente
+                  </Button>
+                </div>
+              )}
+
+              {scanState.status === "lookup-error" && (
+                <div className="flex flex-col gap-3">
+                  <p className="text-sm text-destructive" role="alert">
+                    Ocurrió un error. Intenta de nuevo.
+                  </p>
+                  <Button type="button" onClick={resumeScanning}>
+                    Escanear siguiente
+                  </Button>
+                </div>
+              )}
+
+              <Button type="button" variant="outline" onClick={closeScanner}>
+                Cerrar escáner
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
@@ -204,6 +460,15 @@ export default function StaffPanelPage() {
             </Button>
           </div>
         </div>
+
+        <Button
+          type="button"
+          size="lg"
+          className="h-14 w-full text-base"
+          onClick={openScanner}
+        >
+          Escanear QR
+        </Button>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Card size="sm">
