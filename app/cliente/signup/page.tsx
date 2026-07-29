@@ -75,7 +75,7 @@ export default function ClienteSignupPage() {
       }
 
       if (signUpData.session) {
-        router.push("/cliente/perfil");
+        router.push("/cliente");
       } else {
         setPendingConfirmation(true);
       }

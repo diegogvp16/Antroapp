@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { BackLink } from "@/components/back-link";
@@ -17,14 +17,47 @@ import type { Club, ClubPhoto } from "@/types";
 
 export default function ClubDetailPage() {
   const params = useParams<{ clubId: string }>();
+  const router = useRouter();
   const clubId = params.clubId;
 
+  const [checkingSession, setCheckingSession] = useState(true);
   const [club, setClub] = useState<Club | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [photos, setPhotos] = useState<ClubPhoto[]>([]);
 
   useEffect(() => {
+    async function checkSession() {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.replace("/cliente/login");
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (profileError || !profile || profile.role !== "cliente") {
+        router.replace("/cliente/login");
+        return;
+      }
+
+      setCheckingSession(false);
+    }
+
+    checkSession();
+  }, [router]);
+
+  useEffect(() => {
+    if (checkingSession) return;
+
     async function fetchClub() {
       setLoading(true);
       setNotFound(false);
@@ -70,7 +103,11 @@ export default function ClubDetailPage() {
       setLoading(false);
       setNotFound(true);
     }
-  }, [clubId]);
+  }, [clubId, checkingSession]);
+
+  if (checkingSession) {
+    return null;
+  }
 
   return (
     <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">

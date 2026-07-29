@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   Card,
@@ -13,12 +14,45 @@ import {
 import type { Club } from "@/types";
 
 export default function ClientePage() {
+  const router = useRouter();
+  const [checkingSession, setCheckingSession] = useState(true);
   const [clubs, setClubs] = useState<Club[]>([]);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    async function checkSession() {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.replace("/cliente/login");
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (profileError || !profile || profile.role !== "cliente") {
+        router.replace("/cliente/login");
+        return;
+      }
+
+      setCheckingSession(false);
+    }
+
+    checkSession();
+  }, [router]);
+
+  useEffect(() => {
+    if (checkingSession) return;
+
     async function fetchClubs() {
       setLoading(true);
       setError(null);
@@ -63,7 +97,11 @@ export default function ClientePage() {
     }
 
     fetchClubs();
-  }, []);
+  }, [checkingSession]);
+
+  if (checkingSession) {
+    return null;
+  }
 
   return (
     <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
@@ -78,10 +116,10 @@ export default function ClientePage() {
             </p>
           </div>
           <Link
-            href="/cliente/login"
+            href="/cliente/perfil"
             className="whitespace-nowrap pt-1 text-sm font-medium text-foreground underline underline-offset-4"
           >
-            Mi cuenta
+            Mi perfil
           </Link>
         </div>
 

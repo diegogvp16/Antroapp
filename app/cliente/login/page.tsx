@@ -57,7 +57,7 @@ export default function ClienteLoginPage() {
         return;
       }
 
-      router.push("/cliente/perfil");
+      router.push("/cliente");
     } catch (err) {
       console.error(err);
       setError("Ocurrió un error. Intenta de nuevo.");
