@@ -33,6 +33,8 @@ export default function DuenoPanelPage() {
   const [clubDireccion, setClubDireccion] = useState("");
   const [clubHorario, setClubHorario] = useState("");
   const [clubDeposito, setClubDeposito] = useState("");
+  const [clubLat, setClubLat] = useState("");
+  const [clubLng, setClubLng] = useState("");
   const [clubSubmitting, setClubSubmitting] = useState(false);
   const [clubError, setClubError] = useState<string | null>(null);
   const [clubSaved, setClubSaved] = useState(false);
@@ -130,6 +132,8 @@ export default function DuenoPanelPage() {
       setClubDireccion(loadedClub.direccion);
       setClubHorario(loadedClub.horario);
       setClubDeposito(String(loadedClub.deposito_monto));
+      setClubLat(loadedClub.lat !== null ? String(loadedClub.lat) : "");
+      setClubLng(loadedClub.lng !== null ? String(loadedClub.lng) : "");
       setComisionTipo(loadedClub.comision_tipo);
       setComisionMonto(String(loadedClub.comision_monto));
       setComisionDesbloqueo(String(loadedClub.comision_desbloqueo_reservas));
@@ -231,6 +235,24 @@ export default function DuenoPanelPage() {
       return;
     }
 
+    let latNum: number | null = null;
+    if (clubLat.trim()) {
+      latNum = Number(clubLat);
+      if (!Number.isFinite(latNum) || latNum < -90 || latNum > 90) {
+        setClubError("La latitud debe ser un número válido entre -90 y 90.");
+        return;
+      }
+    }
+
+    let lngNum: number | null = null;
+    if (clubLng.trim()) {
+      lngNum = Number(clubLng);
+      if (!Number.isFinite(lngNum) || lngNum < -180 || lngNum > 180) {
+        setClubError("La longitud debe ser un número válido entre -180 y 180.");
+        return;
+      }
+    }
+
     setClubSubmitting(true);
     try {
       const supabase = createClient();
@@ -241,6 +263,8 @@ export default function DuenoPanelPage() {
           direccion: clubDireccion.trim(),
           horario: clubHorario.trim(),
           deposito_monto: depositoNum,
+          lat: latNum,
+          lng: lngNum,
         })
         .eq("id", club.id);
 
@@ -639,6 +663,38 @@ export default function DuenoPanelPage() {
                     required
                   />
                 </div>
+                <div className="flex gap-3">
+                  <div className="flex flex-1 flex-col gap-1.5">
+                    <Label htmlFor="club_lat">Latitud</Label>
+                    <Input
+                      id="club_lat"
+                      type="number"
+                      step="any"
+                      min={-90}
+                      max={90}
+                      placeholder="ej. 19.4326"
+                      value={clubLat}
+                      onChange={(e) => setClubLat(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-1 flex-col gap-1.5">
+                    <Label htmlFor="club_lng">Longitud</Label>
+                    <Input
+                      id="club_lng"
+                      type="number"
+                      step="any"
+                      min={-180}
+                      max={180}
+                      placeholder="ej. -99.1332"
+                      value={clubLng}
+                      onChange={(e) => setClubLng(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Captura la latitud y longitud de tu antro (opcional) para
+                  que los clientes lo vean ordenado por cercanía.
+                </p>
 
                 {clubError && (
                   <p className="text-sm text-destructive" role="alert">

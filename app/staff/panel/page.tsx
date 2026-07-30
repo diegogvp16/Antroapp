@@ -15,7 +15,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { Club, ClubTable, ConsumptionEntry, Reservation } from "@/types";
+import type {
+  Club,
+  ClubTable,
+  ConsumptionEntry,
+  Profile,
+  Reservation,
+} from "@/types";
+
+type RPListItem = Pick<Profile, "id" | "nombre" | "activo">;
 
 const QR_READER_ELEMENT_ID = "qr-reader";
 
@@ -130,6 +138,15 @@ export default function StaffPanelPage() {
   const [sinConsumoError, setSinConsumoError] = useState<
     Record<string, string>
   >({});
+
+  const [misRPs, setMisRPs] = useState<RPListItem[]>([]);
+  const [loadingRPs, setLoadingRPs] = useState(true);
+  const [rpNombre, setRpNombre] = useState("");
+  const [rpEmail, setRpEmail] = useState("");
+  const [rpPassword, setRpPassword] = useState("");
+  const [rpSubmitting, setRpSubmitting] = useState(false);
+  const [rpError, setRpError] = useState<string | null>(null);
+  const [togglingRpId, setTogglingRpId] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadSession() {
@@ -282,7 +299,93 @@ export default function StaffPanelPage() {
     fetchClubNombre();
     fetchTables();
     fetchReservas(clubId);
+    fetchMisRPs(clubId);
   }, [clubId, fetchReservas]);
+
+  async function fetchMisRPs(targetClubId: string) {
+    setLoadingRPs(true);
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, nombre, activo")
+        .eq("club_id", targetClubId)
+        .eq("role", "rp")
+        .order("nombre", { ascending: true });
+
+      if (error) throw error;
+      setMisRPs((data ?? []) as RPListItem[]);
+    } catch (err) {
+      console.error("Error cargando RPs:", err);
+    } finally {
+      setLoadingRPs(false);
+    }
+  }
+
+  async function handleCreateRP() {
+    setRpError(null);
+    if (!clubId) return;
+
+    if (!rpNombre.trim() || !rpEmail.trim() || !rpPassword) {
+      setRpError("Completa todos los campos.");
+      return;
+    }
+    if (rpPassword.length < 6) {
+      setRpError("La contraseña debe tener al menos 6 caracteres.");
+      return;
+    }
+
+    setRpSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/create-staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: rpEmail.trim(),
+          password: rpPassword,
+          nombre: rpNombre.trim(),
+          role: "rp",
+          club_id: clubId,
+        }),
+      });
+      const result = await res.json();
+
+      if (!res.ok || result.error) {
+        throw new Error(result.error ?? "No pudimos crear la cuenta.");
+      }
+
+      setRpNombre("");
+      setRpEmail("");
+      setRpPassword("");
+      await fetchMisRPs(clubId);
+    } catch (err) {
+      console.error("Error creando RP:", err);
+      setRpError(
+        err instanceof Error ? err.message : "No pudimos crear la cuenta.",
+      );
+    } finally {
+      setRpSubmitting(false);
+    }
+  }
+
+  async function handleToggleRPActivo(rp: RPListItem) {
+    if (!clubId) return;
+    setTogglingRpId(rp.id);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("profiles")
+        .update({ activo: !rp.activo })
+        .eq("id", rp.id);
+
+      if (error) throw error;
+      await fetchMisRPs(clubId);
+    } catch (err) {
+      console.error("Error actualizando estado del RP:", err);
+    } finally {
+      setTogglingRpId(null);
+    }
+  }
 
   async function handleLogout() {
     const supabase = createClient();
@@ -830,6 +933,98 @@ export default function StaffPanelPage() {
             </CardContent>
           </Card>
         </div>
+
+        <section className="flex flex-col gap-4">
+          <h2 className="text-lg font-semibold">Mis RPs</h2>
+          <Card>
+            <CardContent className="flex flex-col gap-4 px-6 py-6">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="rp_nombre">Nombre</Label>
+                <Input
+                  id="rp_nombre"
+                  value={rpNombre}
+                  onChange={(e) => setRpNombre(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="rp_email">Email</Label>
+                <Input
+                  id="rp_email"
+                  type="email"
+                  value={rpEmail}
+                  onChange={(e) => setRpEmail(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="rp_password">Password temporal</Label>
+                <Input
+                  id="rp_password"
+                  type="password"
+                  value={rpPassword}
+                  onChange={(e) => setRpPassword(e.target.value)}
+                />
+              </div>
+
+              {rpError && (
+                <p className="text-sm text-destructive" role="alert">
+                  {rpError}
+                </p>
+              )}
+
+              <Button
+                type="button"
+                onClick={handleCreateRP}
+                disabled={rpSubmitting}
+              >
+                {rpSubmitting ? "Creando..." : "Crear RP"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {loadingRPs && (
+            <p className="text-sm text-muted-foreground">Cargando...</p>
+          )}
+          {!loadingRPs && misRPs.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Todavía no tienes RPs registrados.
+            </p>
+          )}
+          {misRPs.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {misRPs.map((rp) => (
+                <Card key={rp.id}>
+                  <CardContent className="flex items-center justify-between px-5 py-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{rp.nombre}</span>
+                      <Badge
+                        className={
+                          rp.activo
+                            ? "border-transparent bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300"
+                            : "border-transparent bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+                        }
+                      >
+                        {rp.activo ? "Activo" : "Inactivo"}
+                      </Badge>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleToggleRPActivo(rp)}
+                      disabled={togglingRpId === rp.id}
+                    >
+                      {togglingRpId === rp.id
+                        ? "Guardando..."
+                        : rp.activo
+                          ? "Dar de baja"
+                          : "Reactivar"}
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </section>
 
         {error && (
           <p className="text-sm text-destructive" role="alert">

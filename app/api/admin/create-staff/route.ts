@@ -23,9 +23,9 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    if (role !== "staff" && role !== "gerente") {
+    if (role !== "staff" && role !== "gerente" && role !== "rp") {
       return NextResponse.json(
-        { error: "El rol debe ser 'staff' o 'gerente'." },
+        { error: "El rol debe ser 'staff', 'gerente' o 'rp'." },
         { status: 400 },
       );
     }

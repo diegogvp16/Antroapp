@@ -13,6 +13,32 @@ import {
 } from "@/components/ui/card";
 import type { Club } from "@/types";
 
+interface Coords {
+  lat: number;
+  lng: number;
+}
+
+// Formula de Haversine: distancia entre dos puntos sobre la superficie de
+// la Tierra a partir de su latitud/longitud, en kilometros.
+function haversineDistanceKm(a: Coords, b: Coords) {
+  const R = 6371;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const sinDLat = Math.sin(dLat / 2);
+  const sinDLng = Math.sin(dLng / 2);
+  const h =
+    sinDLat * sinDLat +
+    Math.cos((a.lat * Math.PI) / 180) *
+      Math.cos((b.lat * Math.PI) / 180) *
+      sinDLng *
+      sinDLng;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function formatDistance(km: number) {
+  return `${km.toFixed(1)} km`;
+}
+
 export default function ClientePage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
@@ -20,6 +46,7 @@ export default function ClientePage() {
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [userLocation, setUserLocation] = useState<Coords | null>(null);
 
   useEffect(() => {
     async function checkSession() {
@@ -99,9 +126,45 @@ export default function ClientePage() {
     fetchClubs();
   }, [checkingSession]);
 
+  useEffect(() => {
+    if (checkingSession) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) return;
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setUserLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
+      },
+      () => {
+        // Permiso denegado o error obteniendo ubicación: no hacemos nada,
+        // el listado se queda en su orden normal sin distancias.
+      },
+      { timeout: 8000 },
+    );
+  }, [checkingSession]);
+
   if (checkingSession) {
     return null;
   }
+
+  const clubsWithDistance = clubs.map((club) => ({
+    club,
+    distanceKm:
+      userLocation && club.lat !== null && club.lng !== null
+        ? haversineDistanceKm(userLocation, { lat: club.lat, lng: club.lng })
+        : null,
+  }));
+
+  const sortedClubs = userLocation
+    ? [...clubsWithDistance].sort((a, b) => {
+        if (a.distanceKm === null && b.distanceKm === null) return 0;
+        if (a.distanceKm === null) return 1;
+        if (b.distanceKm === null) return -1;
+        return a.distanceKm - b.distanceKm;
+      })
+    : clubsWithDistance;
 
   return (
     <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
@@ -142,7 +205,7 @@ export default function ClientePage() {
         )}
 
         <div className="flex flex-col gap-3">
-          {clubs.map((club) => (
+          {sortedClubs.map(({ club, distanceKm }) => (
             <Link key={club.id} href={`/cliente/${club.id}`}>
               <Card className="overflow-hidden p-0 transition-colors hover:bg-muted/50">
                 {thumbnails[club.id] ? (
@@ -156,7 +219,14 @@ export default function ClientePage() {
                   <div className="h-28 w-full bg-gradient-to-br from-fuchsia-600 via-purple-600 to-indigo-600" />
                 )}
                 <CardHeader className="px-5 pt-4">
-                  <CardTitle className="text-lg">{club.nombre}</CardTitle>
+                  <div className="flex items-start justify-between gap-2">
+                    <CardTitle className="text-lg">{club.nombre}</CardTitle>
+                    {distanceKm !== null && (
+                      <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
+                        {formatDistance(distanceKm)}
+                      </span>
+                    )}
+                  </div>
                   <CardDescription>{club.direccion}</CardDescription>
                 </CardHeader>
                 <CardContent className="flex items-center justify-between px-5 pb-4 text-sm">

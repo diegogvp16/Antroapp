@@ -40,6 +40,8 @@ export interface Club {
   comision_desbloqueo_reservas: number;
   bono_organica_tipo: "fijo" | "porcentaje";
   bono_organica_monto: number;
+  lat: number | null;
+  lng: number | null;
 }
 
 export interface ClubPhoto {

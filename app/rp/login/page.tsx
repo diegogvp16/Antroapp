@@ -45,6 +45,24 @@ export default function RpLoginPage() {
         return;
       }
 
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, activo")
+        .eq("id", data.session.user.id)
+        .maybeSingle();
+
+      if (profileError || !profile || profile.role !== "rp") {
+        await supabase.auth.signOut();
+        setError("Esta cuenta no tiene permisos de RP.");
+        return;
+      }
+
+      if (profile.activo !== true) {
+        await supabase.auth.signOut();
+        setError("Tu cuenta ha sido desactivada, contacta al antro.");
+        return;
+      }
+
       router.push("/rp/panel");
     } catch (err) {
       console.error(err);
