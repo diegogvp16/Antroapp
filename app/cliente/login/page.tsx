@@ -47,17 +47,43 @@ export default function ClienteLoginPage() {
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role, activo")
         .eq("id", data.session.user.id)
         .maybeSingle();
 
-      if (profileError || !profile || profile.role !== "cliente") {
+      if (profileError || !profile) {
         await supabase.auth.signOut();
-        setError("Esta cuenta no tiene permisos de cliente.");
+        setError("No pudimos verificar tu cuenta. Intenta de nuevo.");
         return;
       }
 
-      router.push("/cliente");
+      if (profile.role === "rp" && profile.activo !== true) {
+        await supabase.auth.signOut();
+        setError("Tu cuenta ha sido desactivada, contacta al antro.");
+        return;
+      }
+
+      switch (profile.role) {
+        case "cliente":
+          router.push("/cliente");
+          break;
+        case "rp":
+          router.push("/rp/panel");
+          break;
+        case "staff":
+        case "gerente":
+          router.push("/staff/panel");
+          break;
+        case "dueno":
+          router.push("/dueno/panel");
+          break;
+        case "admin":
+          router.push("/admin");
+          break;
+        default:
+          await supabase.auth.signOut();
+          setError("No pudimos determinar el tipo de cuenta.");
+      }
     } catch (err) {
       console.error(err);
       setError("Ocurrió un error. Intenta de nuevo.");
@@ -70,7 +96,7 @@ export default function ClienteLoginPage() {
     <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Acceso Cliente</CardTitle>
+          <CardTitle>Iniciar sesión</CardTitle>
           <CardDescription>Ingresa con tu email y contraseña.</CardDescription>
         </CardHeader>
         <CardContent className="px-6 pb-6">

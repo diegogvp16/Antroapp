@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -45,9 +45,11 @@ export default function ReservarPageWrapper() {
 }
 
 function ReservarPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const clubId = searchParams.get("club");
 
+  const [checkingAccess, setCheckingAccess] = useState(true);
   const [club, setClub] = useState<Club | null>(null);
   const [loadingClub, setLoadingClub] = useState(true);
   const [clubNotFound, setClubNotFound] = useState(false);
@@ -99,35 +101,45 @@ function ReservarPage() {
   }, [clubId]);
 
   useEffect(() => {
-    // Detecta si hay una sesión de Cliente activa, sin bloquear el flujo
-    // anónimo: si algo falla o no hay sesión, el formulario se queda
-    // exactamente igual que hoy (nombre/teléfono vacíos, sin cliente_id).
+    // Si NO hay sesión, el flujo anónimo sigue exactamente igual que hoy:
+    // se desbloquea el formulario de inmediato, sin cliente_id. Si SÍ hay
+    // sesión pero el rol no es 'cliente' (RP, staff, etc.), se cierra esta
+    // puerta trasera igual que ya hacen /cliente y /cliente/[clubId]:
+    // redirige a /cliente/login en vez de dejarlo pasar.
     async function checkClienteSession() {
       try {
         const supabase = createClient();
         const {
           data: { user },
         } = await supabase.auth.getUser();
-        if (!user) return;
+        if (!user) {
+          setCheckingAccess(false);
+          return;
+        }
 
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from("profiles")
           .select("id, nombre, telefono, role")
           .eq("id", user.id)
           .maybeSingle();
 
-        if (profile && profile.role === "cliente") {
-          setClienteId(profile.id);
-          setNombre((prev) => prev || profile.nombre || "");
-          setTelefono((prev) => prev || profile.telefono || "");
+        if (profileError || !profile || profile.role !== "cliente") {
+          router.replace("/cliente/login");
+          return;
         }
+
+        setClienteId(profile.id);
+        setNombre((prev) => prev || profile.nombre || "");
+        setTelefono((prev) => prev || profile.telefono || "");
+        setCheckingAccess(false);
       } catch (err) {
         console.error("Error verificando sesión de cliente:", err);
+        setCheckingAccess(false);
       }
     }
 
     checkClienteSession();
-  }, []);
+  }, [router]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -187,6 +199,10 @@ function ReservarPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (checkingAccess) {
+    return null;
   }
 
   if (!clubId) {

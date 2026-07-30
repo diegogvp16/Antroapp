@@ -33,6 +33,11 @@ interface ReservaResumen {
   qr_code: string;
 }
 
+interface TurnoRow {
+  id: string;
+  fecha: string;
+}
+
 function todayISO() {
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
@@ -44,6 +49,8 @@ export default function RpPanelPage() {
   const [session, setSession] = useState<RpSession | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
   const [clubNombre, setClubNombre] = useState<string | null>(null);
+  const [misTurnos, setMisTurnos] = useState<TurnoRow[]>([]);
+  const [loadingTurnos, setLoadingTurnos] = useState(true);
 
   const [clienteNombre, setClienteNombre] = useState("");
   const [clienteTelefono, setClienteTelefono] = useState("");
@@ -63,7 +70,7 @@ export default function RpPanelPage() {
       } = await supabase.auth.getUser();
 
       if (!user) {
-        router.replace("/rp/login");
+        router.replace("/cliente/login");
         return;
       }
 
@@ -76,7 +83,7 @@ export default function RpPanelPage() {
       if (profileError || !profile) {
         console.error("Error cargando perfil RP:", profileError);
         await supabase.auth.signOut();
-        router.replace("/rp/login");
+        router.replace("/cliente/login");
         return;
       }
 
@@ -94,6 +101,20 @@ export default function RpPanelPage() {
         } else if (club) {
           setClubNombre(club.nombre);
         }
+
+        const { data: turnosData, error: turnosError } = await supabase
+          .from("rp_schedule")
+          .select("id, fecha")
+          .eq("rp_id", profile.id)
+          .gte("fecha", todayISO())
+          .order("fecha", { ascending: true });
+
+        if (turnosError) {
+          console.error("Error cargando turnos del RP:", turnosError);
+        } else {
+          setMisTurnos((turnosData ?? []) as TurnoRow[]);
+        }
+        setLoadingTurnos(false);
       }
 
       setCheckingSession(false);
@@ -105,7 +126,7 @@ export default function RpPanelPage() {
   async function handleLogout() {
     const supabase = createClient();
     await supabase.auth.signOut();
-    router.replace("/rp/login");
+    router.replace("/cliente/login");
   }
 
   function resetForm() {
@@ -194,6 +215,44 @@ export default function RpPanelPage() {
           Cerrar sesión
         </Button>
       </div>
+
+      {session?.clubId && (
+        <Card className="mb-6 w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>Mi turno y asistencia</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4 px-6 pb-6">
+            <div className="flex flex-col gap-1.5">
+              <p className="text-sm font-medium">Próximos turnos</p>
+              {loadingTurnos && (
+                <p className="text-sm text-muted-foreground">Cargando...</p>
+              )}
+              {!loadingTurnos && misTurnos.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  No tienes turnos asignados todavía.
+                </p>
+              )}
+              {misTurnos.length > 0 && (
+                <ul className="flex flex-col gap-1 text-sm">
+                  {misTurnos.map((t) => (
+                    <li key={t.id}>{t.fecha}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="flex flex-col items-center gap-2 border-t border-border pt-4">
+              <p className="text-sm font-medium">Tu código de asistencia</p>
+              <div className="rounded-xl bg-white p-4">
+                <QRCodeSVG value={`rp-attendance-${session.id}`} size={160} />
+              </div>
+              <p className="text-center text-xs text-muted-foreground">
+                Muéstralo al staff de tu antro al llegar.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {!session?.clubId ? (
         <Card className="w-full max-w-sm">
