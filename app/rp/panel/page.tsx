@@ -23,6 +23,7 @@ import {
 interface RpSession {
   id: string;
   nombre: string;
+  clubId: string | null;
 }
 
 interface ReservaResumen {
@@ -42,6 +43,7 @@ export default function RpPanelPage() {
   const router = useRouter();
   const [session, setSession] = useState<RpSession | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [clubNombre, setClubNombre] = useState<string | null>(null);
 
   const [clienteNombre, setClienteNombre] = useState("");
   const [clienteTelefono, setClienteTelefono] = useState("");
@@ -49,7 +51,6 @@ export default function RpPanelPage() {
   const [personas, setPersonas] = useState(2);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [debugError, setDebugError] = useState<string | null>(null);
   const [reserva, setReserva] = useState<ReservaResumen | null>(null);
 
   const minDate = todayISO();
@@ -68,7 +69,7 @@ export default function RpPanelPage() {
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("id, nombre")
+        .select("id, nombre, club_id")
         .eq("id", user.id)
         .maybeSingle();
 
@@ -79,7 +80,22 @@ export default function RpPanelPage() {
         return;
       }
 
-      setSession({ id: profile.id, nombre: profile.nombre });
+      setSession({ id: profile.id, nombre: profile.nombre, clubId: profile.club_id });
+
+      if (profile.club_id) {
+        const { data: club, error: clubError } = await supabase
+          .from("clubs")
+          .select("nombre")
+          .eq("id", profile.club_id)
+          .maybeSingle();
+
+        if (clubError) {
+          console.error("Error cargando antro del RP:", clubError);
+        } else if (club) {
+          setClubNombre(club.nombre);
+        }
+      }
+
       setCheckingSession(false);
     }
 
@@ -99,15 +115,13 @@ export default function RpPanelPage() {
     setPersonas(2);
     setReserva(null);
     setError(null);
-    setDebugError(null);
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setDebugError(null);
 
-    if (!session) {
+    if (!session || !session.clubId) {
       return;
     }
     if (!clienteNombre.trim() || !clienteTelefono.trim() || !fecha) {
@@ -133,6 +147,7 @@ export default function RpPanelPage() {
         cliente_nombre: clienteNombre.trim(),
         cliente_telefono: clienteTelefono.trim(),
         rp_id: session.id,
+        club_id: session.clubId,
         source: "rp",
         fecha,
         personas,
@@ -142,12 +157,6 @@ export default function RpPanelPage() {
 
       if (insertError) {
         console.error("Supabase insert error (reservations):", insertError);
-        // DEBUG TEMPORAL: quitar setDebugError una vez resuelto el bug del insert.
-        setDebugError(
-          `[${insertError.code ?? "?"}] ${insertError.message}${
-            insertError.details ? ` — ${insertError.details}` : ""
-          }${insertError.hint ? ` (hint: ${insertError.hint})` : ""}`,
-        );
         throw insertError;
       }
 
@@ -173,7 +182,7 @@ export default function RpPanelPage() {
 
   const whatsappHref = reserva
     ? `https://wa.me/?text=${encodeURIComponent(
-        `Aquí está tu reservación en Antro Demo para ${reserva.cliente_nombre} el ${reserva.fecha} (${reserva.personas} personas). Ábrelo aquí para ver tu código: ${window.location.origin}/r/${reserva.qr_code}`,
+        `Aquí está tu reservación en ${clubNombre ?? "tu antro"} para ${reserva.cliente_nombre} el ${reserva.fecha} (${reserva.personas} personas). Ábrelo aquí para ver tu código: ${window.location.origin}/r/${reserva.qr_code}`,
       )}`
     : "#";
 
@@ -186,7 +195,17 @@ export default function RpPanelPage() {
         </Button>
       </div>
 
-      {reserva ? (
+      {!session?.clubId ? (
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>Cuenta sin antro asignado</CardTitle>
+            <CardDescription>
+              Tu cuenta no está vinculada a ningún antro. Contacta al antro
+              para que te den de alta correctamente.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      ) : reserva ? (
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>¡Reserva creada!</CardTitle>
@@ -274,14 +293,9 @@ export default function RpPanelPage() {
               <PersonasStepper value={personas} onChange={setPersonas} />
 
               {error && (
-                <div role="alert">
-                  <p className="text-sm text-destructive">{error}</p>
-                  {debugError && (
-                    <p className="mt-1 text-xs text-destructive/80">
-                      DEBUG: {debugError}
-                    </p>
-                  )}
-                </div>
+                <p className="text-sm text-destructive" role="alert">
+                  {error}
+                </p>
               )}
 
               <Button

@@ -59,7 +59,6 @@ function ReservarPage() {
   const [personas, setPersonas] = useState(2);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [debugError, setDebugError] = useState<string | null>(null);
   const [reserva, setReserva] = useState<ReservaResumen | null>(null);
 
   const minDate = todayISO();
@@ -133,7 +132,6 @@ function ReservarPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setDebugError(null);
 
     if (!club) {
       return;
@@ -172,12 +170,6 @@ function ReservarPage() {
 
       if (insertError) {
         console.error("Supabase insert error (reservations):", insertError);
-        // DEBUG TEMPORAL: quitar setDebugError una vez resuelto el bug del insert.
-        setDebugError(
-          `[${insertError.code ?? "?"}] ${insertError.message}${
-            insertError.details ? ` — ${insertError.details}` : ""
-          }${insertError.hint ? ` (hint: ${insertError.hint})` : ""}`,
-        );
         throw insertError;
       }
 
@@ -348,14 +340,9 @@ function ReservarPage() {
             <PersonasStepper value={personas} onChange={setPersonas} />
 
             {error && (
-              <div role="alert">
-                <p className="text-sm text-destructive">{error}</p>
-                {debugError && (
-                  <p className="mt-1 text-xs text-destructive/80">
-                    DEBUG: {debugError}
-                  </p>
-                )}
-              </div>
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
             )}
 
             <Button
