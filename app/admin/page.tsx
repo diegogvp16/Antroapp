@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -14,6 +15,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { Club } from "@/types";
+
+interface ConsumoBucket {
+  rpTotal: number;
+  rpConConsumo: number;
+  organicaTotal: number;
+  organicaConConsumo: number;
+}
+
+const DIFERENCIA_ALERTA = 30;
 
 const SELECT_CLASSES =
   "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30";
@@ -62,6 +72,11 @@ export default function AdminPage() {
   );
   const [bonoError, setBonoError] = useState<Record<string, string>>({});
 
+  const [alertasData, setAlertasData] = useState<Record<string, ConsumoBucket>>(
+    {},
+  );
+  const [loadingAlertas, setLoadingAlertas] = useState(true);
+
   useEffect(() => {
     async function loadSession() {
       const supabase = createClient();
@@ -105,8 +120,61 @@ export default function AdminPage() {
     }
   }
 
+  async function fetchAlertas() {
+    setLoadingAlertas(true);
+    try {
+      const supabase = createClient();
+      const desde = new Date();
+      desde.setDate(desde.getDate() - 30);
+      const desdeISO = desde.toISOString().slice(0, 10);
+
+      const { data, error } = await supabase
+        .from("reservations")
+        .select("club_id, source, consumption_entries(id)")
+        .eq("status", "usada")
+        .gte("fecha", desdeISO);
+
+      if (error) throw error;
+
+      type Row = {
+        club_id: string | null;
+        source: "organica" | "rp";
+        consumption_entries: { id: string }[] | null;
+      };
+
+      const grouped: Record<string, ConsumoBucket> = {};
+
+      for (const row of (data ?? []) as Row[]) {
+        if (!row.club_id) continue;
+        const bucket = grouped[row.club_id] ?? {
+          rpTotal: 0,
+          rpConConsumo: 0,
+          organicaTotal: 0,
+          organicaConConsumo: 0,
+        };
+        const tieneConsumo = (row.consumption_entries ?? []).length > 0;
+
+        if (row.source === "rp") {
+          bucket.rpTotal += 1;
+          if (tieneConsumo) bucket.rpConConsumo += 1;
+        } else {
+          bucket.organicaTotal += 1;
+          if (tieneConsumo) bucket.organicaConConsumo += 1;
+        }
+        grouped[row.club_id] = bucket;
+      }
+
+      setAlertasData(grouped);
+    } catch (err) {
+      console.error("Error cargando alertas de reporte:", err);
+    } finally {
+      setLoadingAlertas(false);
+    }
+  }
+
   useEffect(() => {
     fetchClubs();
+    fetchAlertas();
   }, []);
 
   async function handleLogout() {
@@ -466,6 +534,101 @@ export default function AdminPage() {
               </form>
             </CardContent>
           </Card>
+        </section>
+
+        <section className="flex flex-col gap-4">
+          <h2 className="text-lg font-semibold">Alertas de reporte</h2>
+          <p className="text-xs text-muted-foreground">
+            Compara, por antro, qué % de las reservas con check-in
+            confirmado en los últimos 30 días tuvieron al menos un consumo
+            registrado, vía RP contra orgánicas. Una brecha grande es una
+            señal de posible sub-reporte de consumo, no una prueba —
+            investiga manualmente antes de actuar.
+          </p>
+
+          {loadingAlertas && (
+            <p className="text-sm text-muted-foreground">Cargando...</p>
+          )}
+
+          {!loadingAlertas && clubs.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No hay antros todavía.
+            </p>
+          )}
+
+          {!loadingAlertas && clubs.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {clubs.map((club) => {
+                const bucket = alertasData[club.id];
+                const pctRp =
+                  bucket && bucket.rpTotal > 0
+                    ? Math.round((bucket.rpConConsumo / bucket.rpTotal) * 100)
+                    : null;
+                const pctOrganica =
+                  bucket && bucket.organicaTotal > 0
+                    ? Math.round(
+                        (bucket.organicaConConsumo / bucket.organicaTotal) *
+                          100,
+                      )
+                    : null;
+                const flagged =
+                  pctRp !== null &&
+                  pctOrganica !== null &&
+                  Math.abs(pctRp - pctOrganica) > DIFERENCIA_ALERTA;
+
+                return (
+                  <Card
+                    key={club.id}
+                    className={
+                      flagged
+                        ? "border-amber-400 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10"
+                        : undefined
+                    }
+                  >
+                    <CardContent className="flex flex-col gap-3 px-5 py-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-medium">{club.nombre}</p>
+                        {flagged && (
+                          <Badge className="border-transparent bg-amber-200 text-amber-900 dark:bg-amber-500/30 dark:text-amber-200">
+                            Posible sub-reporte
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex gap-8 text-sm">
+                        <div>
+                          <p className="text-muted-foreground">
+                            Vía RP con consumo
+                          </p>
+                          <p className="text-lg font-semibold">
+                            {pctRp !== null ? `${pctRp}%` : "—"}
+                            {bucket && bucket.rpTotal > 0 && (
+                              <span className="ml-1 text-xs font-normal text-muted-foreground">
+                                ({bucket.rpConConsumo}/{bucket.rpTotal})
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">
+                            Orgánicas con consumo
+                          </p>
+                          <p className="text-lg font-semibold">
+                            {pctOrganica !== null ? `${pctOrganica}%` : "—"}
+                            {bucket && bucket.organicaTotal > 0 && (
+                              <span className="ml-1 text-xs font-normal text-muted-foreground">
+                                ({bucket.organicaConConsumo}/
+                                {bucket.organicaTotal})
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         <section className="flex flex-col gap-4">

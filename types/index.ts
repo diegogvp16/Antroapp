@@ -23,6 +23,7 @@ export interface Reservation {
   mesa_id: string | null;
   consumo_monto: number | null;
   cliente_id: string | null;
+  se_retiro_sin_consumir: boolean | null;
 }
 
 export interface Club {

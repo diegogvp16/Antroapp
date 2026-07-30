@@ -124,6 +124,13 @@ export default function StaffPanelPage() {
     Record<string, string>
   >({});
 
+  const [markingSinConsumoId, setMarkingSinConsumoId] = useState<
+    string | null
+  >(null);
+  const [sinConsumoError, setSinConsumoError] = useState<
+    Record<string, string>
+  >({});
+
   useEffect(() => {
     async function loadSession() {
       const supabase = createClient();
@@ -537,6 +544,32 @@ export default function StaffPanelPage() {
     }
   }
 
+  async function handleMarkSinConsumo(reserva: Reservation) {
+    setSinConsumoError((prev) => ({ ...prev, [reserva.id]: "" }));
+    setMarkingSinConsumoId(reserva.id);
+    try {
+      const supabase = createClient();
+      const { error: updateError } = await supabase
+        .from("reservations")
+        .update({ se_retiro_sin_consumir: true })
+        .eq("id", reserva.id);
+
+      if (updateError) throw updateError;
+
+      if (clubId) {
+        await fetchReservas(clubId);
+      }
+    } catch (err) {
+      console.error("Error marcando sin consumo:", err);
+      setSinConsumoError((prev) => ({
+        ...prev,
+        [reserva.id]: "No pudimos guardar. Intenta de nuevo.",
+      }));
+    } finally {
+      setMarkingSinConsumoId(null);
+    }
+  }
+
   useEffect(() => {
     if (!scannerOpen) return;
 
@@ -586,6 +619,9 @@ export default function StaffPanelPage() {
   const totalConsumo = Object.values(consumptionEntries)
     .flat()
     .reduce((sum, entry) => sum + Number(entry.monto), 0);
+  const totalSinConsumo = reservas.filter(
+    (r) => r.se_retiro_sin_consumir === true,
+  ).length;
 
   if (scannerOpen) {
     return (
@@ -750,7 +786,7 @@ export default function StaffPanelPage() {
           Escanear QR
         </Button>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
           <Card size="sm">
             <CardContent className="flex flex-col gap-1 px-4">
               <span className="text-xs text-muted-foreground">Reservas</span>
@@ -783,6 +819,14 @@ export default function StaffPanelPage() {
               <span className="text-2xl font-bold">
                 ${totalConsumo.toLocaleString("en-US")}
               </span>
+            </CardContent>
+          </Card>
+          <Card size="sm">
+            <CardContent className="flex flex-col gap-1 px-4">
+              <span className="text-xs text-muted-foreground">
+                Sin consumo
+              </span>
+              <span className="text-2xl font-bold">{totalSinConsumo}</span>
             </CardContent>
           </Card>
         </div>
@@ -870,7 +914,18 @@ export default function StaffPanelPage() {
                 </CardContent>
               )}
 
-              {r.mesa_id && (
+              {r.mesa_id && r.se_retiro_sin_consumir === true && (
+                <CardContent className="flex flex-col gap-2 border-t border-border px-6 py-4">
+                  <p className="text-sm text-muted-foreground">
+                    Mesa: {tables.find((t) => t.id === r.mesa_id)?.numero ?? "—"}
+                  </p>
+                  <Badge className="w-fit border-transparent bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                    Se retiró sin consumir
+                  </Badge>
+                </CardContent>
+              )}
+
+              {r.mesa_id && r.se_retiro_sin_consumir !== true && (
                 <CardContent className="flex flex-col gap-3 border-t border-border px-6 py-4">
                   <p className="text-sm text-muted-foreground">
                     Mesa: {tables.find((t) => t.id === r.mesa_id)?.numero ?? "—"}
@@ -929,6 +984,27 @@ export default function StaffPanelPage() {
                     <p className="text-sm text-destructive" role="alert">
                       {consumptionError[r.id]}
                     </p>
+                  )}
+
+                  {(consumptionEntries[r.id] ?? []).length === 0 && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleMarkSinConsumo(r)}
+                        disabled={markingSinConsumoId === r.id}
+                      >
+                        {markingSinConsumoId === r.id
+                          ? "Guardando..."
+                          : "Cliente se retiró sin consumir"}
+                      </Button>
+                      {sinConsumoError[r.id] && (
+                        <p className="text-sm text-destructive" role="alert">
+                          {sinConsumoError[r.id]}
+                        </p>
+                      )}
+                    </>
                   )}
                 </CardContent>
               )}
