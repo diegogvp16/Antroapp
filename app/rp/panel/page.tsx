@@ -38,10 +38,47 @@ interface TurnoRow {
   fecha: string;
 }
 
+interface RendimientoStats {
+  total: number;
+  usada: number;
+  pendienteOConfirmada: number;
+}
+
+const COMISION_STATUS_LABEL: Record<string, string> = {
+  pendiente: "Pendiente",
+  validada: "Validada",
+  pagada: "Pagada",
+};
+
 function todayISO() {
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
   return now.toISOString().slice(0, 10);
+}
+
+// Semana lunes-domingo en hora LOCAL del dispositivo (mismo criterio que
+// usa el panel de Staff para calcular el desbloqueo de comisión).
+function getWeekRange() {
+  const now = new Date();
+  const day = now.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() + diffToMonday);
+
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+
+  return { start: monday, end: sunday };
+}
+
+function getMonthStart() {
+  const start = new Date();
+  start.setDate(1);
+  start.setHours(0, 0, 0, 0);
+  return start;
 }
 
 export default function RpPanelPage() {
@@ -51,6 +88,25 @@ export default function RpPanelPage() {
   const [clubNombre, setClubNombre] = useState<string | null>(null);
   const [misTurnos, setMisTurnos] = useState<TurnoRow[]>([]);
   const [loadingTurnos, setLoadingTurnos] = useState(true);
+
+  const [statsSemana, setStatsSemana] = useState<RendimientoStats>({
+    total: 0,
+    usada: 0,
+    pendienteOConfirmada: 0,
+  });
+  const [statsMes, setStatsMes] = useState<RendimientoStats>({
+    total: 0,
+    usada: 0,
+    pendienteOConfirmada: 0,
+  });
+  const [comisionSemana, setComisionSemana] = useState<Record<string, number>>(
+    {},
+  );
+  const [comisionesSemanaCount, setComisionesSemanaCount] = useState(0);
+  const [comisionDesbloqueoReservas, setComisionDesbloqueoReservas] = useState<
+    number | null
+  >(null);
+  const [loadingRendimiento, setLoadingRendimiento] = useState(true);
 
   const [clienteNombre, setClienteNombre] = useState("");
   const [clienteTelefono, setClienteTelefono] = useState("");
@@ -92,7 +148,7 @@ export default function RpPanelPage() {
       if (profile.club_id) {
         const { data: club, error: clubError } = await supabase
           .from("clubs")
-          .select("nombre")
+          .select("nombre, comision_desbloqueo_reservas")
           .eq("id", profile.club_id)
           .maybeSingle();
 
@@ -100,6 +156,7 @@ export default function RpPanelPage() {
           console.error("Error cargando antro del RP:", clubError);
         } else if (club) {
           setClubNombre(club.nombre);
+          setComisionDesbloqueoReservas(club.comision_desbloqueo_reservas);
         }
 
         const { data: turnosData, error: turnosError } = await supabase
@@ -115,9 +172,75 @@ export default function RpPanelPage() {
           setMisTurnos((turnosData ?? []) as TurnoRow[]);
         }
         setLoadingTurnos(false);
+
+        await fetchRendimiento(profile.id, profile.club_id);
       }
 
       setCheckingSession(false);
+    }
+
+    async function fetchRendimiento(rpId: string, clubId: string) {
+      setLoadingRendimiento(true);
+      try {
+        const supabase = createClient();
+        const { start: weekStart, end: weekEnd } = getWeekRange();
+        const monthStart = getMonthStart();
+
+        const { data: reservasSemana, error: reservasSemanaError } =
+          await supabase
+            .from("reservations")
+            .select("id, status")
+            .eq("rp_id", rpId)
+            .eq("club_id", clubId)
+            .gte("created_at", weekStart.toISOString())
+            .lte("created_at", weekEnd.toISOString());
+
+        if (reservasSemanaError) throw reservasSemanaError;
+        const semanaRows = reservasSemana ?? [];
+        setStatsSemana({
+          total: semanaRows.length,
+          usada: semanaRows.filter((r) => r.status === "usada").length,
+          pendienteOConfirmada: semanaRows.filter((r) => r.status !== "usada")
+            .length,
+        });
+
+        const { data: reservasMes, error: reservasMesError } = await supabase
+          .from("reservations")
+          .select("id, status")
+          .eq("rp_id", rpId)
+          .eq("club_id", clubId)
+          .gte("created_at", monthStart.toISOString());
+
+        if (reservasMesError) throw reservasMesError;
+        const mesRows = reservasMes ?? [];
+        setStatsMes({
+          total: mesRows.length,
+          usada: mesRows.filter((r) => r.status === "usada").length,
+          pendienteOConfirmada: mesRows.filter((r) => r.status !== "usada")
+            .length,
+        });
+
+        const { data: comisiones, error: comisionesError } = await supabase
+          .from("commissions")
+          .select("monto, status")
+          .eq("rp_id", rpId)
+          .eq("tipo", "rp")
+          .gte("created_at", weekStart.toISOString())
+          .lte("created_at", weekEnd.toISOString());
+
+        if (comisionesError) throw comisionesError;
+        const comisionRows = comisiones ?? [];
+        const sums: Record<string, number> = {};
+        for (const row of comisionRows) {
+          sums[row.status] = (sums[row.status] ?? 0) + Number(row.monto);
+        }
+        setComisionSemana(sums);
+        setComisionesSemanaCount(comisionRows.length);
+      } catch (err) {
+        console.error("Error cargando rendimiento del RP:", err);
+      } finally {
+        setLoadingRendimiento(false);
+      }
     }
 
     loadSession();
@@ -215,6 +338,67 @@ export default function RpPanelPage() {
           Cerrar sesión
         </Button>
       </div>
+
+      {session?.clubId && (
+        <Card className="mb-6 w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>Mi rendimiento</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4 px-6 pb-6">
+            {loadingRendimiento ? (
+              <p className="text-sm text-muted-foreground">Cargando...</p>
+            ) : (
+              <>
+                <div className="flex flex-col gap-1">
+                  <p className="text-sm font-medium">Esta semana</p>
+                  <p className="text-sm text-muted-foreground">
+                    {statsSemana.total} reservas — {statsSemana.usada}{" "}
+                    asistieron, {statsSemana.pendienteOConfirmada} sin llegar
+                    aún
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <p className="text-sm font-medium">Este mes</p>
+                  <p className="text-sm text-muted-foreground">
+                    {statsMes.total} reservas — {statsMes.usada} asistieron,{" "}
+                    {statsMes.pendienteOConfirmada} sin llegar aún
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-1 border-t border-border pt-3">
+                  <p className="text-sm font-medium">
+                    Comisión acumulada esta semana
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {Object.keys(comisionSemana).length === 0
+                      ? "Sin comisiones esta semana todavía."
+                      : Object.entries(comisionSemana)
+                          .map(
+                            ([status, monto]) =>
+                              `${COMISION_STATUS_LABEL[status] ?? status}: $${monto.toLocaleString("en-US")}`,
+                          )
+                          .join(" · ")}
+                  </p>
+                </div>
+
+                {comisionDesbloqueoReservas !== null && (
+                  <div className="flex flex-col gap-1 border-t border-border pt-3">
+                    <p className="text-sm font-medium">
+                      Desbloqueo de comisión semanal
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {comisionesSemanaCount >= comisionDesbloqueoReservas
+                        ? `Llevas ${comisionesSemanaCount} de ${comisionDesbloqueoReservas} reservas necesarias esta semana ✅`
+                        : `Llevas ${comisionesSemanaCount} de ${comisionDesbloqueoReservas}, te faltan ${comisionDesbloqueoReservas - comisionesSemanaCount} para desbloquear comisión.`}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {session?.clubId && (
         <Card className="mb-6 w-full max-w-sm">
