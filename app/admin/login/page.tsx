@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -109,6 +110,15 @@ export default function AdminLoginPage() {
             >
               {submitting ? "Entrando..." : "Entrar"}
             </Button>
+
+            <p className="text-center text-sm text-muted-foreground">
+              <Link
+                href="/recuperar-contrasena"
+                className="font-medium text-foreground underline underline-offset-4"
+              >
+                ¿Olvidaste tu contraseña?
+              </Link>
+            </p>
           </form>
         </CardContent>
       </Card>

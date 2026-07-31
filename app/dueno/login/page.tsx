@@ -112,6 +112,15 @@ export default function DuenoLoginPage() {
             </Button>
 
             <p className="text-center text-sm text-muted-foreground">
+              <Link
+                href="/recuperar-contrasena"
+                className="font-medium text-foreground underline underline-offset-4"
+              >
+                ¿Olvidaste tu contraseña?
+              </Link>
+            </p>
+
+            <p className="text-center text-sm text-muted-foreground">
               ¿No tienes cuenta?{" "}
               <Link
                 href="/dueno/signup"

@@ -25,6 +25,39 @@ interface ConsumoBucket {
 
 const DIFERENCIA_ALERTA = 30;
 
+interface DashboardData {
+  totalReservas30d: number;
+  organica30d: number;
+  rp30d: number;
+  ranking: [string, number][];
+  totalConsumo30d: number;
+  reservasConConsumo: number;
+  ticketPromedio: number;
+  comisionesPorTipo: Record<string, Record<string, number>>;
+}
+
+const DASHBOARD_INICIAL: DashboardData = {
+  totalReservas30d: 0,
+  organica30d: 0,
+  rp30d: 0,
+  ranking: [],
+  totalConsumo30d: 0,
+  reservasConConsumo: 0,
+  ticketPromedio: 0,
+  comisionesPorTipo: {},
+};
+
+const TIPO_COMISION_LABEL: Record<string, string> = {
+  rp: "RP",
+  plataforma: "Plataforma",
+};
+
+const STATUS_COMISION_LABEL: Record<string, string> = {
+  pendiente: "Pendiente",
+  validada: "Validada",
+  pagada: "Pagada",
+};
+
 const SELECT_CLASSES =
   "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30";
 
@@ -76,6 +109,9 @@ export default function AdminPage() {
     {},
   );
   const [loadingAlertas, setLoadingAlertas] = useState(true);
+
+  const [dashboard, setDashboard] = useState<DashboardData>(DASHBOARD_INICIAL);
+  const [loadingDashboard, setLoadingDashboard] = useState(true);
 
   useEffect(() => {
     async function loadSession() {
@@ -172,9 +208,88 @@ export default function AdminPage() {
     }
   }
 
+  async function fetchDashboard() {
+    setLoadingDashboard(true);
+    try {
+      const supabase = createClient();
+      const desde = new Date();
+      desde.setDate(desde.getDate() - 30);
+      const desdeFecha = desde.toISOString().slice(0, 10);
+      const desdeTimestamp = desde.toISOString();
+
+      const { data: reservasData, error: reservasError } = await supabase
+        .from("reservations")
+        .select("id, club_id, source")
+        .gte("fecha", desdeFecha);
+      if (reservasError) throw reservasError;
+
+      const reservasRows = reservasData ?? [];
+      const totalReservas30d = reservasRows.length;
+      const organica30d = reservasRows.filter(
+        (r) => r.source === "organica",
+      ).length;
+      const rp30d = reservasRows.filter((r) => r.source === "rp").length;
+
+      const clubCounts: Record<string, number> = {};
+      for (const r of reservasRows) {
+        if (!r.club_id) continue;
+        clubCounts[r.club_id] = (clubCounts[r.club_id] ?? 0) + 1;
+      }
+      const ranking = Object.entries(clubCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5) as [string, number][];
+
+      const { data: consumoData, error: consumoError } = await supabase
+        .from("consumption_entries")
+        .select("reservation_id, monto")
+        .gte("created_at", desdeTimestamp);
+      if (consumoError) throw consumoError;
+
+      const consumoRows = consumoData ?? [];
+      const totalConsumo30d = consumoRows.reduce(
+        (sum, e) => sum + Number(e.monto),
+        0,
+      );
+      const reservasConConsumo = new Set(
+        consumoRows.map((e) => e.reservation_id),
+      ).size;
+      const ticketPromedio =
+        reservasConConsumo > 0 ? totalConsumo30d / reservasConConsumo : 0;
+
+      const { data: comisionesData, error: comisionesError } = await supabase
+        .from("commissions")
+        .select("tipo, monto, status")
+        .gte("created_at", desdeTimestamp);
+      if (comisionesError) throw comisionesError;
+
+      const comisionesPorTipo: Record<string, Record<string, number>> = {};
+      for (const c of comisionesData ?? []) {
+        const tipoBucket = comisionesPorTipo[c.tipo] ?? {};
+        tipoBucket[c.status] = (tipoBucket[c.status] ?? 0) + Number(c.monto);
+        comisionesPorTipo[c.tipo] = tipoBucket;
+      }
+
+      setDashboard({
+        totalReservas30d,
+        organica30d,
+        rp30d,
+        ranking,
+        totalConsumo30d,
+        reservasConConsumo,
+        ticketPromedio,
+        comisionesPorTipo,
+      });
+    } catch (err) {
+      console.error("Error cargando dashboard general:", err);
+    } finally {
+      setLoadingDashboard(false);
+    }
+  }
+
   useEffect(() => {
     fetchClubs();
     fetchAlertas();
+    fetchDashboard();
   }, []);
 
   async function handleLogout() {
@@ -363,6 +478,141 @@ export default function AdminPage() {
             Cerrar sesión
           </Button>
         </div>
+
+        <section className="flex flex-col gap-4">
+          <h2 className="text-lg font-semibold">Dashboard general</h2>
+
+          {(loadingDashboard || loadingClubs) && (
+            <p className="text-sm text-muted-foreground">Cargando...</p>
+          )}
+
+          {!loadingDashboard && !loadingClubs && (
+            <>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Card size="sm">
+                  <CardContent className="flex flex-col gap-1 px-4">
+                    <span className="text-xs text-muted-foreground">
+                      Antros activos
+                    </span>
+                    <span className="text-2xl font-bold">
+                      {clubs.filter((c) => c.suscripcion_activa).length}
+                    </span>
+                  </CardContent>
+                </Card>
+                <Card size="sm">
+                  <CardContent className="flex flex-col gap-1 px-4">
+                    <span className="text-xs text-muted-foreground">
+                      Antros inactivos
+                    </span>
+                    <span className="text-2xl font-bold">
+                      {clubs.filter((c) => !c.suscripcion_activa).length}
+                    </span>
+                  </CardContent>
+                </Card>
+                <Card size="sm">
+                  <CardContent className="flex flex-col gap-1 px-4">
+                    <span className="text-xs text-muted-foreground">
+                      Reservas (30d)
+                    </span>
+                    <span className="text-2xl font-bold">
+                      {dashboard.totalReservas30d}
+                    </span>
+                  </CardContent>
+                </Card>
+                <Card size="sm">
+                  <CardContent className="flex flex-col gap-1 px-4">
+                    <span className="text-xs text-muted-foreground">
+                      Ticket promedio
+                    </span>
+                    <span className="text-2xl font-bold">
+                      $
+                      {dashboard.ticketPromedio.toLocaleString("en-US", {
+                        maximumFractionDigits: 0,
+                      })}
+                    </span>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card>
+                <CardContent className="flex flex-col gap-1 px-5 py-4 text-sm">
+                  <p className="font-medium">
+                    Reservas por fuente (últimos 30 días)
+                  </p>
+                  <p className="text-muted-foreground">
+                    Orgánica: {dashboard.organica30d} · Vía RP:{" "}
+                    {dashboard.rp30d}
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="flex flex-col gap-1 px-5 py-4 text-sm">
+                  <p className="font-medium">
+                    Ticket promedio (últimos 30 días)
+                  </p>
+                  <p className="text-muted-foreground">
+                    $
+                    {dashboard.totalConsumo30d.toLocaleString("en-US")} de
+                    consumo total entre {dashboard.reservasConConsumo}{" "}
+                    reservas con consumo registrado
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="flex flex-col gap-1 px-5 py-4 text-sm">
+                  <p className="font-medium">
+                    Comisiones generadas (últimos 30 días)
+                  </p>
+                  {Object.keys(dashboard.comisionesPorTipo).length === 0 ? (
+                    <p className="text-muted-foreground">
+                      Sin comisiones en este periodo.
+                    </p>
+                  ) : (
+                    Object.entries(dashboard.comisionesPorTipo).map(
+                      ([tipo, statuses]) => (
+                        <p key={tipo} className="text-muted-foreground">
+                          {TIPO_COMISION_LABEL[tipo] ?? tipo}:{" "}
+                          {Object.entries(statuses)
+                            .map(
+                              ([status, monto]) =>
+                                `${STATUS_COMISION_LABEL[status] ?? status} $${monto.toLocaleString("en-US")}`,
+                            )
+                            .join(" · ")}
+                        </p>
+                      ),
+                    )
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="flex flex-col gap-2 px-5 py-4 text-sm">
+                  <p className="font-medium">
+                    Top 5 antros por reservas (últimos 30 días)
+                  </p>
+                  {dashboard.ranking.length === 0 ? (
+                    <p className="text-muted-foreground">
+                      Sin datos en este periodo.
+                    </p>
+                  ) : (
+                    <ol className="flex flex-col gap-1 text-muted-foreground">
+                      {dashboard.ranking.map(([clubId, count], idx) => (
+                        <li key={clubId}>
+                          {idx + 1}.{" "}
+                          {clubs.find((c) => c.id === clubId)?.nombre ??
+                            clubId}{" "}
+                          — {count} reservas
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </section>
 
         <section className="flex flex-col gap-4">
           <h2 className="text-lg font-semibold">Antros</h2>
