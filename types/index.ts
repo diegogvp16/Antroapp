@@ -42,6 +42,11 @@ export interface Club {
   bono_organica_monto: number;
   lat: number | null;
   lng: number | null;
+  pago_rp_modo: "reserva" | "dia";
+  ambiente: string | null;
+  tipo_musica: string | null;
+  codigo_vestimenta: string | null;
+  edad_minima: number | null;
 }
 
 export interface ClubPhoto {
@@ -66,4 +71,55 @@ export interface ConsumptionEntry {
   reservation_id: string;
   monto: number;
   created_at: string;
+}
+
+export interface Commission {
+  id: string;
+  reservation_id: string;
+  rp_id: string | null;
+  tipo: "rp" | "plataforma";
+  monto: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClubDiaTarifa {
+  id: string;
+  club_id: string;
+  posicion: number;
+  monto: number;
+  created_at: string;
+}
+
+export interface RpPagoDia {
+  id: string;
+  rp_attendance_id: string;
+  rp_id: string;
+  club_id: string;
+  fecha: string;
+  posicion: number;
+  monto: number;
+  status: string;
+  created_at: string;
+}
+
+export interface RpDiaTarifaOverride {
+  id: string;
+  club_id: string;
+  rp_id: string;
+  posicion: number;
+  monto: number;
+  created_at: string;
+}
+
+export interface RpComisionOverride {
+  id: string;
+  club_id: string;
+  rp_id: string;
+  comision_tipo: "fijo" | "porcentaje";
+  comision_monto: number;
+  comision_desbloqueo_reservas: number;
+  created_at: string;
+  updated_at: string;
 }

@@ -139,7 +139,7 @@ export default function ActualizarContrasenaPage() {
 
   if (success) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>Contraseña actualizada</CardTitle>
@@ -162,7 +162,7 @@ export default function ActualizarContrasenaPage() {
 
   if (!recoveryReady) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>Link inválido o expirado</CardTitle>
@@ -185,7 +185,7 @@ export default function ActualizarContrasenaPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+    <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Actualizar contraseña</CardTitle>

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { ReglasPagoRP } from "@/components/reglas-pago-rp";
 import {
   Card,
   CardContent,
@@ -35,6 +36,10 @@ export default function DuenoPanelPage() {
   const [clubDeposito, setClubDeposito] = useState("");
   const [clubLat, setClubLat] = useState("");
   const [clubLng, setClubLng] = useState("");
+  const [clubAmbiente, setClubAmbiente] = useState("");
+  const [clubTipoMusica, setClubTipoMusica] = useState("");
+  const [clubVestimenta, setClubVestimenta] = useState("");
+  const [clubEdadMinima, setClubEdadMinima] = useState("");
   const [clubSubmitting, setClubSubmitting] = useState(false);
   const [clubError, setClubError] = useState<string | null>(null);
   const [clubSaved, setClubSaved] = useState(false);
@@ -64,16 +69,8 @@ export default function DuenoPanelPage() {
   const [tableError, setTableError] = useState<string | null>(null);
   const [deletingTableId, setDeletingTableId] = useState<string | null>(null);
 
-  const [comisionTipo, setComisionTipo] = useState<"fijo" | "porcentaje">(
-    "fijo",
-  );
-  const [comisionMonto, setComisionMonto] = useState("");
-  const [comisionDesbloqueo, setComisionDesbloqueo] = useState("");
   const [bonoTipo, setBonoTipo] = useState<"fijo" | "porcentaje">("fijo");
   const [bonoMonto, setBonoMonto] = useState("");
-  const [comisionSubmitting, setComisionSubmitting] = useState(false);
-  const [comisionError, setComisionError] = useState<string | null>(null);
-  const [comisionSaved, setComisionSaved] = useState(false);
 
   useEffect(() => {
     async function loadSession() {
@@ -134,9 +131,12 @@ export default function DuenoPanelPage() {
       setClubDeposito(String(loadedClub.deposito_monto));
       setClubLat(loadedClub.lat !== null ? String(loadedClub.lat) : "");
       setClubLng(loadedClub.lng !== null ? String(loadedClub.lng) : "");
-      setComisionTipo(loadedClub.comision_tipo);
-      setComisionMonto(String(loadedClub.comision_monto));
-      setComisionDesbloqueo(String(loadedClub.comision_desbloqueo_reservas));
+      setClubAmbiente(loadedClub.ambiente ?? "");
+      setClubTipoMusica(loadedClub.tipo_musica ?? "");
+      setClubVestimenta(loadedClub.codigo_vestimenta ?? "");
+      setClubEdadMinima(
+        loadedClub.edad_minima !== null ? String(loadedClub.edad_minima) : "",
+      );
       setBonoTipo(loadedClub.bono_organica_tipo);
       setBonoMonto(String(loadedClub.bono_organica_monto));
       return loadedClub;
@@ -205,7 +205,6 @@ export default function DuenoPanelPage() {
         fetchTables(loadedClub.id);
       }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkingSession]);
 
   async function handleLogout() {
@@ -253,6 +252,19 @@ export default function DuenoPanelPage() {
       }
     }
 
+    let edadMinimaNum: number | null = null;
+    if (clubEdadMinima.trim()) {
+      edadMinimaNum = Number(clubEdadMinima);
+      if (
+        !Number.isInteger(edadMinimaNum) ||
+        edadMinimaNum < 0 ||
+        edadMinimaNum > 99
+      ) {
+        setClubError("La edad mínima debe ser un número entero entre 0 y 99.");
+        return;
+      }
+    }
+
     setClubSubmitting(true);
     try {
       const supabase = createClient();
@@ -265,6 +277,10 @@ export default function DuenoPanelPage() {
           deposito_monto: depositoNum,
           lat: latNum,
           lng: lngNum,
+          ambiente: clubAmbiente.trim() || null,
+          tipo_musica: clubTipoMusica.trim() || null,
+          codigo_vestimenta: clubVestimenta.trim() || null,
+          edad_minima: edadMinimaNum,
         })
         .eq("id", club.id);
 
@@ -487,66 +503,13 @@ export default function DuenoPanelPage() {
     }
   }
 
-  async function handleUpdateComisiones(e: FormEvent) {
-    e.preventDefault();
-    setComisionError(null);
-    setComisionSaved(false);
-
-    if (!club) return;
-    if (!comisionMonto || !comisionDesbloqueo) {
-      setComisionError("Completa todos los campos.");
-      return;
-    }
-
-    const comisionMontoNum = Number(comisionMonto);
-    const desbloqueoNum = Number(comisionDesbloqueo);
-
-    if (!Number.isFinite(comisionMontoNum) || comisionMontoNum < 0) {
-      setComisionError("El monto de comisión debe ser un número válido.");
-      return;
-    }
-    if (comisionTipo === "porcentaje" && comisionMontoNum > 100) {
-      setComisionError("El porcentaje de comisión no puede ser mayor a 100.");
-      return;
-    }
-    if (!Number.isInteger(desbloqueoNum) || desbloqueoNum < 0) {
-      setComisionError(
-        "Las reservas para desbloquear deben ser un número entero mayor o igual a 0.",
-      );
-      return;
-    }
-
-    setComisionSubmitting(true);
-    try {
-      const supabase = createClient();
-      const { error: updateError } = await supabase
-        .from("clubs")
-        .update({
-          comision_tipo: comisionTipo,
-          comision_monto: comisionMontoNum,
-          comision_desbloqueo_reservas: desbloqueoNum,
-        })
-        .eq("id", club.id);
-
-      if (updateError) throw updateError;
-
-      await fetchClub();
-      setComisionSaved(true);
-    } catch (err) {
-      console.error("Error actualizando reglas de comisión:", err);
-      setComisionError("No pudimos guardar los cambios. Intenta de nuevo.");
-    } finally {
-      setComisionSubmitting(false);
-    }
-  }
-
   if (checkingSession || loadingClub) {
     return null;
   }
 
   if (clubNotFound || !club) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>No encontramos tu antro</CardTitle>
@@ -560,10 +523,10 @@ export default function DuenoPanelPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
+    <div className="flex flex-1 flex-col items-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-8">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-zinc-950 dark:text-zinc-50">
+          <h1 className="text-2xl font-semibold tracking-tight">
             Panel de tu antro
           </h1>
           <Button
@@ -580,14 +543,14 @@ export default function DuenoPanelPage() {
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">Suscripción</h2>
             {club.suscripcion_activa ? (
-              <Badge className="border-transparent bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300">
+              <Badge className="border-transparent bg-status-ok/12 text-status-ok">
                 Suscripción activa desde{" "}
                 {club.suscripcion_activada_en
                   ? new Date(club.suscripcion_activada_en).toLocaleDateString()
                   : ""}
               </Badge>
             ) : (
-              <Badge className="border-transparent bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300">
+              <Badge className="border-transparent bg-status-warn/12 text-status-warn">
                 Sin suscripción activa
               </Badge>
             )}
@@ -695,6 +658,55 @@ export default function DuenoPanelPage() {
                   Captura la latitud y longitud de tu antro (opcional) para
                   que los clientes lo vean ordenado por cercanía.
                 </p>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="club_ambiente">Ambiente (opcional)</Label>
+                  <Input
+                    id="club_ambiente"
+                    maxLength={120}
+                    placeholder="ej. Elegante y relajado"
+                    value={clubAmbiente}
+                    onChange={(e) => setClubAmbiente(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="club_tipo_musica">
+                    Tipo de música (opcional)
+                  </Label>
+                  <Input
+                    id="club_tipo_musica"
+                    maxLength={120}
+                    placeholder="ej. Reggaetón y house"
+                    value={clubTipoMusica}
+                    onChange={(e) => setClubTipoMusica(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="club_vestimenta">
+                    Código de vestimenta (opcional)
+                  </Label>
+                  <Input
+                    id="club_vestimenta"
+                    maxLength={120}
+                    placeholder="ej. Casual elegante, sin tenis ni shorts"
+                    value={clubVestimenta}
+                    onChange={(e) => setClubVestimenta(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="club_edad_minima">
+                    Edad mínima (opcional)
+                  </Label>
+                  <Input
+                    id="club_edad_minima"
+                    type="number"
+                    min={0}
+                    max={99}
+                    placeholder="ej. 18"
+                    value={clubEdadMinima}
+                    onChange={(e) => setClubEdadMinima(e.target.value)}
+                  />
+                </div>
 
                 {clubError && (
                   <p className="text-sm text-destructive" role="alert">
@@ -841,7 +853,7 @@ export default function DuenoPanelPage() {
                     onClick={() => handleDeletePhoto(photo)}
                     disabled={deletingPhotoId === photo.id}
                     aria-label="Eliminar foto"
-                    className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80 disabled:opacity-50"
+                    className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-sm bg-black/75 text-sm text-white hover:bg-black/90 disabled:opacity-50"
                   >
                     ×
                   </button>
@@ -922,82 +934,14 @@ export default function DuenoPanelPage() {
         </section>
 
         <section className="flex flex-col gap-4">
-          <h2 className="text-lg font-semibold">Reglas de comisión</h2>
-          <Card>
-            <CardContent className="px-6 py-6">
-              <form
-                onSubmit={handleUpdateComisiones}
-                className="flex flex-col gap-4"
-              >
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="comision_tipo">
-                    Tipo de comisión para RP
-                  </Label>
-                  <select
-                    id="comision_tipo"
-                    className={SELECT_CLASSES}
-                    value={comisionTipo}
-                    onChange={(e) =>
-                      setComisionTipo(e.target.value as "fijo" | "porcentaje")
-                    }
-                  >
-                    <option value="fijo">Fijo</option>
-                    <option value="porcentaje">Porcentaje del consumo</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="comision_monto">
-                    {comisionTipo === "fijo"
-                      ? "Monto de comisión para RP ($)"
-                      : "Comisión para RP (% del consumo)"}
-                  </Label>
-                  <Input
-                    id="comision_monto"
-                    type="number"
-                    min={0}
-                    max={comisionTipo === "porcentaje" ? 100 : undefined}
-                    value={comisionMonto}
-                    onChange={(e) => setComisionMonto(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="comision_desbloqueo">
-                    Reservas necesarias para desbloquear comisión esta semana
-                  </Label>
-                  <Input
-                    id="comision_desbloqueo"
-                    type="number"
-                    min={0}
-                    value={comisionDesbloqueo}
-                    onChange={(e) => setComisionDesbloqueo(e.target.value)}
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Ej. 4 significa que las primeras 3 reservas validadas de
-                    la semana (lunes a domingo) no generan comisión para el
-                    RP — a partir de la 4ta sí.
-                  </p>
-                </div>
-                {comisionError && (
-                  <p className="text-sm text-destructive" role="alert">
-                    {comisionError}
-                  </p>
-                )}
-                {comisionSaved && !comisionError && (
-                  <p className="text-sm text-muted-foreground">
-                    Cambios guardados.
-                  </p>
-                )}
+          <h2 className="text-lg font-semibold">Reglas de pago a RPs</h2>
 
-                <Button type="submit" disabled={comisionSubmitting}>
-                  {comisionSubmitting
-                    ? "Guardando..."
-                    : "Guardar reglas de comisión"}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+          <ReglasPagoRP
+            club={club}
+            onUpdate={async () => {
+              await fetchClub();
+            }}
+          />
 
           <Card>
             <CardContent className="px-6 py-4">

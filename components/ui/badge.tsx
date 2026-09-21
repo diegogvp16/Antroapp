@@ -19,6 +19,12 @@ const badgeVariants = cva(
         ghost:
           "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",
+        vip: "border-noche-accent/40 bg-noche-accent/15 text-noche-accent",
+        // Estados operativos (tema "control"): el único color permitido ahí.
+        ok: "border-transparent bg-status-ok/12 text-status-ok",
+        warn: "border-transparent bg-status-warn/12 text-status-warn",
+        err: "border-transparent bg-status-err/12 text-status-err",
+        neutral: "border-transparent bg-muted text-muted-foreground",
       },
     },
     defaultVariants: {

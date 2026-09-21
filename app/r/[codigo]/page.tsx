@@ -21,6 +21,7 @@ export default function ReservaPublicaPage() {
   const codigo = decodeURIComponent(params.codigo ?? "");
 
   const [reserva, setReserva] = useState<Reservation | null>(null);
+  const [clubNombre, setClubNombre] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -46,7 +47,26 @@ export default function ReservaPublicaPage() {
           setNotFound(true);
           setReserva(null);
         } else {
-          setReserva(data as Reservation);
+          const loadedReserva = data as Reservation;
+          setReserva(loadedReserva);
+
+          // Nombre real del antro; si no carga, el texto cae a "el antro".
+          if (loadedReserva.club_id) {
+            const { data: club, error: clubError } = await supabase
+              .from("clubs")
+              .select("nombre")
+              .eq("id", loadedReserva.club_id)
+              .maybeSingle();
+
+            if (cancelled) {
+              return;
+            }
+            if (clubError) {
+              console.error("Error cargando antro de la reserva:", clubError);
+            } else if (club) {
+              setClubNombre(club.nombre);
+            }
+          }
         }
       } catch (err) {
         console.error("Error cargando reserva pública:", err);
@@ -73,7 +93,7 @@ export default function ReservaPublicaPage() {
   }, [codigo]);
 
   return (
-    <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+    <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-16">
       <BackLink href="/" label="Volver al inicio" />
       <Card className="w-full max-w-sm">
         {loading ? (
@@ -90,16 +110,16 @@ export default function ReservaPublicaPage() {
         ) : (
           <>
             <CardHeader>
-              <CardTitle>Tu reserva en Antro Demo</CardTitle>
+              <CardTitle>Tu reserva en {clubNombre ?? "el antro"}</CardTitle>
               <CardDescription>
                 Muestra este código al llegar al antro.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col items-center gap-6 px-6 pb-6">
-              <div className="rounded-xl bg-white p-4">
+              <div className="rounded-md bg-white p-4 shadow-[0_0_0_6px_rgb(242_239_233/0.08)]">
                 <QRCodeSVG value={reserva.qr_code} size={220} />
               </div>
-              <div className="w-full space-y-1 text-sm">
+              <div className="w-full space-y-1.5 border-t border-dashed border-border pt-5 text-sm">
                 <p>
                   <span className="text-muted-foreground">Nombre:</span>{" "}
                   {reserva.cliente_nombre}

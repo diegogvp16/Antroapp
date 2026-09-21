@@ -4,13 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import type { Club } from "@/types";
 
 interface Coords {
@@ -38,6 +33,22 @@ function haversineDistanceKm(a: Coords, b: Coords) {
 function formatDistance(km: number) {
   return `${km.toFixed(1)} km`;
 }
+
+// Acomodo editorial: la portada ocupa todo el ancho y el resto cicla por
+// tamaños distintos (ancho, altos escalonados, cuadrado, angosto) sobre una
+// rejilla de 6 columnas, en lugar de filas uniformes.
+const TILE_COVER = {
+  box: "col-span-6 h-96",
+  title: "text-5xl",
+  detail: true,
+};
+const TILE_CYCLE = [
+  { box: "col-span-6 aspect-[16/9]", title: "text-3xl", detail: true },
+  { box: "col-span-3 aspect-[3/4]", title: "text-2xl", detail: false },
+  { box: "col-span-3 mt-10 aspect-[3/4]", title: "text-2xl", detail: false },
+  { box: "col-span-4 aspect-square", title: "text-3xl", detail: true },
+  { box: "col-span-2 aspect-[1/2]", title: "text-xl", detail: false },
+];
 
 export default function ClientePage() {
   const router = useRouter();
@@ -166,21 +177,24 @@ export default function ClientePage() {
       })
     : clubsWithDistance;
 
+  // Solo presentación: los antros con foto van al grid editorial; los que no
+  // tienen foto se agrupan al final en lista compacta (una celda grande con
+  // solo una inicial se ve vacía). El orden relativo por distancia se conserva.
+  const conFoto = sortedClubs.filter(({ club }) => Boolean(thumbnails[club.id]));
+  const sinFoto = sortedClubs.filter(({ club }) => !thumbnails[club.id]);
+
   return (
-    <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
-      <div className="flex w-full max-w-sm flex-col gap-4">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <h1 className="text-2xl font-bold text-zinc-950 dark:text-zinc-50">
-              Elige un antro
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Reserva tu lugar en segundos.
-            </p>
-          </div>
+    <div className="flex flex-1 flex-col items-center px-4 py-10">
+      <div className="flex w-full max-w-md flex-col gap-6">
+        <div className="flex items-end justify-between gap-3 px-1">
+          <h1 className="text-4xl leading-none">
+            Esta noche,
+            <br />
+            <span className="italic text-noche-accent">elige dónde.</span>
+          </h1>
           <Link
             href="/cliente/perfil"
-            className="whitespace-nowrap pt-1 text-sm font-medium text-foreground underline underline-offset-4"
+            className="whitespace-nowrap rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
           >
             Mi perfil
           </Link>
@@ -204,41 +218,104 @@ export default function ClientePage() {
           </Card>
         )}
 
-        <div className="flex flex-col gap-3">
-          {sortedClubs.map(({ club, distanceKm }) => (
-            <Link key={club.id} href={`/cliente/${club.id}`}>
-              <Card className="overflow-hidden p-0 transition-colors hover:bg-muted/50">
-                {thumbnails[club.id] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
+        {conFoto.length > 0 && (
+          <div className="grid grid-cols-6 items-start gap-3">
+            {conFoto.map(({ club, distanceKm }, index) => {
+              const isCover = index === 0;
+              const tile = isCover
+                ? TILE_COVER
+                : TILE_CYCLE[(index - 1) % TILE_CYCLE.length];
+              // "El más cercano" solo si la portada es de verdad el primero
+              // del orden por distancia (podría haber uno sin foto más cerca).
+              const esElMasCercano =
+                isCover &&
+                userLocation !== null &&
+                distanceKm !== null &&
+                sortedClubs[0]?.club.id === club.id;
+              return (
+                <Link
+                  key={club.id}
+                  href={`/cliente/${club.id}`}
+                  className={`group relative block overflow-hidden rounded-md bg-noche-surface ${tile.box}`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={thumbnails[club.id]}
                     alt=""
-                    className="h-28 w-full object-cover"
+                    className="absolute inset-0 h-full w-full object-cover"
                   />
-                ) : (
-                  <div className="h-28 w-full bg-gradient-to-br from-fuchsia-600 via-purple-600 to-indigo-600" />
-                )}
-                <CardHeader className="px-5 pt-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="text-lg">{club.nombre}</CardTitle>
-                    {distanceKm !== null && (
-                      <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
-                        {formatDistance(distanceKm)}
-                      </span>
+                  <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1.5 bg-gradient-to-t from-noche-bg via-noche-bg/75 to-transparent px-3.5 pb-3.5 pt-16">
+                    {isCover && (
+                      <div className="flex items-center gap-2">
+                        {esElMasCercano && (
+                          <span className="rounded-sm bg-noche-vino px-2 py-0.5 text-xs text-noche-text">
+                            El más cercano
+                          </span>
+                        )}
+                        <Badge variant="vip">
+                          Depósito ${club.deposito_monto}
+                        </Badge>
+                      </div>
+                    )}
+                    <h2 className={`leading-none ${tile.title}`}>
+                      {club.nombre}
+                    </h2>
+                    {tile.detail && (
+                      <p className="text-xs text-noche-muted">
+                        {club.horario}
+                        {distanceKm !== null &&
+                          ` · ${formatDistance(distanceKm)}`}
+                      </p>
+                    )}
+                    {!isCover && (
+                      <p className="text-xs font-medium text-noche-accent">
+                        ${club.deposito_monto}
+                      </p>
                     )}
                   </div>
-                  <CardDescription>{club.direccion}</CardDescription>
-                </CardHeader>
-                <CardContent className="flex items-center justify-between px-5 pb-4 text-sm">
-                  <span className="text-muted-foreground">{club.horario}</span>
-                  <span className="font-semibold">
-                    Depósito: ${club.deposito_monto}
-                  </span>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+
+        {sinFoto.length > 0 && (
+          <div className="flex flex-col">
+            {conFoto.length > 0 && (
+              <h2 className="mb-2 px-1 text-2xl">También esta noche</h2>
+            )}
+            <ul className="flex flex-col divide-y divide-border border-y border-border">
+              {sinFoto.map(({ club, distanceKm }) => (
+                <li key={club.id}>
+                  <Link
+                    href={`/cliente/${club.id}`}
+                    className="flex items-center gap-3 px-1 py-3 transition-colors hover:bg-noche-surface"
+                  >
+                    <span
+                      aria-hidden
+                      className="flex size-10 flex-shrink-0 items-center justify-center rounded-sm bg-noche-surface-2 font-display text-2xl text-noche-accent/70"
+                    >
+                      {club.nombre.charAt(0)}
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate font-display text-xl leading-tight">
+                        {club.nombre}
+                      </span>
+                      <span className="truncate text-xs text-noche-muted">
+                        {club.horario}
+                        {distanceKm !== null &&
+                          ` · ${formatDistance(distanceKm)}`}
+                      </span>
+                    </span>
+                    <span className="flex-shrink-0 text-sm font-medium text-noche-accent">
+                      ${club.deposito_monto}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );

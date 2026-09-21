@@ -1,16 +1,15 @@
 import Link from "next/link";
+import { ThemeNoche } from "@/components/theme-noche";
 
 export default function AccesoNegociosPage() {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+    <ThemeNoche className="items-center justify-center px-6 py-16">
       <div className="flex w-full max-w-sm flex-col gap-6">
-        <h1 className="text-center text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-          ¿Tienes un antro?
-        </h1>
+        <h1 className="text-center text-4xl">¿Tienes un antro?</h1>
         <div className="flex flex-col gap-3">
           <Link
             href="/dueno/login"
-            className="rounded-md border border-border px-4 py-3 text-center text-sm font-medium text-foreground hover:bg-muted/50"
+            className="rounded-md border border-border px-4 py-3.5 text-center text-sm font-medium text-foreground hover:bg-muted"
           >
             Dueño de antro
           </Link>
@@ -22,6 +21,6 @@ export default function AccesoNegociosPage() {
           Volver
         </Link>
       </div>
-    </div>
+    </ThemeNoche>
   );
 }

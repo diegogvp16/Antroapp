@@ -67,7 +67,7 @@ export default function DuenoLoginPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+    <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Acceso Dueño</CardTitle>

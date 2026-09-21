@@ -15,6 +15,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ReglasPagoRP } from "@/components/reglas-pago-rp";
+import { TurnoRecurrenteForm } from "@/components/turno-recurrente-form";
 import type {
   Club,
   ClubTable,
@@ -103,23 +105,26 @@ const STATUS_LABEL: Record<Reservation["status"], string> = {
 
 const STATUS_CLASSES: Record<Reservation["status"], string> = {
   pendiente:
-    "border-transparent bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300",
+    "border-transparent bg-status-warn/12 text-status-warn",
   confirmada:
-    "border-transparent bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300",
+    "border-transparent bg-muted text-foreground",
   usada:
-    "border-transparent bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300",
+    "border-transparent bg-status-ok/12 text-status-ok",
 };
 
 const SOURCE_CLASSES: Record<Reservation["source"], string> = {
   organica:
-    "border-transparent bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-  rp: "border-transparent bg-purple-100 text-purple-800 dark:bg-purple-500/20 dark:text-purple-300",
+    "border-transparent bg-muted text-muted-foreground",
+  rp: "border-border bg-transparent text-foreground",
 };
 
 export default function StaffPanelPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [clubId, setClubId] = useState<string | null>(null);
+  const [staffRole, setStaffRole] = useState<"staff" | "gerente" | null>(
+    null,
+  );
   const [clubNombre, setClubNombre] = useState("");
   const [club, setClub] = useState<Club | null>(null);
 
@@ -173,15 +178,6 @@ export default function StaffPanelPage() {
   const [rpSchedules, setRpSchedules] = useState<Record<string, ScheduleRow[]>>(
     {},
   );
-  const [scheduleDateInputs, setScheduleDateInputs] = useState<
-    Record<string, string>
-  >({});
-  const [addingScheduleId, setAddingScheduleId] = useState<string | null>(
-    null,
-  );
-  const [scheduleError, setScheduleError] = useState<Record<string, string>>(
-    {},
-  );
   const [removingScheduleId, setRemovingScheduleId] = useState<string | null>(
     null,
   );
@@ -231,6 +227,7 @@ export default function StaffPanelPage() {
       }
 
       setClubId(profile.club_id);
+      setStaffRole(profile.role as "staff" | "gerente");
       setCheckingSession(false);
     }
 
@@ -413,45 +410,6 @@ export default function StaffPanelPage() {
     }
   }
 
-  async function handleAddSchedule(rp: RPListItem) {
-    const fecha = scheduleDateInputs[rp.id] ?? "";
-    setScheduleError((prev) => ({ ...prev, [rp.id]: "" }));
-
-    if (!fecha) {
-      setScheduleError((prev) => ({ ...prev, [rp.id]: "Selecciona una fecha." }));
-      return;
-    }
-    if (fecha < todayISO()) {
-      setScheduleError((prev) => ({
-        ...prev,
-        [rp.id]: "La fecha no puede ser en el pasado.",
-      }));
-      return;
-    }
-    if (!clubId) return;
-
-    setAddingScheduleId(rp.id);
-    try {
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("rp_schedule")
-        .insert({ rp_id: rp.id, club_id: clubId, fecha });
-
-      if (error) throw error;
-
-      setScheduleDateInputs((prev) => ({ ...prev, [rp.id]: "" }));
-      await fetchRpSchedules(clubId);
-    } catch (err) {
-      console.error("Error asignando turno:", err);
-      setScheduleError((prev) => ({
-        ...prev,
-        [rp.id]: "No pudimos asignar el turno. Intenta de nuevo.",
-      }));
-    } finally {
-      setAddingScheduleId(null);
-    }
-  }
-
   async function handleRemoveSchedule(scheduleId: string) {
     if (!clubId) return;
     setRemovingScheduleId(scheduleId);
@@ -480,17 +438,27 @@ export default function StaffPanelPage() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
+      const fecha = todayISO();
 
-      const { error } = await supabase.from("rp_attendance").insert({
-        rp_id: rpId,
-        club_id: clubId,
-        fecha: todayISO(),
-        scanned_at: new Date().toISOString(),
-        metodo: "manual",
-        marcado_por: user?.id ?? null,
-      });
+      const { data: attendanceRow, error } = await supabase
+        .from("rp_attendance")
+        .insert({
+          rp_id: rpId,
+          club_id: clubId,
+          fecha,
+          scanned_at: new Date().toISOString(),
+          metodo: "manual",
+          marcado_por: user?.id ?? null,
+        })
+        .select("id")
+        .single();
 
       if (error) throw error;
+
+      if (club?.pago_rp_modo === "dia") {
+        await createPagoDiaParaAsistencia(attendanceRow.id, rpId, clubId, fecha);
+      }
+
       await fetchAsistenciaHoy(clubId);
     } catch (err) {
       console.error("Error registrando llegada manual:", err);
@@ -670,6 +638,42 @@ export default function StaffPanelPage() {
     }
   }
 
+  // Crea la fila en "rp_pagos_dia" para UNA asistencia ya insertada,
+  // vía RPC "security definer" -- mismo patrón de "calcular y grabar en
+  // el momento del evento" que createCommissionForReservation, pero el
+  // cálculo vive en la base (no aquí) porque STAFF puede registrar
+  // asistencia sin tener permiso de leer club_dia_tarifas (son datos de
+  // sueldo); si se calculara con el cliente de STAFF, RLS le devolvería
+  // 0 tarifas y el monto quedaría siempre en $0. La función en la base
+  // aplica la misma regla de autorización que ya tiene la política de
+  // INSERT de rp_pagos_dia, solo que además puede leer las tarifas.
+  async function createPagoDiaParaAsistencia(
+    rpAttendanceId: string,
+    rpId: string,
+    targetClubId: string,
+    fecha: string,
+  ) {
+    try {
+      const supabase = createClient();
+      const { start, end } = getWeekRange();
+
+      const { error } = await supabase.rpc("registrar_pago_dia", {
+        p_rp_attendance_id: rpAttendanceId,
+        p_rp_id: rpId,
+        p_club_id: targetClubId,
+        p_fecha: fecha,
+        p_week_start: start.toISOString(),
+        p_week_end: end.toISOString(),
+      });
+
+      if (error) throw error;
+    } catch (err) {
+      // No bloqueamos la UI de asistencia por esto: la asistencia ya se
+      // guardó exitosamente, el pago por día es un efecto secundario.
+      console.error("Error creando pago por día:", err);
+    }
+  }
+
   async function registerAttendance(rp: { id: string; nombre: string }) {
     if (!clubId) return;
     try {
@@ -678,17 +682,31 @@ export default function StaffPanelPage() {
         data: { user },
       } = await supabase.auth.getUser();
       const nowIso = new Date().toISOString();
+      const fecha = todayISO();
 
-      const { error } = await supabase.from("rp_attendance").insert({
-        rp_id: rp.id,
-        club_id: clubId,
-        fecha: todayISO(),
-        scanned_at: nowIso,
-        metodo: "qr",
-        marcado_por: user?.id ?? null,
-      });
+      const { data: attendanceRow, error } = await supabase
+        .from("rp_attendance")
+        .insert({
+          rp_id: rp.id,
+          club_id: clubId,
+          fecha,
+          scanned_at: nowIso,
+          metodo: "qr",
+          marcado_por: user?.id ?? null,
+        })
+        .select("id")
+        .single();
 
       if (error) throw error;
+
+      if (club?.pago_rp_modo === "dia") {
+        await createPagoDiaParaAsistencia(
+          attendanceRow.id,
+          rp.id,
+          clubId,
+          fecha,
+        );
+      }
 
       setAttendanceScanState({ status: "success", nombre: rp.nombre, scannedAt: nowIso });
       await fetchAsistenciaHoy(clubId);
@@ -855,37 +873,19 @@ export default function StaffPanelPage() {
       if (reserva.source === "rp" && reserva.rp_id) {
         const { start, end } = getWeekRange();
 
-        const { data: weekCommissions, error: weekError } = await supabase
-          .from("commissions")
-          .select("id, reservations!inner(club_id)")
-          .eq("rp_id", reserva.rp_id)
-          .eq("reservations.club_id", club.id)
-          .gte("created_at", start.toISOString())
-          .lte("created_at", end.toISOString());
+        const { error: rpcError } = await supabase.rpc(
+          "registrar_comision_reserva",
+          {
+            p_reservation_id: reserva.id,
+            p_rp_id: reserva.rp_id,
+            p_club_id: club.id,
+            p_consumo_monto: consumoMonto,
+            p_week_start: start.toISOString(),
+            p_week_end: end.toISOString(),
+          },
+        );
 
-        if (weekError) throw weekError;
-
-        const countEstaSemana = weekCommissions?.length ?? 0;
-        const desbloqueado =
-          countEstaSemana + 1 >= club.comision_desbloqueo_reservas;
-
-        const montoComision = !desbloqueado
-          ? 0
-          : club.comision_tipo === "fijo"
-            ? club.comision_monto
-            : (club.comision_monto / 100) * consumoMonto;
-
-        const { error: insertCommissionError } = await supabase
-          .from("commissions")
-          .insert({
-            reservation_id: reserva.id,
-            rp_id: reserva.rp_id,
-            tipo: "rp",
-            monto: montoComision,
-            status: "pendiente",
-          });
-
-        if (insertCommissionError) throw insertCommissionError;
+        if (rpcError) throw rpcError;
       } else if (reserva.source === "organica") {
         const montoBono =
           club.bono_organica_tipo === "fijo"
@@ -1081,7 +1081,7 @@ export default function StaffPanelPage() {
 
   if (scannerOpen) {
     return (
-      <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
+      <div className="flex flex-1 flex-col items-center px-6 py-10">
         <div className="flex w-full max-w-2xl flex-col gap-6">
           <Card className="w-full">
             <CardHeader>
@@ -1129,7 +1129,7 @@ export default function StaffPanelPage() {
               {scanState.status === "already-checked-in" && (
                 <div className="flex flex-col gap-3">
                   <p
-                    className="text-sm text-amber-600 dark:text-amber-400"
+                    className="text-sm text-status-warn"
                     role="alert"
                   >
                     Esta reserva ya hizo check-in.
@@ -1172,7 +1172,7 @@ export default function StaffPanelPage() {
 
               {scanState.status === "success" && (
                 <div className="flex flex-col gap-3">
-                  <p className="text-sm text-green-600 dark:text-green-400">
+                  <p className="text-sm text-status-ok">
                     ¡Check-in confirmado!
                   </p>
                   <Button type="button" onClick={resumeScanning}>
@@ -1204,7 +1204,7 @@ export default function StaffPanelPage() {
 
   if (attendanceScannerOpen) {
     return (
-      <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
+      <div className="flex flex-1 flex-col items-center px-6 py-10">
         <div className="flex w-full max-w-2xl flex-col gap-6">
           <Card className="w-full">
             <CardHeader>
@@ -1252,7 +1252,7 @@ export default function StaffPanelPage() {
               {attendanceScanState.status === "no-turno" && (
                 <div className="flex flex-col gap-3">
                   <p
-                    className="text-sm text-amber-600 dark:text-amber-400"
+                    className="text-sm text-status-warn"
                     role="alert"
                   >
                     {attendanceScanState.rp.nombre} no tiene turno asignado
@@ -1277,7 +1277,7 @@ export default function StaffPanelPage() {
               {attendanceScanState.status === "already-marked" && (
                 <div className="flex flex-col gap-3">
                   <p
-                    className="text-sm text-amber-600 dark:text-amber-400"
+                    className="text-sm text-status-warn"
                     role="alert"
                   >
                     {attendanceScanState.rp.nombre} ya registró su llegada a
@@ -1291,7 +1291,7 @@ export default function StaffPanelPage() {
 
               {attendanceScanState.status === "success" && (
                 <div className="flex flex-col gap-3">
-                  <p className="text-sm text-green-600 dark:text-green-400">
+                  <p className="text-sm text-status-ok">
                     ¡Asistencia registrada! {attendanceScanState.nombre} —{" "}
                     {formatHora(attendanceScanState.scannedAt)}
                   </p>
@@ -1327,11 +1327,11 @@ export default function StaffPanelPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
+    <div className="flex flex-1 flex-col items-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-zinc-950 dark:text-zinc-50">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="break-words text-2xl font-semibold tracking-tight">
               Panel de {clubNombre || "tu antro"}
             </h1>
             <p className="text-sm text-muted-foreground">
@@ -1476,8 +1476,8 @@ export default function StaffPanelPage() {
                       <Badge
                         className={
                           rp.activo
-                            ? "border-transparent bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300"
-                            : "border-transparent bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+                            ? "border-transparent bg-status-ok/12 text-status-ok"
+                            : "border-transparent bg-muted text-muted-foreground"
                         }
                       >
                         {rp.activo ? "Activo" : "Inactivo"}
@@ -1499,39 +1499,15 @@ export default function StaffPanelPage() {
                   </CardContent>
 
                   <CardContent className="flex flex-col gap-2 border-t border-border px-5 py-3">
-                    <div className="flex items-end gap-2">
-                      <div className="flex flex-1 flex-col gap-1.5">
-                        <Label htmlFor={`turno-${rp.id}`}>
-                          Asignar turno
-                        </Label>
-                        <Input
-                          id={`turno-${rp.id}`}
-                          type="date"
-                          min={todayISO()}
-                          value={scheduleDateInputs[rp.id] ?? ""}
-                          onChange={(e) =>
-                            setScheduleDateInputs((prev) => ({
-                              ...prev,
-                              [rp.id]: e.target.value,
-                            }))
-                          }
-                        />
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => handleAddSchedule(rp)}
-                        disabled={addingScheduleId === rp.id}
-                      >
-                        {addingScheduleId === rp.id
-                          ? "Guardando..."
-                          : "Asignar"}
-                      </Button>
-                    </div>
-                    {scheduleError[rp.id] && (
-                      <p className="text-sm text-destructive" role="alert">
-                        {scheduleError[rp.id]}
-                      </p>
+                    {clubId && (
+                      <TurnoRecurrenteForm
+                        rpId={rp.id}
+                        clubId={clubId}
+                        existingFechas={(rpSchedules[rp.id] ?? []).map(
+                          (s) => s.fecha,
+                        )}
+                        onAssigned={() => fetchRpSchedules(clubId)}
+                      />
                     )}
 
                     {(rpSchedules[rp.id] ?? []).length > 0 && (
@@ -1562,6 +1538,30 @@ export default function StaffPanelPage() {
             </div>
           )}
         </section>
+
+        {staffRole === "gerente" && club && (
+          <section className="flex flex-col gap-4">
+            <h2 className="text-lg font-semibold">Reglas de pago de RPs</h2>
+            <p className="text-xs text-muted-foreground">
+              Solo gerentes pueden ver y editar cómo se les paga a los RPs de
+              este antro. Staff no tiene acceso a esta sección.
+            </p>
+            <ReglasPagoRP
+              club={club}
+              onUpdate={async () => {
+                if (clubId) {
+                  const supabase = createClient();
+                  const { data } = await supabase
+                    .from("clubs")
+                    .select("*")
+                    .eq("id", clubId)
+                    .maybeSingle();
+                  if (data) setClub(data as Club);
+                }
+              }}
+            />
+          </section>
+        )}
 
         <section className="flex flex-col gap-4">
           <h2 className="text-lg font-semibold">Asistencia de RPs</h2>
@@ -1601,7 +1601,7 @@ export default function StaffPanelPage() {
                         {rp?.nombre ?? "RP"}
                       </span>
                       {attendance ? (
-                        <Badge className="border-transparent bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300">
+                        <Badge className="border-transparent bg-status-ok/12 text-status-ok">
                           Llegó a las {formatHora(attendance.scanned_at)} (
                           {attendance.metodo})
                         </Badge>
@@ -1719,7 +1719,7 @@ export default function StaffPanelPage() {
                   <p className="text-sm text-muted-foreground">
                     Mesa: {tables.find((t) => t.id === r.mesa_id)?.numero ?? "—"}
                   </p>
-                  <Badge className="w-fit border-transparent bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                  <Badge className="w-fit border-transparent bg-muted text-muted-foreground">
                     Se retiró sin consumir
                   </Badge>
                 </CardContent>

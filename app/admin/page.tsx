@@ -463,10 +463,10 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
+    <div className="flex flex-1 flex-col items-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-8">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-zinc-950 dark:text-zinc-50">
+          <h1 className="text-2xl font-semibold tracking-tight">
             Panel Admin
           </h1>
           <Button
@@ -625,18 +625,18 @@ export default function AdminPage() {
             )}
             {clubs.map((club) => (
               <Card key={club.id}>
-                <CardContent className="flex items-center justify-between px-5 py-4">
-                  <div>
-                    <p className="font-medium">{club.nombre}</p>
+                <CardContent className="flex flex-wrap items-start justify-between gap-2 px-5 py-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words font-medium">{club.nombre}</p>
                     <p className="text-sm text-muted-foreground">
                       {club.direccion}
                     </p>
                   </div>
-                  <span className="text-sm font-semibold">
+                  <span className="whitespace-nowrap text-sm font-semibold">
                     Depósito: ${club.deposito_monto}
                   </span>
                 </CardContent>
-                <CardContent className="flex items-center justify-between border-t border-border px-5 py-3 text-sm">
+                <CardContent className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3 text-sm">
                   <span className="text-muted-foreground">
                     Bono plataforma:{" "}
                     {club.bono_organica_tipo === "fijo"
@@ -831,20 +831,20 @@ export default function AdminPage() {
                     key={club.id}
                     className={
                       flagged
-                        ? "border-amber-400 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10"
+                        ? "ring-status-warn/60 bg-status-warn/8"
                         : undefined
                     }
                   >
                     <CardContent className="flex flex-col gap-3 px-5 py-4">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-medium">{club.nombre}</p>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="min-w-0 break-words font-medium">{club.nombre}</p>
                         {flagged && (
-                          <Badge className="border-transparent bg-amber-200 text-amber-900 dark:bg-amber-500/30 dark:text-amber-200">
+                          <Badge className="border-transparent bg-status-warn/15 text-status-warn">
                             Posible sub-reporte
                           </Badge>
                         )}
                       </div>
-                      <div className="flex gap-8 text-sm">
+                      <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
                         <div>
                           <p className="text-muted-foreground">
                             Vía RP con consumo

@@ -43,3 +43,8 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# capturas y reportes locales de QA (no son parte de la app)
+/screenshots-*/
+/REPORTE-*.md
+/.claude/

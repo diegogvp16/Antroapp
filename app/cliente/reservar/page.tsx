@@ -207,7 +207,7 @@ function ReservarPage() {
 
   if (!clubId) {
     return (
-      <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-16">
         <BackLink href={backHref} />
         <Card className="w-full max-w-sm">
           <CardHeader>
@@ -231,7 +231,7 @@ function ReservarPage() {
 
   if (loadingClub) {
     return (
-      <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-16">
         <BackLink href={backHref} />
         <p className="text-sm text-muted-foreground">Cargando...</p>
       </div>
@@ -240,7 +240,7 @@ function ReservarPage() {
 
   if (clubNotFound || !club) {
     return (
-      <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-16">
         <BackLink href={backHref} />
         <Card className="w-full max-w-sm">
           <CardHeader>
@@ -268,7 +268,7 @@ function ReservarPage() {
     )}`;
 
     return (
-      <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-16">
         <BackLink href={backHref} />
         <Card className="w-full max-w-sm">
           <CardHeader>
@@ -278,10 +278,10 @@ function ReservarPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-6 px-6 pb-6">
-            <div className="rounded-xl bg-white p-4">
+            <div className="rounded-md bg-white p-4 shadow-[0_0_0_6px_rgb(242_239_233/0.08)]">
               <QRCodeSVG value={reserva.qr_code} size={200} />
             </div>
-            <div className="w-full space-y-1 text-sm">
+            <div className="w-full space-y-1.5 border-t border-dashed border-border pt-5 text-sm">
               <p>
                 <span className="text-muted-foreground">Nombre:</span>{" "}
                 {reserva.cliente_nombre}
@@ -301,7 +301,7 @@ function ReservarPage() {
               }
               nativeButton={false}
               size="lg"
-              className="h-14 w-full text-base"
+              className="h-14 w-full text-base font-semibold"
             >
               Compartir por WhatsApp
             </Button>
@@ -312,7 +312,7 @@ function ReservarPage() {
   }
 
   return (
-    <div className="relative flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+    <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-16">
       <BackLink href={backHref} />
       <Card className="w-full max-w-sm">
         <CardHeader>
@@ -364,7 +364,7 @@ function ReservarPage() {
             <Button
               type="submit"
               size="lg"
-              className="mt-2 h-14 w-full text-base"
+              className="mt-2 h-14 w-full text-base font-semibold"
               disabled={submitting}
             >
               {submitting ? "Reservando..." : "Confirmar reserva"}

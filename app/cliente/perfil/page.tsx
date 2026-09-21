@@ -21,18 +21,14 @@ const STATUS_LABEL: Record<Reservation["status"], string> = {
 };
 
 const STATUS_CLASSES: Record<Reservation["status"], string> = {
-  pendiente:
-    "border-transparent bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300",
-  confirmada:
-    "border-transparent bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300",
-  usada:
-    "border-transparent bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300",
+  pendiente: "border-noche-accent/40 bg-noche-accent/15 text-noche-accent",
+  confirmada: "border-noche-text/30 bg-noche-text/10 text-noche-text",
+  usada: "border-transparent bg-noche-surface-2 text-noche-muted",
 };
 
 const SOURCE_CLASSES: Record<Reservation["source"], string> = {
-  organica:
-    "border-transparent bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-  rp: "border-transparent bg-purple-100 text-purple-800 dark:bg-purple-500/20 dark:text-purple-300",
+  organica: "border-border bg-transparent text-noche-muted",
+  rp: "border-noche-accent/30 bg-noche-vino text-noche-text",
 };
 
 export default function ClientePerfilPage() {
@@ -117,10 +113,10 @@ export default function ClientePerfilPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
+    <div className="flex flex-1 flex-col items-center px-6 py-10">
       <div className="flex w-full max-w-sm flex-col gap-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-zinc-950 dark:text-zinc-50">
+          <h1 className="text-4xl">
             Mi perfil
           </h1>
           <Button
@@ -144,7 +140,7 @@ export default function ClientePerfilPage() {
         </Card>
 
         <div className="flex flex-col gap-3">
-          <h2 className="text-lg font-semibold">Mis reservas</h2>
+          <h2 className="text-2xl">Mis reservas</h2>
 
           {loadingReservas && (
             <p className="text-sm text-muted-foreground">Cargando...</p>

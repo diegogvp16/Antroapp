@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BottomNav, type RpTab } from "@/components/bottom-nav";
 import {
   PersonasStepper,
   MIN_PERSONAS,
@@ -44,16 +45,52 @@ interface RendimientoStats {
   pendienteOConfirmada: number;
 }
 
+interface ReservaDetalle {
+  id: string;
+  cliente_nombre: string;
+  fecha: string;
+  status: "pendiente" | "confirmada" | "usada";
+}
+
+interface PagoDiaRow {
+  id: string;
+  fecha: string;
+  posicion: number;
+  monto: number;
+  status: string;
+}
+
 const COMISION_STATUS_LABEL: Record<string, string> = {
   pendiente: "Pendiente",
   validada: "Validada",
   pagada: "Pagada",
 };
 
+const RESERVA_STATUS_LABEL: Record<string, string> = {
+  pendiente: "Pendiente",
+  confirmada: "Confirmada",
+  usada: "Ingresó",
+};
+
+const DIA_SEMANA_LABEL = [
+  "Dom",
+  "Lun",
+  "Mar",
+  "Mié",
+  "Jue",
+  "Vie",
+  "Sáb",
+];
+
 function todayISO() {
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
   return now.toISOString().slice(0, 10);
+}
+
+function formatFechaConDia(fecha: string) {
+  const d = new Date(`${fecha}T00:00:00`);
+  return `${DIA_SEMANA_LABEL[d.getDay()]} ${fecha}`;
 }
 
 // Semana lunes-domingo en hora LOCAL del dispositivo (mismo criterio que
@@ -85,6 +122,7 @@ export default function RpPanelPage() {
   const router = useRouter();
   const [session, setSession] = useState<RpSession | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [activeTab, setActiveTab] = useState<RpTab>("reservas");
   const [clubNombre, setClubNombre] = useState<string | null>(null);
   const [misTurnos, setMisTurnos] = useState<TurnoRow[]>([]);
   const [loadingTurnos, setLoadingTurnos] = useState(true);
@@ -107,6 +145,11 @@ export default function RpPanelPage() {
     number | null
   >(null);
   const [loadingRendimiento, setLoadingRendimiento] = useState(true);
+  const [reservasSemanaDetalle, setReservasSemanaDetalle] = useState<
+    ReservaDetalle[]
+  >([]);
+  const [pagoRpModo, setPagoRpModo] = useState<"reserva" | "dia">("reserva");
+  const [pagosDiaSemana, setPagosDiaSemana] = useState<PagoDiaRow[]>([]);
 
   const [clienteNombre, setClienteNombre] = useState("");
   const [clienteTelefono, setClienteTelefono] = useState("");
@@ -145,10 +188,12 @@ export default function RpPanelPage() {
 
       setSession({ id: profile.id, nombre: profile.nombre, clubId: profile.club_id });
 
+      let modoActual: "reserva" | "dia" = "reserva";
+
       if (profile.club_id) {
         const { data: club, error: clubError } = await supabase
           .from("clubs")
-          .select("nombre, comision_desbloqueo_reservas")
+          .select("nombre, comision_desbloqueo_reservas, pago_rp_modo")
           .eq("id", profile.club_id)
           .maybeSingle();
 
@@ -157,6 +202,8 @@ export default function RpPanelPage() {
         } else if (club) {
           setClubNombre(club.nombre);
           setComisionDesbloqueoReservas(club.comision_desbloqueo_reservas);
+          setPagoRpModo(club.pago_rp_modo);
+          modoActual = club.pago_rp_modo;
         }
 
         const { data: turnosData, error: turnosError } = await supabase
@@ -173,13 +220,31 @@ export default function RpPanelPage() {
         }
         setLoadingTurnos(false);
 
-        await fetchRendimiento(profile.id, profile.club_id);
+        if (modoActual === "reserva") {
+          const { data: override, error: overrideError } = await supabase
+            .from("rp_comision_overrides")
+            .select("comision_desbloqueo_reservas")
+            .eq("rp_id", profile.id)
+            .maybeSingle();
+
+          if (overrideError) {
+            console.error("Error cargando comisión personalizada:", overrideError);
+          } else if (override) {
+            setComisionDesbloqueoReservas(override.comision_desbloqueo_reservas);
+          }
+        }
+
+        await fetchRendimiento(profile.id, profile.club_id, modoActual);
       }
 
       setCheckingSession(false);
     }
 
-    async function fetchRendimiento(rpId: string, clubId: string) {
+    async function fetchRendimiento(
+      rpId: string,
+      clubId: string,
+      modo: "reserva" | "dia",
+    ) {
       setLoadingRendimiento(true);
       try {
         const supabase = createClient();
@@ -189,20 +254,22 @@ export default function RpPanelPage() {
         const { data: reservasSemana, error: reservasSemanaError } =
           await supabase
             .from("reservations")
-            .select("id, status")
+            .select("id, status, cliente_nombre, fecha")
             .eq("rp_id", rpId)
             .eq("club_id", clubId)
             .gte("created_at", weekStart.toISOString())
-            .lte("created_at", weekEnd.toISOString());
+            .lte("created_at", weekEnd.toISOString())
+            .order("created_at", { ascending: false });
 
         if (reservasSemanaError) throw reservasSemanaError;
-        const semanaRows = reservasSemana ?? [];
+        const semanaRows = (reservasSemana ?? []) as ReservaDetalle[];
         setStatsSemana({
           total: semanaRows.length,
           usada: semanaRows.filter((r) => r.status === "usada").length,
           pendienteOConfirmada: semanaRows.filter((r) => r.status !== "usada")
             .length,
         });
+        setReservasSemanaDetalle(semanaRows);
 
         const { data: reservasMes, error: reservasMesError } = await supabase
           .from("reservations")
@@ -220,22 +287,35 @@ export default function RpPanelPage() {
             .length,
         });
 
-        const { data: comisiones, error: comisionesError } = await supabase
-          .from("commissions")
-          .select("monto, status")
-          .eq("rp_id", rpId)
-          .eq("tipo", "rp")
-          .gte("created_at", weekStart.toISOString())
-          .lte("created_at", weekEnd.toISOString());
+        if (modo === "dia") {
+          const { data: pagosDia, error: pagosDiaError } = await supabase
+            .from("rp_pagos_dia")
+            .select("id, fecha, posicion, monto, status")
+            .eq("rp_id", rpId)
+            .gte("created_at", weekStart.toISOString())
+            .lte("created_at", weekEnd.toISOString())
+            .order("fecha", { ascending: true });
 
-        if (comisionesError) throw comisionesError;
-        const comisionRows = comisiones ?? [];
-        const sums: Record<string, number> = {};
-        for (const row of comisionRows) {
-          sums[row.status] = (sums[row.status] ?? 0) + Number(row.monto);
+          if (pagosDiaError) throw pagosDiaError;
+          setPagosDiaSemana((pagosDia ?? []) as PagoDiaRow[]);
+        } else {
+          const { data: comisiones, error: comisionesError } = await supabase
+            .from("commissions")
+            .select("monto, status")
+            .eq("rp_id", rpId)
+            .eq("tipo", "rp")
+            .gte("created_at", weekStart.toISOString())
+            .lte("created_at", weekEnd.toISOString());
+
+          if (comisionesError) throw comisionesError;
+          const comisionRows = comisiones ?? [];
+          const sums: Record<string, number> = {};
+          for (const row of comisionRows) {
+            sums[row.status] = (sums[row.status] ?? 0) + Number(row.monto);
+          }
+          setComisionSemana(sums);
+          setComisionesSemanaCount(comisionRows.length);
         }
-        setComisionSemana(sums);
-        setComisionesSemanaCount(comisionRows.length);
       } catch (err) {
         console.error("Error cargando rendimiento del RP:", err);
       } finally {
@@ -330,115 +410,15 @@ export default function RpPanelPage() {
       )}`
     : "#";
 
-  return (
-    <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-10 dark:bg-black">
-      <div className="flex w-full max-w-sm items-center justify-between pb-6">
-        <p className="text-sm text-muted-foreground">Hola, {session?.nombre}</p>
-        <Button type="button" variant="outline" size="sm" onClick={handleLogout}>
-          Cerrar sesión
-        </Button>
-      </div>
-
-      {session?.clubId && (
-        <Card className="mb-6 w-full max-w-sm">
-          <CardHeader>
-            <CardTitle>Mi rendimiento</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4 px-6 pb-6">
-            {loadingRendimiento ? (
-              <p className="text-sm text-muted-foreground">Cargando...</p>
-            ) : (
-              <>
-                <div className="flex flex-col gap-1">
-                  <p className="text-sm font-medium">Esta semana</p>
-                  <p className="text-sm text-muted-foreground">
-                    {statsSemana.total} reservas — {statsSemana.usada}{" "}
-                    asistieron, {statsSemana.pendienteOConfirmada} sin llegar
-                    aún
-                  </p>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <p className="text-sm font-medium">Este mes</p>
-                  <p className="text-sm text-muted-foreground">
-                    {statsMes.total} reservas — {statsMes.usada} asistieron,{" "}
-                    {statsMes.pendienteOConfirmada} sin llegar aún
-                  </p>
-                </div>
-
-                <div className="flex flex-col gap-1 border-t border-border pt-3">
-                  <p className="text-sm font-medium">
-                    Comisión acumulada esta semana
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {Object.keys(comisionSemana).length === 0
-                      ? "Sin comisiones esta semana todavía."
-                      : Object.entries(comisionSemana)
-                          .map(
-                            ([status, monto]) =>
-                              `${COMISION_STATUS_LABEL[status] ?? status}: $${monto.toLocaleString("en-US")}`,
-                          )
-                          .join(" · ")}
-                  </p>
-                </div>
-
-                {comisionDesbloqueoReservas !== null && (
-                  <div className="flex flex-col gap-1 border-t border-border pt-3">
-                    <p className="text-sm font-medium">
-                      Desbloqueo de comisión semanal
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {comisionesSemanaCount >= comisionDesbloqueoReservas
-                        ? `Llevas ${comisionesSemanaCount} de ${comisionDesbloqueoReservas} reservas necesarias esta semana ✅`
-                        : `Llevas ${comisionesSemanaCount} de ${comisionDesbloqueoReservas}, te faltan ${comisionDesbloqueoReservas - comisionesSemanaCount} para desbloquear comisión.`}
-                    </p>
-                  </div>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {session?.clubId && (
-        <Card className="mb-6 w-full max-w-sm">
-          <CardHeader>
-            <CardTitle>Mi turno y asistencia</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4 px-6 pb-6">
-            <div className="flex flex-col gap-1.5">
-              <p className="text-sm font-medium">Próximos turnos</p>
-              {loadingTurnos && (
-                <p className="text-sm text-muted-foreground">Cargando...</p>
-              )}
-              {!loadingTurnos && misTurnos.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  No tienes turnos asignados todavía.
-                </p>
-              )}
-              {misTurnos.length > 0 && (
-                <ul className="flex flex-col gap-1 text-sm">
-                  {misTurnos.map((t) => (
-                    <li key={t.id}>{t.fecha}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="flex flex-col items-center gap-2 border-t border-border pt-4">
-              <p className="text-sm font-medium">Tu código de asistencia</p>
-              <div className="rounded-xl bg-white p-4">
-                <QRCodeSVG value={`rp-attendance-${session.id}`} size={160} />
-              </div>
-              <p className="text-center text-xs text-muted-foreground">
-                Muéstralo al staff de tu antro al llegar.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {!session?.clubId ? (
+  if (!session?.clubId) {
+    return (
+      <div className="flex flex-1 flex-col items-center px-6 py-10">
+        <div className="flex w-full max-w-sm items-center justify-between pb-6">
+          <p className="text-sm text-muted-foreground">Hola, {session?.nombre}</p>
+          <Button type="button" variant="outline" size="sm" onClick={handleLogout}>
+            Cerrar sesión
+          </Button>
+        </div>
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>Cuenta sin antro asignado</CardTitle>
@@ -448,111 +428,318 @@ export default function RpPanelPage() {
             </CardDescription>
           </CardHeader>
         </Card>
-      ) : reserva ? (
-        <Card className="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle>¡Reserva creada!</CardTitle>
-            <CardDescription>Comparte el código con tu cliente.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col items-center gap-6 px-6 pb-6">
-            <div className="rounded-xl bg-white p-4">
-              <QRCodeSVG value={reserva.qr_code} size={200} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-1 flex-col items-center">
+      <main className="mx-auto w-full max-w-sm flex-1 px-6 pt-8 pb-[calc(5rem+env(safe-area-inset-bottom))]">
+        {activeTab === "perfil" && (
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-1">
+              <h1 className="text-xl font-semibold">Hola, {session.nombre}</h1>
+              <p className="text-sm text-muted-foreground">{clubNombre}</p>
             </div>
-            <div className="w-full space-y-1 text-sm">
-              <p>
-                <span className="text-muted-foreground">Cliente:</span>{" "}
-                {reserva.cliente_nombre}
-              </p>
-              <p>
-                <span className="text-muted-foreground">Fecha:</span>{" "}
-                {reserva.fecha}
-              </p>
-              <p>
-                <span className="text-muted-foreground">Personas:</span>{" "}
-                {reserva.personas}
-              </p>
-            </div>
-            <Button
-              render={
-                <a href={whatsappHref} target="_blank" rel="noopener noreferrer" />
-              }
-              nativeButton={false}
-              size="lg"
-              className="h-14 w-full text-base"
-            >
-              Compartir por WhatsApp
-            </Button>
             <Button
               type="button"
               variant="outline"
               className="w-full"
-              onClick={resetForm}
+              onClick={handleLogout}
             >
-              Crear otra reserva
+              Cerrar sesión
             </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card className="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle>Nueva reserva para cliente</CardTitle>
-            <CardDescription>
-              Crea una reserva a nombre de tu cliente.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="px-6 pb-6">
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          </div>
+        )}
+
+        {activeTab === "turnos" && (
+          <Card className="w-full">
+            <CardHeader>
+              <CardTitle>Mi turno y asistencia</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4 px-6 pb-6">
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="cliente_nombre">Nombre del cliente</Label>
-                <Input
-                  id="cliente_nombre"
-                  value={clienteNombre}
-                  onChange={(e) => setClienteNombre(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="cliente_telefono">Teléfono</Label>
-                <Input
-                  id="cliente_telefono"
-                  type="tel"
-                  value={clienteTelefono}
-                  onChange={(e) => setClienteTelefono(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="fecha">Fecha</Label>
-                <Input
-                  id="fecha"
-                  type="date"
-                  min={minDate}
-                  value={fecha}
-                  onChange={(e) => setFecha(e.target.value)}
-                  required
-                />
+                <p className="text-sm font-medium">Próximos turnos</p>
+                {loadingTurnos && (
+                  <p className="text-sm text-muted-foreground">Cargando...</p>
+                )}
+                {!loadingTurnos && misTurnos.length === 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    No tienes turnos asignados todavía.
+                  </p>
+                )}
+                {misTurnos.length > 0 && (
+                  <ul className="flex flex-col gap-1 text-sm">
+                    {misTurnos.map((t) => (
+                      <li key={t.id}>{formatFechaConDia(t.fecha)}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
 
-              <PersonasStepper value={personas} onChange={setPersonas} />
-
-              {error && (
-                <p className="text-sm text-destructive" role="alert">
-                  {error}
+              <div className="flex flex-col items-center gap-2 border-t border-border pt-4">
+                <p className="text-sm font-medium">Tu código de asistencia</p>
+                <div className="rounded-xl bg-white p-4">
+                  <QRCodeSVG value={`rp-attendance-${session.id}`} size={160} />
+                </div>
+                <p className="text-center text-xs text-muted-foreground">
+                  Muéstralo al staff de tu antro al llegar.
                 </p>
-              )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-              <Button
-                type="submit"
-                size="lg"
-                className="mt-2 h-14 w-full text-base"
-                disabled={submitting}
-              >
-                {submitting ? "Creando..." : "Crear reserva"}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      )}
+        {activeTab === "nomina" && (
+          <Card className="w-full">
+            <CardHeader>
+              <CardTitle>Nómina</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4 px-6 pb-6">
+              {loadingRendimiento ? (
+                <p className="text-sm text-muted-foreground">Cargando...</p>
+              ) : pagoRpModo === "reserva" ? (
+                <>
+                  <div className="flex flex-col gap-1">
+                    <p className="text-sm font-medium">
+                      Comisión acumulada esta semana
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {Object.keys(comisionSemana).length === 0
+                        ? "Sin comisiones esta semana todavía."
+                        : Object.entries(comisionSemana)
+                            .map(
+                              ([status, monto]) =>
+                                `${COMISION_STATUS_LABEL[status] ?? status}: $${monto.toLocaleString("en-US")}`,
+                            )
+                            .join(" · ")}
+                    </p>
+                  </div>
+
+                  {comisionDesbloqueoReservas !== null && (
+                    <div className="flex flex-col gap-1 border-t border-border pt-3">
+                      <p className="text-sm font-medium">
+                        Desbloqueo de comisión semanal
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {comisionesSemanaCount >= comisionDesbloqueoReservas
+                          ? `Llevas ${comisionesSemanaCount} de ${comisionDesbloqueoReservas} reservas necesarias esta semana ✅`
+                          : `Llevas ${comisionesSemanaCount} de ${comisionDesbloqueoReservas}, te faltan ${comisionDesbloqueoReservas - comisionesSemanaCount} para desbloquear comisión.`}
+                      </p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <p className="text-sm font-medium">Pago por día esta semana</p>
+                  {pagosDiaSemana.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Sin días pagados esta semana todavía.
+                    </p>
+                  ) : (
+                    <>
+                      <ul className="flex flex-col gap-1 text-sm text-muted-foreground">
+                        {pagosDiaSemana.map((p) => (
+                          <li
+                            key={p.id}
+                            className="flex items-center justify-between"
+                          >
+                            <span>
+                              {p.fecha} (día {p.posicion})
+                            </span>
+                            <span>
+                              ${p.monto.toLocaleString("en-US")} ·{" "}
+                              {COMISION_STATUS_LABEL[p.status] ?? p.status}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-1 text-sm font-medium">
+                        Total: $
+                        {pagosDiaSemana
+                          .reduce((sum, p) => sum + Number(p.monto), 0)
+                          .toLocaleString("en-US")}
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "reservas" && (
+          <div className="flex flex-col gap-6">
+            <Card className="w-full">
+              <CardHeader>
+                <CardTitle>Mi rendimiento</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4 px-6 pb-6">
+                {loadingRendimiento ? (
+                  <p className="text-sm text-muted-foreground">Cargando...</p>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <p className="text-sm font-medium">Esta semana</p>
+                      <p className="text-sm text-muted-foreground">
+                        {statsSemana.total} reservas — {statsSemana.usada}{" "}
+                        asistieron, {statsSemana.pendienteOConfirmada} sin
+                        llegar aún
+                      </p>
+                      {reservasSemanaDetalle.length > 0 && (
+                        <ul className="mt-1 flex flex-col gap-1 text-xs text-muted-foreground">
+                          {reservasSemanaDetalle.map((r) => (
+                            <li
+                              key={r.id}
+                              className="flex items-center justify-between gap-2"
+                            >
+                              <span>
+                                {r.cliente_nombre} · {r.fecha}
+                              </span>
+                              <span
+                                className={
+                                  r.status === "usada"
+                                    ? "font-medium text-status-ok"
+                                    : ""
+                                }
+                              >
+                                {RESERVA_STATUS_LABEL[r.status] ?? r.status}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-1 border-t border-border pt-3">
+                      <p className="text-sm font-medium">Este mes</p>
+                      <p className="text-sm text-muted-foreground">
+                        {statsMes.total} reservas — {statsMes.usada}{" "}
+                        asistieron, {statsMes.pendienteOConfirmada} sin
+                        llegar aún
+                      </p>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {reserva ? (
+              <Card className="w-full">
+                <CardHeader>
+                  <CardTitle>¡Reserva creada!</CardTitle>
+                  <CardDescription>
+                    Comparte el código con tu cliente.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col items-center gap-6 px-6 pb-6">
+                  <div className="rounded-xl bg-white p-4">
+                    <QRCodeSVG value={reserva.qr_code} size={200} />
+                  </div>
+                  <div className="w-full space-y-1 text-sm">
+                    <p>
+                      <span className="text-muted-foreground">Cliente:</span>{" "}
+                      {reserva.cliente_nombre}
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Fecha:</span>{" "}
+                      {reserva.fecha}
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Personas:</span>{" "}
+                      {reserva.personas}
+                    </p>
+                  </div>
+                  <Button
+                    render={
+                      <a
+                        href={whatsappHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      />
+                    }
+                    nativeButton={false}
+                    size="lg"
+                    className="h-14 w-full text-base"
+                  >
+                    Compartir por WhatsApp
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={resetForm}
+                  >
+                    Crear otra reserva
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card className="w-full">
+                <CardHeader>
+                  <CardTitle>Nueva reserva para cliente</CardTitle>
+                  <CardDescription>
+                    Crea una reserva a nombre de tu cliente.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="px-6 pb-6">
+                  <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="cliente_nombre">Nombre del cliente</Label>
+                      <Input
+                        id="cliente_nombre"
+                        value={clienteNombre}
+                        onChange={(e) => setClienteNombre(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="cliente_telefono">Teléfono</Label>
+                      <Input
+                        id="cliente_telefono"
+                        type="tel"
+                        value={clienteTelefono}
+                        onChange={(e) => setClienteTelefono(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="fecha">Fecha</Label>
+                      <Input
+                        id="fecha"
+                        type="date"
+                        min={minDate}
+                        value={fecha}
+                        onChange={(e) => setFecha(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <PersonasStepper value={personas} onChange={setPersonas} />
+
+                    {error && (
+                      <p className="text-sm text-destructive" role="alert">
+                        {error}
+                      </p>
+                    )}
+
+                    <Button
+                      type="submit"
+                      size="lg"
+                      className="mt-2 h-14 w-full text-base"
+                      disabled={submitting}
+                    >
+                      {submitting ? "Creando..." : "Crear reserva"}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+      </main>
+
+      <BottomNav active={activeTab} onChange={setActiveTab} />
     </div>
   );
 }

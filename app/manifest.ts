@@ -7,8 +7,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "Reserva tu lugar en el antro en segundos.",
     start_url: "/",
     display: "standalone",
-    background_color: "#fafafa",
-    theme_color: "#9333ea",
+    background_color: "#0b0a0a",
+    theme_color: "#0b0a0a",
     icons: [
       {
         src: "/icon-192.png",

@@ -7,8 +7,16 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-instrument), ui-serif, Georgia, serif;
   --font-mono: var(--font-geist-mono);
+  --color-noche-bg: var(--noche-bg);
+  --color-noche-surface: var(--noche-surface);
+  --color-noche-surface-2: var(--noche-surface-2);
+  --color-noche-accent: var(--noche-accent);
+  --color-noche-vino: var(--noche-vino);
+  --color-noche-text: var(--noche-text);
+  --color-noche-muted: var(--noche-muted);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -39,6 +47,9 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-status-ok: var(--status-ok);
+  --color-status-warn: var(--status-warn);
+  --color-status-err: var(--status-err);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -81,6 +92,10 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  /* Semánticos de estado (verde=activo, ámbar=advertencia, rojo=error). */
+  --status-ok: #15803d;
+  --status-warn: #b45309;
+  --status-err: #b91c1c;
 }
 
 .dark {
@@ -115,6 +130,157 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+}
+
+/*
+ * Tema "control" (paneles operativos): fondo claro neutro, texto oscuro de
+ * alto contraste, esquinas discretas (~5px). El color queda reservado a los
+ * tokens de estado (--status-*); nada decorativo, sin grano ni degradados.
+ * Solo Inter: no se toca --font-display aquí.
+ */
+:root {
+  --control-bg: #f6f6f4;
+  --control-surface: #ffffff;
+  --control-text: #121212;
+  --control-muted: #5a5a57;
+  --control-line: #dedddb;
+}
+
+.theme-control {
+  --background: var(--control-bg);
+  --foreground: var(--control-text);
+  --card: var(--control-surface);
+  --card-foreground: var(--control-text);
+  --popover: var(--control-surface);
+  --popover-foreground: var(--control-text);
+  --primary: var(--control-text);
+  --primary-foreground: #ffffff;
+  --secondary: #ecece9;
+  --secondary-foreground: var(--control-text);
+  --muted: #ecece9;
+  --muted-foreground: var(--control-muted);
+  --accent: #ecece9;
+  --accent-foreground: var(--control-text);
+  --destructive: var(--status-err);
+  --border: var(--control-line);
+  --input: #cfcfcb;
+  --ring: var(--control-text);
+  --radius: 0.3125rem;
+  background-color: var(--control-bg);
+  color: var(--control-text);
+}
+
+body:has(.theme-control) {
+  background-color: var(--control-bg);
+}
+
+/*
+ * Tema "noche" (marketing/cliente): negro obsidiana cálido, oro latón y un
+ * grano fino de papel impreso. Se activa envolviendo la ruta en .theme-noche:
+ * re-mapea los tokens de shadcn, así Button/Card/Input/Label/Badge se
+ * restilizan sin hardcodear hex en cada página. Los hex viven SOLO aquí.
+ */
+:root {
+  --noche-bg: #0b0a0a;
+  --noche-surface: #151312;
+  --noche-surface-2: #201d1b;
+  --noche-accent: #c9a227; /* oro: CTAs y detalles de exclusividad */
+  --noche-vino: #4a0e0e; /* oxblood: solo detalles puntuales (tag, borde) */
+  --noche-text: #f2efe9;
+  --noche-muted: #a8a196;
+  --noche-line: rgb(242 239 233 / 0.14);
+  /* Grano: ruido fractal blanco muy tenue, sobre fondos y superficies. */
+  --noche-grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .11 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+.theme-noche {
+  --background: var(--noche-bg);
+  --foreground: var(--noche-text);
+  --card: var(--noche-surface);
+  --card-foreground: var(--noche-text);
+  --popover: var(--noche-surface);
+  --popover-foreground: var(--noche-text);
+  --primary: var(--noche-accent);
+  --primary-foreground: var(--noche-bg);
+  --secondary: var(--noche-surface-2);
+  --secondary-foreground: var(--noche-text);
+  --muted: var(--noche-surface-2);
+  --muted-foreground: var(--noche-muted);
+  --accent: var(--noche-surface-2);
+  --accent-foreground: var(--noche-text);
+  --destructive: #e58a80;
+  --border: var(--noche-line);
+  --input: rgb(242 239 233 / 0.24);
+  --ring: var(--noche-accent);
+  /* Esquinas mínimas (~5px) como un pase de acceso, no píldoras. */
+  --radius: 0.3125rem;
+  background-color: var(--noche-bg);
+  background-image: var(--noche-grain);
+  color: var(--noche-text);
+}
+
+/* La zona de overscroll del body también debe ser noche, no blanca. */
+body:has(.theme-noche) {
+  background-color: var(--noche-bg);
+}
+
+.theme-noche [data-slot="card"] {
+  background-image: var(--noche-grain);
+}
+
+/* Títulos con carácter: Instrument Serif solo existe en peso 400. */
+.theme-noche :is(h1, h2, [data-slot="card-title"], .font-display) {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-synthesis: none;
+  letter-spacing: -0.01em;
+}
+
+.theme-noche [data-slot="card-title"] {
+  font-size: 1.875rem;
+  line-height: 1.05;
+}
+
+/* Inputs más cómodos al pulgar y con superficie propia sobre el fondo oscuro. */
+.theme-noche [data-slot="input"] {
+  height: 2.75rem;
+  border-radius: var(--radius-lg);
+  background-color: rgb(242 239 233 / 0.05);
+  color-scheme: dark;
+}
+
+.theme-noche label {
+  font-size: 0.875rem;
+  color: var(--noche-muted);
+}
+
+/* Carrusel: el scroll nativo mueve las fotos, pero sin barra a la vista. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Único momento de movimiento: el titular de la landing entra una vez. */
+@keyframes noche-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.noche-rise {
+  animation: noche-rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .noche-rise {
+    animation: none;
+  }
 }
 
 @layer base {

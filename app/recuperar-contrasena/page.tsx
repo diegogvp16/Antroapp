@@ -45,7 +45,7 @@ export default function RecuperarContrasenaPage() {
 
   if (sent) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+      <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>Revisa tu correo</CardTitle>
@@ -68,7 +68,7 @@ export default function RecuperarContrasenaPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+    <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Recuperar contraseña</CardTitle>

@@ -93,7 +93,7 @@ export default function ClienteLoginPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
+    <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Iniciar sesión</CardTitle>
@@ -131,7 +131,7 @@ export default function ClienteLoginPage() {
             <Button
               type="submit"
               size="lg"
-              className="mt-2 h-14 w-full text-base"
+              className="mt-2 h-14 w-full text-base font-semibold"
               disabled={submitting}
             >
               {submitting ? "Entrando..." : "Entrar"}
