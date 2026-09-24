@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Search, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import type { Club } from "@/types";
 
 interface Coords {
@@ -34,6 +36,14 @@ function formatDistance(km: number) {
   return `${km.toFixed(1)} km`;
 }
 
+// Quita acentos y pasa a minúsculas para que "neon" encuentre "Neón".
+function normalizar(texto: string) {
+  return texto
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+}
+
 // Acomodo editorial: la portada ocupa todo el ancho y el resto cicla por
 // tamaños distintos (ancho, altos escalonados, cuadrado, angosto) sobre una
 // rejilla de 6 columnas, en lugar de filas uniformes.
@@ -58,6 +68,7 @@ export default function ClientePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [userLocation, setUserLocation] = useState<Coords | null>(null);
+  const [busqueda, setBusqueda] = useState("");
 
   useEffect(() => {
     async function checkSession() {
@@ -177,11 +188,28 @@ export default function ClientePage() {
       })
     : clubsWithDistance;
 
+  // Búsqueda en memoria sobre lo ya cargado: filtra por nombre y dirección,
+  // sin reordenar (el orden por cercanía se conserva tal cual).
+  const termino = normalizar(busqueda.trim());
+  const hayBusqueda = termino.length > 0;
+  const resultados = hayBusqueda
+    ? sortedClubs.filter(
+        ({ club }) =>
+          normalizar(club.nombre).includes(termino) ||
+          normalizar(club.direccion).includes(termino),
+      )
+    : sortedClubs;
+
   // Solo presentación: los antros con foto van al grid editorial; los que no
   // tienen foto se agrupan al final en lista compacta (una celda grande con
   // solo una inicial se ve vacía). El orden relativo por distancia se conserva.
-  const conFoto = sortedClubs.filter(({ club }) => Boolean(thumbnails[club.id]));
-  const sinFoto = sortedClubs.filter(({ club }) => !thumbnails[club.id]);
+  const conFoto = resultados.filter(({ club }) => Boolean(thumbnails[club.id]));
+  const sinFoto = resultados.filter(({ club }) => !thumbnails[club.id]);
+
+  // Con búsqueda activa todo va en filas uniformes: el grid editorial está
+  // pensado para explorar, y con uno o dos resultados la portada gigante se
+  // ve desproporcionada. Al buscar se escanea, no se explora.
+  const filas = hayBusqueda ? resultados : sinFoto;
 
   return (
     <div className="flex flex-1 flex-col items-center px-4 py-10">
@@ -199,6 +227,33 @@ export default function ClientePage() {
             Mi perfil
           </Link>
         </div>
+
+        {!loading && !error && clubs.length > 0 && (
+          <div className="relative">
+            <Search
+              aria-hidden
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-noche-muted"
+            />
+            <Input
+              type="search"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar antro o zona..."
+              aria-label="Buscar antro o zona"
+              className="pl-9 pr-9 [&::-webkit-search-cancel-button]:hidden"
+            />
+            {hayBusqueda && (
+              <button
+                type="button"
+                onClick={() => setBusqueda("")}
+                aria-label="Limpiar búsqueda"
+                className="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-sm text-noche-muted hover:bg-noche-surface-2 hover:text-noche-text"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
+        )}
 
         {loading && (
           <p className="text-sm text-muted-foreground">Cargando antros...</p>
@@ -218,7 +273,18 @@ export default function ClientePage() {
           </Card>
         )}
 
-        {conFoto.length > 0 && (
+        {hayBusqueda && resultados.length === 0 && (
+          <Card>
+            <CardContent className="flex flex-col gap-1 px-6 py-10 text-center">
+              <p className="font-display text-2xl">Sin coincidencias</p>
+              <p className="text-sm text-noche-muted">
+                No encontramos antros que coincidan con tu búsqueda.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {!hayBusqueda && conFoto.length > 0 && (
           <div className="grid grid-cols-6 items-start gap-3">
             {conFoto.map(({ club, distanceKm }, index) => {
               const isCover = index === 0;
@@ -279,24 +345,41 @@ export default function ClientePage() {
           </div>
         )}
 
-        {sinFoto.length > 0 && (
+        {filas.length > 0 && (
           <div className="flex flex-col">
-            {conFoto.length > 0 && (
-              <h2 className="mb-2 px-1 text-2xl">También esta noche</h2>
+            {hayBusqueda ? (
+              <p className="mb-2 px-1 text-sm text-noche-muted">
+                {resultados.length}{" "}
+                {resultados.length === 1 ? "antro" : "antros"} para “
+                {busqueda.trim()}”
+              </p>
+            ) : (
+              conFoto.length > 0 && (
+                <h2 className="mb-2 px-1 text-2xl">También esta noche</h2>
+              )
             )}
             <ul className="flex flex-col divide-y divide-border border-y border-border">
-              {sinFoto.map(({ club, distanceKm }) => (
+              {filas.map(({ club, distanceKm }) => (
                 <li key={club.id}>
                   <Link
                     href={`/cliente/${club.id}`}
                     className="flex items-center gap-3 px-1 py-3 transition-colors hover:bg-noche-surface"
                   >
-                    <span
-                      aria-hidden
-                      className="flex size-10 flex-shrink-0 items-center justify-center rounded-sm bg-noche-surface-2 font-display text-2xl text-noche-accent/70"
-                    >
-                      {club.nombre.charAt(0)}
-                    </span>
+                    {thumbnails[club.id] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={thumbnails[club.id]}
+                        alt=""
+                        className="size-10 flex-shrink-0 rounded-sm object-cover"
+                      />
+                    ) : (
+                      <span
+                        aria-hidden
+                        className="flex size-10 flex-shrink-0 items-center justify-center rounded-sm bg-noche-surface-2 font-display text-2xl text-noche-accent/70"
+                      >
+                        {club.nombre.charAt(0)}
+                      </span>
+                    )}
                     <span className="flex min-w-0 flex-1 flex-col">
                       <span className="truncate font-display text-xl leading-tight">
                         {club.nombre}

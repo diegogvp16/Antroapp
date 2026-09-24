@@ -9,6 +9,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BottomNav, type RpTab } from "@/components/bottom-nav";
 import {
+  describirTurno,
+  esTurnoFijo,
+  type TurnoRow as TurnoScheduleRow,
+} from "@/lib/turnos";
+import {
   PersonasStepper,
   MIN_PERSONAS,
   MAX_PERSONAS,
@@ -34,10 +39,7 @@ interface ReservaResumen {
   qr_code: string;
 }
 
-interface TurnoRow {
-  id: string;
-  fecha: string;
-}
+type TurnoRow = TurnoScheduleRow;
 
 interface RendimientoStats {
   total: number;
@@ -175,11 +177,13 @@ export default function RpPanelPage() {
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("id, nombre, club_id")
+        .select("id, nombre, role, club_id")
         .eq("id", user.id)
         .maybeSingle();
 
-      if (profileError || !profile) {
+      // Este panel es solo para RPs: sin el check del rol, cualquier sesión
+      // (cliente, gerente, dueño) podía abrirlo escribiendo la URL.
+      if (profileError || !profile || profile.role !== "rp") {
         console.error("Error cargando perfil RP:", profileError);
         await supabase.auth.signOut();
         router.replace("/cliente/login");
@@ -206,11 +210,13 @@ export default function RpPanelPage() {
           modoActual = club.pago_rp_modo;
         }
 
+        // El turno fijo vale indefinidamente (su `fecha` puede ser vieja),
+        // así que se trae aparte de las fechas sueltas de hoy en adelante.
         const { data: turnosData, error: turnosError } = await supabase
           .from("rp_schedule")
-          .select("id, fecha")
+          .select("id, fecha, es_fijo, dias_semana, fecha_inicio")
           .eq("rp_id", profile.id)
-          .gte("fecha", todayISO())
+          .or(`es_fijo.eq.true,fecha.gte.${todayISO()}`)
           .order("fecha", { ascending: true });
 
         if (turnosError) {
@@ -471,7 +477,11 @@ export default function RpPanelPage() {
                 {misTurnos.length > 0 && (
                   <ul className="flex flex-col gap-1 text-sm">
                     {misTurnos.map((t) => (
-                      <li key={t.id}>{formatFechaConDia(t.fecha)}</li>
+                      <li key={t.id}>
+                        {esTurnoFijo(t)
+                          ? describirTurno(t)
+                          : formatFechaConDia(t.fecha)}
+                      </li>
                     ))}
                   </ul>
                 )}

@@ -16,12 +16,24 @@ import {
 } from "@/components/ui/card";
 import type { Reservation } from "@/types";
 
+// Lo que devuelve la función obtener_reserva_por_qr: solo los campos que el
+// boleto necesita mostrar, con el nombre del antro ya resuelto. No es la fila
+// completa de `reservations` — deliberadamente no trae teléfono del cliente,
+// consumo, cliente_id ni rp_id.
+interface ReservaPublica {
+  cliente_nombre: string;
+  fecha: string;
+  personas: number;
+  status: Reservation["status"];
+  qr_code: string;
+  club_nombre: string | null;
+}
+
 export default function ReservaPublicaPage() {
   const params = useParams<{ codigo: string }>();
   const codigo = decodeURIComponent(params.codigo ?? "");
 
-  const [reserva, setReserva] = useState<Reservation | null>(null);
-  const [clubNombre, setClubNombre] = useState<string | null>(null);
+  const [reserva, setReserva] = useState<ReservaPublica | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -33,10 +45,12 @@ export default function ReservaPublicaPage() {
       setNotFound(false);
       try {
         const supabase = createClient();
+        // Vía RPC y no lectura directa de `reservations`: la tabla está
+        // cerrada para quien no tiene sesión, y esta función devuelve una
+        // sola reserva, la del código exacto, sin permitir listar el resto.
+        // El nombre del antro ya viene incluido.
         const { data, error } = await supabase
-          .from("reservations")
-          .select("*")
-          .eq("qr_code", codigo)
+          .rpc("obtener_reserva_por_qr", { p_qr: codigo })
           .maybeSingle();
 
         if (cancelled) {
@@ -47,26 +61,7 @@ export default function ReservaPublicaPage() {
           setNotFound(true);
           setReserva(null);
         } else {
-          const loadedReserva = data as Reservation;
-          setReserva(loadedReserva);
-
-          // Nombre real del antro; si no carga, el texto cae a "el antro".
-          if (loadedReserva.club_id) {
-            const { data: club, error: clubError } = await supabase
-              .from("clubs")
-              .select("nombre")
-              .eq("id", loadedReserva.club_id)
-              .maybeSingle();
-
-            if (cancelled) {
-              return;
-            }
-            if (clubError) {
-              console.error("Error cargando antro de la reserva:", clubError);
-            } else if (club) {
-              setClubNombre(club.nombre);
-            }
-          }
+          setReserva(data as ReservaPublica);
         }
       } catch (err) {
         console.error("Error cargando reserva pública:", err);
@@ -110,7 +105,9 @@ export default function ReservaPublicaPage() {
         ) : (
           <>
             <CardHeader>
-              <CardTitle>Tu reserva en {clubNombre ?? "el antro"}</CardTitle>
+              <CardTitle>
+                Tu reserva en {reserva.club_nombre ?? "el antro"}
+              </CardTitle>
               <CardDescription>
                 Muestra este código al llegar al antro.
               </CardDescription>

@@ -17,6 +17,12 @@ import {
 } from "@/components/ui/card";
 import { ReglasPagoRP } from "@/components/reglas-pago-rp";
 import { TurnoRecurrenteForm } from "@/components/turno-recurrente-form";
+import {
+  describirTurno,
+  esTurnoFijo,
+  turnoAplicaEnFecha,
+  type TurnoRow,
+} from "@/lib/turnos";
 import type {
   Club,
   ClubTable,
@@ -27,10 +33,7 @@ import type {
 
 type RPListItem = Pick<Profile, "id" | "nombre" | "activo">;
 
-interface ScheduleRow {
-  id: string;
-  fecha: string;
-}
+type ScheduleRow = TurnoRow;
 
 interface AttendanceRow {
   id: string;
@@ -359,26 +362,36 @@ export default function StaffPanelPage() {
     try {
       const supabase = createClient();
       const hoy = todayISO();
+      // Se traen los turnos fijos (valen indefinidamente, su `fecha` puede
+      // ser vieja) junto con las fechas sueltas de hoy en adelante.
       const { data, error } = await supabase
         .from("rp_schedule")
-        .select("id, rp_id, fecha")
+        .select("id, rp_id, fecha, es_fijo, dias_semana, fecha_inicio")
         .eq("club_id", targetClubId)
-        .gte("fecha", hoy)
+        .or(`es_fijo.eq.true,fecha.gte.${hoy}`)
         .order("fecha", { ascending: true });
 
       if (error) throw error;
 
+      const filas = (data ?? []) as (ScheduleRow & { rp_id: string })[];
+
       const grouped: Record<string, ScheduleRow[]> = {};
-      for (const row of data ?? []) {
+      for (const row of filas) {
         const list = grouped[row.rp_id] ?? [];
-        list.push({ id: row.id, fecha: row.fecha });
+        list.push({
+          id: row.id,
+          fecha: row.fecha,
+          es_fijo: row.es_fijo,
+          dias_semana: row.dias_semana,
+          fecha_inicio: row.fecha_inicio,
+        });
         grouped[row.rp_id] = list;
       }
       setRpSchedules(grouped);
       setTodaySchedules(
-        (data ?? [])
-          .filter((row) => row.fecha === hoy)
-          .map((row) => ({ id: row.id, rp_id: row.rp_id, fecha: row.fecha })),
+        filas
+          .filter((row) => turnoAplicaEnFecha(row, hoy))
+          .map((row) => ({ id: row.id, rp_id: row.rp_id, fecha: hoy })),
       );
     } catch (err) {
       console.error("Error cargando turnos de RPs:", err);
@@ -763,13 +776,18 @@ export default function StaffPanelPage() {
         return;
       }
 
-      const { data: schedule } = await supabase
+      // Tiene turno hoy si hay una fecha suelta de hoy o un turno fijo que
+      // cubra el día de la semana de hoy.
+      const { data: schedules } = await supabase
         .from("rp_schedule")
-        .select("id")
+        .select("id, fecha, es_fijo, dias_semana, fecha_inicio")
         .eq("rp_id", rpId)
         .eq("club_id", clubId)
-        .eq("fecha", hoy)
-        .maybeSingle();
+        .or(`es_fijo.eq.true,fecha.eq.${hoy}`);
+
+      const schedule = (schedules ?? []).find((s) =>
+        turnoAplicaEnFecha(s as ScheduleRow, hoy),
+      );
 
       if (!schedule) {
         setAttendanceScanState({
@@ -1503,8 +1521,11 @@ export default function StaffPanelPage() {
                       <TurnoRecurrenteForm
                         rpId={rp.id}
                         clubId={clubId}
-                        existingFechas={(rpSchedules[rp.id] ?? []).map(
-                          (s) => s.fecha,
+                        existingFechas={(rpSchedules[rp.id] ?? [])
+                          .filter((s) => !esTurnoFijo(s))
+                          .map((s) => s.fecha)}
+                        tieneTurnoFijo={(rpSchedules[rp.id] ?? []).some(
+                          esTurnoFijo,
                         )}
                         onAssigned={() => fetchRpSchedules(clubId)}
                       />
@@ -1512,12 +1533,26 @@ export default function StaffPanelPage() {
 
                     {(rpSchedules[rp.id] ?? []).length > 0 && (
                       <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
-                        {(rpSchedules[rp.id] ?? []).map((s) => (
+                        {/* El turno fijo primero: es la regla, no un día suelto. */}
+                        {[...(rpSchedules[rp.id] ?? [])]
+                          .sort(
+                            (a, b) =>
+                              Number(esTurnoFijo(b)) - Number(esTurnoFijo(a)),
+                          )
+                          .map((s) => (
                           <li
                             key={s.id}
                             className="flex items-center justify-between"
                           >
-                            <span>{s.fecha}</span>
+                            <span
+                              className={
+                                esTurnoFijo(s)
+                                  ? "font-medium text-foreground"
+                                  : undefined
+                              }
+                            >
+                              {describirTurno(s)}
+                            </span>
                             <button
                               type="button"
                               onClick={() => handleRemoveSchedule(s.id)}
