@@ -79,10 +79,14 @@ export default function ClubDetailPage() {
       setNotFound(false);
       try {
         const supabase = createClient();
+        // Un antro sin suscripción o sin verificar no se muestra aunque
+        // alguien tenga el link directo.
         const { data, error } = await supabase
           .from("clubs")
           .select("*")
           .eq("id", clubId)
+          .eq("suscripcion_activa", true)
+          .eq("estado_verificacion", "verificado")
           .maybeSingle();
 
         if (error || !data) {

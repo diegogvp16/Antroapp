@@ -21,13 +21,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { hoyMexico } from "@/lib/fechas";
 import type { Club } from "@/types";
-
-function todayISO() {
-  const now = new Date();
-  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-  return now.toISOString().slice(0, 10);
-}
 
 interface ReservaResumen {
   cliente_nombre: string;
@@ -63,7 +58,7 @@ function ReservarPage() {
   const [error, setError] = useState<string | null>(null);
   const [reserva, setReserva] = useState<ReservaResumen | null>(null);
 
-  const minDate = todayISO();
+  const minDate = hoyMexico();
   const backHref = club ? `/cliente/${club.id}` : "/cliente";
 
   useEffect(() => {
@@ -77,10 +72,14 @@ function ReservarPage() {
       setClubNotFound(false);
       try {
         const supabase = createClient();
+        // Solo se reserva en antros publicados (suscripción activa y
+        // verificados), igual que el listado y la ficha.
         const { data, error: queryError } = await supabase
           .from("clubs")
           .select("*")
           .eq("id", clubId)
+          .eq("suscripcion_activa", true)
+          .eq("estado_verificacion", "verificado")
           .maybeSingle();
 
         if (queryError || !data) {

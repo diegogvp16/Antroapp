@@ -14,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { VerificacionesPendientes } from "@/components/verificaciones-pendientes";
 import type { Club } from "@/types";
 
 interface ConsumoBucket {
@@ -326,6 +327,10 @@ export default function AdminPage() {
         horario: clubHorario.trim(),
         deposito_monto: depositoNum,
         suscripcion_activa: true,
+        // Lo da de alta AntroApp directamente: no pasa por la revisión de
+        // documentos que hace un dueño auto-registrado.
+        estado_verificacion: "verificado",
+        verificado_en: new Date().toISOString(),
       });
 
       if (insertError) throw insertError;
@@ -478,6 +483,8 @@ export default function AdminPage() {
             Cerrar sesión
           </Button>
         </div>
+
+        <VerificacionesPendientes onCambio={fetchClubs} />
 
         <section className="flex flex-col gap-4">
           <h2 className="text-lg font-semibold">Dashboard general</h2>

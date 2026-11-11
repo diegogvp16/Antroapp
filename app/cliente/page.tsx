@@ -107,10 +107,13 @@ export default function ClientePage() {
       setError(null);
       try {
         const supabase = createClient();
+        // Al público solo llegan antros con suscripción activa Y verificados
+        // por AntroApp (mismo filtro en la ficha y en reservar).
         const { data, error: queryError } = await supabase
           .from("clubs")
           .select("*")
-          .eq("suscripcion_activa", true);
+          .eq("suscripcion_activa", true)
+          .eq("estado_verificacion", "verificado");
 
         if (queryError) {
           throw queryError;

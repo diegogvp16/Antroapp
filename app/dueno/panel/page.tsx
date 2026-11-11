@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ReglasPagoRP } from "@/components/reglas-pago-rp";
+import { VerificacionAntro } from "@/components/verificacion-antro";
 import {
   Card,
   CardContent,
@@ -538,6 +539,8 @@ export default function DuenoPanelPage() {
             Cerrar sesión
           </Button>
         </div>
+
+        <VerificacionAntro club={club} onCambioEstado={fetchClub} />
 
         <section className="flex flex-col gap-4">
           <div className="flex items-center justify-between">

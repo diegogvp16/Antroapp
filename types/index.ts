@@ -1,3 +1,5 @@
+import type { EstadoVerificacion, TipoDocumento } from "@/lib/verificacion";
+
 export interface Profile {
   id: string;
   nombre: string;
@@ -47,6 +49,17 @@ export interface Club {
   tipo_musica: string | null;
   codigo_vestimenta: string | null;
   edad_minima: number | null;
+  estado_verificacion: EstadoVerificacion;
+  motivo_rechazo: string | null;
+  verificado_en: string | null;
+}
+
+export interface VerificacionDocumento {
+  id: string;
+  club_id: string;
+  tipo: TipoDocumento;
+  storage_path: string;
+  created_at: string;
 }
 
 export interface ClubPhoto {

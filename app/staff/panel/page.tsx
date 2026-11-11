@@ -23,6 +23,7 @@ import {
   turnoAplicaEnFecha,
   type TurnoRow,
 } from "@/lib/turnos";
+import { hoyMexico, semanaMexico } from "@/lib/fechas";
 import type {
   Club,
   ClubTable,
@@ -73,32 +74,6 @@ type AttendanceScanState =
   | { status: "already-marked"; rp: { id: string; nombre: string }; scannedAt: string }
   | { status: "success"; nombre: string; scannedAt: string }
   | { status: "lookup-error" };
-
-function todayISO() {
-  const now = new Date();
-  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-  return now.toISOString().slice(0, 10);
-}
-
-// Semana lunes-domingo en hora LOCAL del dispositivo (mismo criterio que
-// todayISO() usa para "hoy"). getDay(): 0=domingo, 1=lunes ... 6=sábado.
-// Si hoy es domingo (0), el lunes de esa semana quedó 6 días atrás;
-// cualquier otro día, retrocedemos (day - 1) días para llegar al lunes.
-function getWeekRange() {
-  const now = new Date();
-  const day = now.getDay();
-  const diffToMonday = day === 0 ? -6 : 1 - day;
-
-  const monday = new Date(now);
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(monday.getDate() + diffToMonday);
-
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  sunday.setHours(23, 59, 59, 999);
-
-  return { start: monday, end: sunday };
-}
 
 const STATUS_LABEL: Record<Reservation["status"], string> = {
   pendiente: "Pendiente",
@@ -242,7 +217,7 @@ export default function StaffPanelPage() {
     setError(null);
     try {
       const supabase = createClient();
-      const hoy = todayISO();
+      const hoy = hoyMexico();
 
       const { data, error: queryError } = await supabase
         .from("reservations")
@@ -361,7 +336,7 @@ export default function StaffPanelPage() {
   async function fetchRpSchedules(targetClubId: string) {
     try {
       const supabase = createClient();
-      const hoy = todayISO();
+      const hoy = hoyMexico();
       // Se traen los turnos fijos (valen indefinidamente, su `fecha` puede
       // ser vieja) junto con las fechas sueltas de hoy en adelante.
       const { data, error } = await supabase
@@ -402,7 +377,7 @@ export default function StaffPanelPage() {
     setLoadingAsistencia(true);
     try {
       const supabase = createClient();
-      const hoy = todayISO();
+      const hoy = hoyMexico();
       const { data, error } = await supabase
         .from("rp_attendance")
         .select("id, rp_id, scanned_at, metodo")
@@ -451,7 +426,7 @@ export default function StaffPanelPage() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      const fecha = todayISO();
+      const fecha = hoyMexico();
 
       const { data: attendanceRow, error } = await supabase
         .from("rp_attendance")
@@ -668,15 +643,15 @@ export default function StaffPanelPage() {
   ) {
     try {
       const supabase = createClient();
-      const { start, end } = getWeekRange();
+      const { inicio, fin } = semanaMexico();
 
       const { error } = await supabase.rpc("registrar_pago_dia", {
         p_rp_attendance_id: rpAttendanceId,
         p_rp_id: rpId,
         p_club_id: targetClubId,
         p_fecha: fecha,
-        p_week_start: start.toISOString(),
-        p_week_end: end.toISOString(),
+        p_week_start: inicio.toISOString(),
+        p_week_end: fin.toISOString(),
       });
 
       if (error) throw error;
@@ -695,7 +670,7 @@ export default function StaffPanelPage() {
         data: { user },
       } = await supabase.auth.getUser();
       const nowIso = new Date().toISOString();
-      const fecha = todayISO();
+      const fecha = hoyMexico();
 
       const { data: attendanceRow, error } = await supabase
         .from("rp_attendance")
@@ -759,7 +734,7 @@ export default function StaffPanelPage() {
         return;
       }
 
-      const hoy = todayISO();
+      const hoy = hoyMexico();
       const { data: existingAttendance } = await supabase
         .from("rp_attendance")
         .select("id, scanned_at")
@@ -889,7 +864,7 @@ export default function StaffPanelPage() {
       const supabase = createClient();
 
       if (reserva.source === "rp" && reserva.rp_id) {
-        const { start, end } = getWeekRange();
+        const { inicio, fin } = semanaMexico();
 
         const { error: rpcError } = await supabase.rpc(
           "registrar_comision_reserva",
@@ -898,8 +873,8 @@ export default function StaffPanelPage() {
             p_rp_id: reserva.rp_id,
             p_club_id: club.id,
             p_consumo_monto: consumoMonto,
-            p_week_start: start.toISOString(),
-            p_week_end: end.toISOString(),
+            p_week_start: inicio.toISOString(),
+            p_week_end: fin.toISOString(),
           },
         );
 

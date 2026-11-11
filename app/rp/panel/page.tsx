@@ -13,6 +13,7 @@ import {
   esTurnoFijo,
   type TurnoRow as TurnoScheduleRow,
 } from "@/lib/turnos";
+import { hoyMexico, mesMexico, semanaMexico } from "@/lib/fechas";
 import {
   PersonasStepper,
   MIN_PERSONAS,
@@ -84,40 +85,9 @@ const DIA_SEMANA_LABEL = [
   "Sáb",
 ];
 
-function todayISO() {
-  const now = new Date();
-  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-  return now.toISOString().slice(0, 10);
-}
-
 function formatFechaConDia(fecha: string) {
   const d = new Date(`${fecha}T00:00:00`);
   return `${DIA_SEMANA_LABEL[d.getDay()]} ${fecha}`;
-}
-
-// Semana lunes-domingo en hora LOCAL del dispositivo (mismo criterio que
-// usa el panel de Staff para calcular el desbloqueo de comisión).
-function getWeekRange() {
-  const now = new Date();
-  const day = now.getDay();
-  const diffToMonday = day === 0 ? -6 : 1 - day;
-
-  const monday = new Date(now);
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(monday.getDate() + diffToMonday);
-
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  sunday.setHours(23, 59, 59, 999);
-
-  return { start: monday, end: sunday };
-}
-
-function getMonthStart() {
-  const start = new Date();
-  start.setDate(1);
-  start.setHours(0, 0, 0, 0);
-  return start;
 }
 
 export default function RpPanelPage() {
@@ -161,7 +131,7 @@ export default function RpPanelPage() {
   const [error, setError] = useState<string | null>(null);
   const [reserva, setReserva] = useState<ReservaResumen | null>(null);
 
-  const minDate = todayISO();
+  const minDate = hoyMexico();
 
   useEffect(() => {
     async function loadSession() {
@@ -216,7 +186,7 @@ export default function RpPanelPage() {
           .from("rp_schedule")
           .select("id, fecha, es_fijo, dias_semana, fecha_inicio")
           .eq("rp_id", profile.id)
-          .or(`es_fijo.eq.true,fecha.gte.${todayISO()}`)
+          .or(`es_fijo.eq.true,fecha.gte.${hoyMexico()}`)
           .order("fecha", { ascending: true });
 
         if (turnosError) {
@@ -254,8 +224,8 @@ export default function RpPanelPage() {
       setLoadingRendimiento(true);
       try {
         const supabase = createClient();
-        const { start: weekStart, end: weekEnd } = getWeekRange();
-        const monthStart = getMonthStart();
+        const { inicio: weekStart, fin: weekEnd } = semanaMexico();
+        const { inicio: monthStart } = mesMexico();
 
         const { data: reservasSemana, error: reservasSemanaError } =
           await supabase

@@ -8,7 +8,7 @@
 //     fecha de fin.
 //
 // Convención de día de semana: la de getDay() de JavaScript,
-// domingo = 0, lunes = 1 ... sábado = 6. Es la que ya usaban getWeekRange()
+// domingo = 0, lunes = 1 ... sábado = 6. Es la misma que usa lib/fechas.ts
 // y los botones del formulario, así que se conserva para no tener que
 // traducir entre lo guardado y lo comparado.
 

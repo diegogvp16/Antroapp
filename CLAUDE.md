@@ -1,8 +1,8 @@
 # AntroApp — Documento maestro del proyecto
 
 > Este archivo es la fuente de verdad para cualquier sesión de Claude Code que
-> trabaje en AntroApp. Refleja el estado **real** del código al 22 de
-> septiembre de 2026, no un ideal. Si algo aquí ya no coincide con el código,
+> trabaje en AntroApp. Refleja el estado **real** del código al 11 de
+> noviembre de 2026, no un ideal. Si algo aquí ya no coincide con el código,
 > el código manda y este archivo debe corregirse.
 >
 > Todo lo que no se pudo confirmar leyendo el código está marcado como
@@ -39,13 +39,15 @@ Notas importantes:
   `app/globals.css` dentro de `@theme inline`.
 - **Todo es client-side**. Prácticamente todas las páginas son `"use client"` y
   hablan con Supabase desde el navegador con la *anon key*. La seguridad
-  depende por completo de RLS (ver sección 7, hay problemas serios ahí).
-- **Deploy manual**: `npx vercel --prod`. El auto-deploy desde GitHub **está
-  roto** (~52 días sin dispararse); los pushes a `master` llegan al repo pero
-  no generan build. Pendiente revisar la conexión Git en el dashboard de
-  Vercel. El CLI tampoco está instalado ni autenticado en la máquina de Diego.
-- Una sola ruta de servidor: `app/api/admin/create-staff/route.ts` (usa la
-  *service role key*).
+  depende por completo de RLS y de los triggers de la base (sección 7).
+- **Deploy manual**: `npx vercel --prod --scope antroapp`. Sin `--scope`
+  responde "Not authorized". El auto-deploy desde GitHub **está roto**: los
+  pushes a `master` llegan al repo pero no generan build. Pendiente revisar
+  la conexión Git en el dashboard de Vercel.
+- Rutas de servidor (usan la *service role key*, y antes verifican quién
+  llama por la cookie de sesión):
+  - `app/api/admin/create-staff/route.ts`
+  - `app/api/admin/rechazar-verificacion/route.ts` (solo admin)
 
 ### Comandos
 
@@ -54,7 +56,7 @@ npm run dev          # desarrollo (Turbopack)
 npx tsc --noEmit     # type-check — correr SIEMPRE antes de dar algo por hecho
 npx eslint .         # lint
 npx next build       # build de producción, antes de cualquier deploy
-npx vercel --prod    # deploy manual (requiere login previo)
+npx vercel --prod --scope antroapp   # deploy manual (requiere login previo)
 ```
 
 ---
@@ -77,14 +79,19 @@ El rol vive en `profiles.role`: `cliente | rp | staff | gerente | admin | dueno`
 - Muestra un QR propio (`rp-attendance-{id}`) para que el staff registre su
   asistencia al llegar a trabajar.
 - **No puede reservar como cliente**: es cuenta de trabajo ligada a un club.
+- `/rp/panel` valida el rol: si el perfil no es `rp`, redirige.
 
 ### Staff y gerente
 - Comparten panel: `/staff/panel`.
 - Escanean el QR del cliente para hacer check-in, asignan mesa, registran
   consumo y pueden marcar "se retiró sin consumir".
 - Crean y dan de baja RPs de su club.
-- Asignan turnos a los RPs (fechas sueltas o repetición semanal) y registran su
-  asistencia (por QR o manual).
+- Asignan turnos a los RPs y registran su asistencia (por QR o manual). Hay
+  dos tipos de turno (`lib/turnos.ts`):
+  - **Fecha suelta** (`es_fijo` falso/nulo): vale solo ese día (`fecha`).
+  - **Turno fijo** (`es_fijo = true`): una sola fila que vale todas las
+    semanas en los días de `dias_semana` (domingo=0 … sábado=6), a partir de
+    `fecha_inicio`, sin fecha de fin. Ya no se genera una fila por fecha.
 - **Diferencia única entre ambos**: solo el **gerente** ve la sección "Reglas de
   pago de RPs". El `staff` puro no ve sueldos de nadie. Es la única parte del
   código donde se distinguen.
@@ -94,14 +101,26 @@ El rol vive en `profiles.role`: `cliente | rp | staff | gerente | admin | dueno`
   horario, depósito, ubicación, ambiente, música, vestimenta, edad mínima),
   sube fotos, gestiona mesas y crea cuentas de staff/gerente.
 - Configura cómo se le paga a sus RPs, incluyendo tarifas individuales por RP.
-- Ve el bono de plataforma pero **no puede editarlo** (solo lectura).
+- Ve el bono de plataforma pero **no puede editarlo** (solo lectura). Lo
+  impide un trigger en la base, no solo la UI.
 - Se auto-registra en `/dueno/signup`, que crea de una vez su cuenta y su club.
+- **Verificación de su antro** (arriba de todo en el panel,
+  `components/verificacion-antro.tsx`): sube comprobante fiscal o licencia y
+  foto del local (requeridos) e identificación (opcional) al bucket privado
+  `verificacion-docs`, y pulsa "Enviar a revisión". Estados:
+  `borrador → en_revision → verificado | rechazado`. Si lo rechazan, ve el
+  motivo y vuelve a subir documentos.
 
 ### Admin
 - Panel en `/admin`. Dashboard general, alta de antros, edición del bono de
   plataforma por antro, creación de cuentas de staff/gerente y un tablero de
   "Alertas de reporte" que compara el % de reservas con consumo registrado vía
   RP contra las orgánicas, para detectar posible sub-reporte.
+- Sección "Verificaciones pendientes": revisa los documentos (URL firmada de
+  pocos minutos) y aprueba o rechaza con motivo. Rechazar pasa por
+  `POST /api/admin/rechazar-verificacion`, que además borra los documentos
+  para que el dueño suba nuevos.
+- Los antros que crea el admin nacen ya `verificado`.
 - Login aparte en `/admin/login`.
 
 ### Jerarquía de creación de cuentas
@@ -115,13 +134,13 @@ Dueño   ──se auto-registra──> /dueno/signup  (crea cuenta + club)
 ```
 
 Las tres creaciones pasan por `POST /api/admin/create-staff`, que solo acepta
-los roles `staff`, `gerente` y `rp`.
+los roles `staff`, `gerente` y `rp`, y autoriza en el servidor según quién
+llama (rol y club leídos de la base, nunca del body): admin → cualquier club;
+dueño → solo clubs suyos; staff/gerente → solo `rp` de su club; sin sesión
+→ 401; cualquier otro → 403.
 
-> **Corrección a la instrucción original**: no existe una ruta `/rp/signup`
-> pública. Bajo `app/rp/` solo hay `layout.tsx` y `panel/`. Los RPs únicamente
-> se crean desde el panel de staff, que siempre les asigna el `club_id` de
-> quien los crea. El riesgo de "RPs huérfanos sin club" no aplica hoy por esa
-> vía — pero sí existe un problema relacionado, ver sección 7.
+No existe una ruta `/rp/signup` pública: los RPs solo se crean desde el panel
+de staff, que siempre les asigna el `club_id` de quien los crea.
 
 ### Login
 
@@ -175,7 +194,12 @@ Decidido con el socio. **Nada de esto está implementado como cobro real todaví
 - Entre 1 y 20 personas (`MIN_PERSONAS` / `MAX_PERSONAS`).
 - La fecha no puede ser en el pasado.
 - Cada reserva genera un `qr_code` único (`antro-{uuid}`), consultable sin
-  sesión en `/r/[codigo]` para poder compartirlo por WhatsApp.
+  sesión en `/r/[codigo]` para poder compartirlo por WhatsApp. Esa página no
+  lee la tabla: llama a la función `obtener_reserva_por_qr(p_qr)`, que
+  devuelve una sola reserva y sin teléfono, consumo ni ids.
+- Se puede reservar sin cuenta (INSERT `anon`), pero la política obliga a que
+  la reserva nazca limpia: `organica`, `pendiente`, sin RP, sin cliente, sin
+  consumo ni mesa, 1–20 personas y fecha de hoy en adelante (hora de México).
 - **El QR no garantiza acceso.** Apartar lugar no es lo mismo que entrar: el
   antro conserva su derecho de admisión, código de vestimenta y edad mínima.
 - **"1 reserva por cliente / antro / día": está definida como regla de negocio
@@ -201,16 +225,16 @@ Decidido con el socio. **Nada de esto está implementado como cobro real todaví
 ### Semana
 - Va de **lunes a domingo** y se usa para el desbloqueo de comisión y para
   contar los días de asistencia del RP.
-- **Ojo**: se calcula con la **hora local del dispositivo**
-  (`getTimezoneOffset()`), no con `America/Mexico_City` fijo. Mientras todos
-  estén en México funciona, pero un dispositivo con otra zona horaria vería
-  límites de semana distintos. La función `getWeekRange()` está **duplicada en
-  3 archivos** (`app/staff/panel`, `app/rp/panel`, y una variante en
-  `components/turno-recurrente-form.tsx`). Unificarla es deuda pendiente.
+- Todo lo de fechas sale de **`lib/fechas.ts`**, siempre en
+  `America/Mexico_City` sin importar la zona del dispositivo: `hoyMexico()`
+  ("YYYY-MM-DD"), `semanaMexico()` (lunes 00:00:00.000 a domingo
+  23:59:59.999) y `mesMexico()`. No escribir otra versión de "hoy" o de la
+  semana en una página: usar estas.
+- Convención de día de semana en todo el código: domingo=0 … sábado=6.
 
 ### Turnos y asistencia de RP
-- El staff asigna turnos (`rp_schedule`), en fechas sueltas o repitiendo días de
-  la semana dentro de un rango.
+- El staff asigna turnos (`rp_schedule`): fechas sueltas o turnos fijos
+  semanales (ver sección 3, `lib/turnos.ts`).
 - El RP solo cuenta como asistente si hay **asistencia confirmada**
   (`rp_attendance`), por escaneo de su QR o marca manual del staff. Tener turno
   asignado no basta.
@@ -236,85 +260,151 @@ Tablas reales en Supabase (verificadas por introspección):
 | `rp_dia_tarifa_overrides` | Igual, pero personalizada para un RP. |
 | `rp_comision_overrides` | Comisión por reserva personalizada para un RP. |
 | `rp_pagos_dia` | Pago generado por cada día de asistencia. |
-| `profiles_legacy` | **Tabla vieja archivada. Tiene contraseñas en texto plano.** Ver sección 7. |
+| `verificacion_documentos` | Documentos de verificación del antro (`tipo`: `comprobante_fiscal`, `foto_local`, `identificacion`; `storage_path` en el bucket privado). |
+
+`profiles_legacy` (tabla vieja con contraseñas en texto plano) **ya no
+existe**: la API responde que la tabla no se encuentra (verificado el
+11/11/2026).
+
+Columnas de verificación en `clubs`: `estado_verificacion` (`borrador |
+en_revision | verificado | rechazado`), `motivo_rechazo`, `verificado_en`.
+
+Buckets de Storage:
+- `club-photos` — **público** (galería del catálogo). Rutas
+  `{club_id}/{uuid}-{nombre-de-archivo}`.
+- `verificacion-docs` — **privado**, 10 MB, imágenes y PDF. Rutas
+  `{club_id}/{tipo}-{uuid}.{ext}`. Solo se lee con URL firmada.
 
 Funciones SQL: `current_role_name()`, `current_club_id()` (helpers usados por
 todas las políticas de RLS), `registrar_pago_dia()`,
-`registrar_comision_reserva()` y `rls_auto_enable()`.
+`registrar_comision_reserva()`, `obtener_reserva_por_qr()`,
+`rls_auto_enable()` y las funciones de los triggers de abajo.
+
+Triggers (lo que RLS no puede hacer porque no compara valor viejo y nuevo):
+- `profiles_no_escalar` en `profiles`: nadie fuera del admin cambia su
+  `role` ni su `club_id`.
+- `clubs_candado_verificacion`: fuera del admin, la única transición
+  permitida es `borrador | rechazado → en_revision`, y solo con los dos
+  documentos requeridos subidos. Nadie más toca `verificado_en` ni
+  `motivo_rechazo`.
+- `clubs_candado_insert`: un antro creado por un no admin nace en
+  `borrador`, sin `verificado_en` ni `motivo_rechazo` y con el bono por
+  defecto, aunque el INSERT mande otra cosa (lo corrige, no da error).
+- `clubs_candado_bono`: solo el admin cambia `bono_organica_tipo` y
+  `bono_organica_monto`.
+
+Los tres de `clubs` se aplicaron en producción en noviembre de 2026 y su
+comportamiento está verificado con usuarios de prueba. El SQL está en
+`sql/`:
+- `clubs_candado_verificacion`, el bucket privado y sus 4 políticas:
+  `sql/2026-10-27-verificacion-bucket-y-candado.sql`.
+- `clubs_candado_insert` y `clubs_candado_bono`:
+  `sql/2026-11-11-clubs-candados-insert-y-bono.sql`.
+- La política restrictiva `verificacion_docs_restrictiva` y el borrado de
+  las políticas viejas del bucket:
+  `sql/2026-11-11-verificacion-docs-candado-storage.sql`.
 
 ### Desincronizaciones detectadas
 
 - `clubs.ciudad` existe en la base pero **no está** en la interfaz `Club` de
   `types/index.ts`, y ninguna pantalla la usa. **(por confirmar con Diego: se
   usa o se borra)**
-- `rp_schedule` tiene `es_fijo`, `dias_semana` y `fecha_inicio` en la base, pero
-  el código **no las usa**: los turnos recurrentes se resuelven generando una
-  fila por fecha. Parecen de un diseño anterior. **(por confirmar con Diego)**
 
 ---
 
 ## 7. Deuda técnica conocida y aceptada
 
-Ordenada por gravedad. Los primeros cuatro puntos los **verifiqué contra la
-base de datos de producción** el 22/09/2026.
+Ordenada por gravedad. Verificado contra producción el 11/11/2026.
 
-### 🔴 Críticos — datos personales expuestos sin sesión
+### 🔴 Crítico
 
-Con solo la *anon key* (que es pública por diseño, va en el bundle del
-navegador) y **sin iniciar sesión**, hoy se puede leer:
+1. Ninguno abierto (el hueco de `club-photos` quedó resuelto, ver abajo).
 
-1. **`profiles` completa** — 12 filas: nombre, teléfono, rol y club de todos los
-   usuarios, incluido el staff.
-2. **`profiles_legacy` completa** — 2 filas **con la columna `password` en
-   texto plano y poblada**. Es una tabla vieja archivada, pero sigue siendo
-   legible por cualquiera.
-3. **`reservations` completa** — 24 filas: nombre y teléfono del cliente, fecha
-   y **el `qr_code`**. Con ese código cualquiera puede abrir `/r/{codigo}` y
-   presentarse en la puerta con la reserva de otra persona.
-4. **INSERT anónimo permitido en `reservations`** — se puede crear una reserva
-   sin cuenta, directo contra la API. (Verificado insertando una fila de
-   sondeo, ya borrada.)
+### 🟠 Altos
 
-Las tablas que sí están protegidas: `commissions`, `consumption_entries`,
-`club_tables`, `rp_attendance`, `rp_schedule`, `club_dia_tarifas`,
-`rp_pagos_dia` y las dos de overrides. `clubs` y `club_photos` son públicas a
-propósito (son el catálogo).
-
-**Esto debería ser lo primero que resuelva la sesión de security hardening.**
-
-### 🟠 Altos — control de acceso
-
-5. **`/rp/panel` no verifica el rol.** Solo comprueba que haya sesión y perfil.
-   Un cliente, gerente o dueño logueado puede abrirlo; si tiene `club_id`, vería
-   el panel de RP con datos como si lo fuera. Arreglo: pedir `role` en el
-   `select` de `loadSession` y redirigir si no es `rp`, igual que hace
-   `/staff/panel` (`app/rp/panel/page.tsx`, ~línea 176).
-6. **`POST /api/admin/create-staff` no verifica quién llama.** No revisa sesión
-   ni rol; cualquiera que conozca la URL puede crear cuentas de staff, gerente
-   o RP en cualquier club. Ya está anotado como deuda en el propio archivo.
-7. **Auto-registro de dueños sin validación.** `/dueno/signup` es público: quien
-   sea crea una cuenta de dueño y un antro. El antro nace con
-   `suscripcion_activa: false`, así que no aparece en el listado, pero la cuenta
-   sí se crea. **(por confirmar con Diego si esto es intencional)**
+2. **Un dueño puede crear un antro con `suscripcion_activa = true`** directo
+   contra la API, y se guarda así. Hoy también se la puede activar con el
+   botón del panel porque la suscripción es simulada. Al público ya no le
+   basta con eso: también tiene que estar `verificado`, y eso lo exige la
+   base (`clubs_select_anon_verificados`), no solo la app. Pero cuando entre
+   el cobro real, `suscripcion_activa` debe quedar bajo candado (trigger).
+   **(por confirmar con Diego)**
+3. **Auto-registro de dueños sin validación.** `/dueno/signup` es público:
+   quien sea crea una cuenta de dueño y un antro. Mitigado: el antro nace en
+   `borrador` y no se publica sin la verificación del admin.
+   **(por confirmar con Diego si el auto-registro abierto es intencional)**
 
 ### 🟡 Medios
 
-8. **Auto-deploy de Vercel roto** (~52 días). Deploy manual con
-   `npx vercel --prod` mientras tanto.
-9. **`/dueno/signup` no es transaccional**: crea el perfil y luego el club en
+4. **Auto-deploy de Vercel roto.** Deploy manual con
+   `npx vercel --prod --scope antroapp` mientras tanto.
+5. **`/dueno/signup` no es transaccional**: crea el perfil y luego el club en
    dos pasos. Si falla el segundo, queda un dueño sin antro que ve "Antro no
    encontrado" para siempre.
-10. **`/dueno/panel` asume un solo antro por dueño** (`.maybeSingle()` sobre
-    `dueno_id`). Con dos clubs, la consulta falla y el dueño no ve ninguno.
-11. **Sin flujo para marcar comisiones como pagadas.** Todas se quedan en
-    `pendiente`.
-12. **`getWeekRange()` duplicada en 3 archivos** y basada en la zona horaria del
-    dispositivo.
-13. **Staff puede ver la config de comisión del antro.** `comision_tipo`,
+6. **`/dueno/panel` asume un solo antro por dueño** (`.maybeSingle()` sobre
+   `dueno_id`). Con dos clubs, la consulta falla y el dueño no ve ninguno
+   (pasó en las pruebas del 11/11/2026). Y un dueño **sí puede** crear un
+   segundo antro directo contra la API.
+7. **"1 reserva por cliente / antro / día" no implementada.** Borrador del
+   índice único en `sql/2026-11-borrador-una-reserva-por-dia.sql` (sin correr).
+   Al aplicarlo, `/cliente/reservar` necesita traducir el error 23505 a un
+   mensaje claro ("Ya tienes una reserva en este antro ese día").
+8. **Sin flujo para marcar comisiones como pagadas.** Todas se quedan en
+   `pendiente`.
+9. **Staff puede ver la config de comisión del antro.** `comision_tipo`,
     `comision_monto` y `comision_desbloqueo_reservas` viven en `clubs`, que el
     staff necesita leer para el nombre y dirección. La regla "staff no ve
     sueldos" solo se aplicó a las tablas nuevas. Postgres no tiene RLS por
     columna, así que arreglarlo requiere mover esos campos a otra tabla.
+10. **Los documentos de verificación no tienen límite por tipo.** Un dueño
+    puede subir varios archivos del mismo tipo; el panel solo muestra que ya
+    hay uno.
+
+### ⚪ Bajos
+
+11. `app/admin/page.tsx` calcula sus rangos "desde hace N días" con
+    `toISOString().slice(0, 10)`, que es fecha UTC: de 18:00 a 23:59 hora de
+    México el corte se corre un día. Debería usar `lib/fechas.ts`.
+
+### ✅ Resuelto (ya no es deuda)
+
+- Fugas sin sesión en `profiles` y `reservations`: un anónimo lee 0 filas
+  (verificado 11/11/2026). El boleto público usa `obtener_reserva_por_qr`.
+- Escalada de privilegios en `profiles`: políticas por rol y club y trigger
+  `profiles_no_escalar`.
+- `profiles_legacy` eliminada.
+- INSERT anónimo de reservas acotado (nacen `pendiente`, orgánicas, sin
+  consumo).
+- `/rp/panel` valida el rol.
+- `/api/admin/create-staff` autoriza por rol y club.
+- Turnos fijos de RP con `es_fijo`, `dias_semana` y `fecha_inicio`.
+- `getWeekRange()` duplicada y basada en el dispositivo: reemplazada por
+  `lib/fechas.ts` (hora de México).
+- **`clubs` abierta por la política del demo**: se borró
+  "Acceso abierto demo - clubs" (`using true`) y el anónimo solo lee antros
+  verificados y con suscripción activa (`clubs_select_anon_verificados`,
+  `sql/2026-11-11-clubs-quitar-politica-abierta.sql`). Verificado el
+  11/11/2026: el anónimo no puede INSERT/UPDATE/DELETE, la reserva sin
+  cuenta sigue funcionando; dueño, staff, RP, cliente y admin siguen bien.
+- **Bucket `club-photos` abierto para escritura, incluso sin sesión**
+  (cualquiera podía subir y borrar fotos de cualquier antro). Se aplicó
+  `sql/2026-11-11-club-photos-candado.sql` y, como eso no bastó, tres
+  políticas **restrictivas** (`club_photos_restrictiva_insert`,
+  `_update` y `_delete`): solo el dueño de la carpeta del club o el admin
+  suben, sobrescriben o borran. Verificado el 11/11/2026 con sesiones
+  reales: anónimo, cliente y dueño ajeno no pueden subir, sobrescribir ni
+  borrar; el dueño sí desde `/dueno/panel`; el admin sí; la lectura pública
+  y las fotos del listado y de la ficha siguen funcionando.
+  **Ojo:** las políticas permisivas abiertas
+  `club_photos_storage_insert_open` y `club_photos_storage_delete_open`
+  **siguen existiendo**; están neutralizadas por las restrictivas (que se
+  aplican con AND), pero conviene borrarlas para que no confundan. El SQL
+  de las tres restrictivas no está guardado en `sql/`
+  **(por confirmar con Diego: guardar una copia)**.
+- Verificación de dueños: el bucket `verificacion-docs` solo lo usan el dueño
+  de cada carpeta y el admin (verificado con dueño ajeno, cliente, RP, staff y
+  anónimo); el dueño no puede autoverificarse, ni crear un antro ya
+  verificado, ni tocar el bono.
 
 ### Datos de prueba en producción
 
@@ -373,10 +463,40 @@ Dragones). Evitar explícitamente el look genérico morado-degradado.
 
 ## 9. Pendientes inmediatos
 
-1. **Cerrar las fugas de RLS** de la sección 7 (puntos 1 a 4). Es lo más
-   urgente: hay datos personales de clientes reales expuestos.
-2. Borrar o proteger `profiles_legacy` (contraseñas en texto plano).
-3. Gate de rol en `/rp/panel`.
-4. Verificar quién llama a `/api/admin/create-staff`.
-5. Arreglar el auto-deploy de Vercel.
-6. Implementar la regla de 1 reserva por cliente/antro/día.
+1. El índice de "1 reserva por día"
+   (`sql/2026-11-borrador-una-reserva-por-dia.sql`), junto con el cambio de
+   código para mostrar un mensaje claro al rechazar un duplicado.
+2. Arreglar el auto-deploy de Vercel.
+3. El candado de `suscripcion_activa` en la base (sección 7, punto 2).
+4. Un dueño con dos antros rompe `/dueno/panel`: soportar varios o impedir
+   en la base que un dueño tenga dos.
+5. Limpieza menor: borrar las políticas abiertas viejas de `club-photos`
+   (ya neutralizadas) y guardar en `sql/` el SQL de sus tres restrictivas.
+
+---
+
+## 10. Lecciones aprendidas
+
+- **Las políticas permisivas de Storage se suman entre sí (OR).** Una sola
+  política mal acotada (por ejemplo, sin filtrar `bucket_id`) abre **todos**
+  los buckets aunque los demás tengan políticas correctas. Pasó con
+  `verificacion-docs`: una política vieja dejaba a cualquier usuario con
+  sesión leer, subir y borrar documentos privados. Para un bucket sensible,
+  usar además una política **restrictiva** (`as restrictive`), que se aplica
+  con AND sobre todas las demás. Y probar siempre con sesiones reales de cada
+  rol, no solo leer las políticas.
+- **Una política abierta heredada del demo (`using true`) sigue activa
+  aunque se agreguen políticas nuevas, porque las permisivas se suman.** Al
+  endurecer una tabla hay que listar y borrar las políticas viejas, no solo
+  agregar las nuevas.
+- **Un dueño con dos antros rompe `/dueno/panel`**: la consulta usa
+  `.maybeSingle()` sobre `dueno_id`, y con dos filas falla y no muestra
+  ninguno. Al crear datos de prueba, nunca dar dos clubs al mismo dueño si
+  luego se va a abrir su panel.
+- **Un dueño puede crear un antro con `suscripcion_activa = true`** directo
+  contra la API. Lo que la UI no permite no está prohibido: cualquier campo
+  que importe para publicar o cobrar tiene que estar protegido en la base
+  (RLS o trigger).
+- **Un INSERT que "pasa" no significa que guardó lo que mandaste**:
+  `clubs_candado_insert` corrige los valores en silencio. Para probar un
+  candado, leer después lo que quedó guardado.

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { DIAS_SEMANA, formatearDias } from "@/lib/turnos";
+import { hoyMexico } from "@/lib/fechas";
 
 interface TurnoRecurrenteFormProps {
   rpId: string;
@@ -14,16 +15,6 @@ interface TurnoRecurrenteFormProps {
   existingFechas: string[];
   tieneTurnoFijo: boolean;
   onAssigned: () => void | Promise<void>;
-}
-
-function localDateToISO(d: Date) {
-  const copy = new Date(d);
-  copy.setMinutes(copy.getMinutes() - copy.getTimezoneOffset());
-  return copy.toISOString().slice(0, 10);
-}
-
-function todayISO() {
-  return localDateToISO(new Date());
 }
 
 export function TurnoRecurrenteForm({
@@ -37,7 +28,7 @@ export function TurnoRecurrenteForm({
   const [dateInput, setDateInput] = useState("");
   const [pendingDates, setPendingDates] = useState<string[]>([]);
   const [weekdays, setWeekdays] = useState<number[]>([]);
-  const [fechaInicio, setFechaInicio] = useState(todayISO());
+  const [fechaInicio, setFechaInicio] = useState(hoyMexico());
   const [genError, setGenError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +43,7 @@ export function TurnoRecurrenteForm({
       setGenError("Selecciona una fecha.");
       return;
     }
-    if (dateInput < todayISO()) {
+    if (dateInput < hoyMexico()) {
       setGenError("La fecha no puede ser en el pasado.");
       return;
     }
@@ -147,7 +138,7 @@ export function TurnoRecurrenteForm({
       }
 
       setWeekdays([]);
-      setFechaInicio(todayISO());
+      setFechaInicio(hoyMexico());
       await onAssigned();
     } catch (err) {
       console.error("Error guardando turno fijo:", err);
@@ -191,7 +182,7 @@ export function TurnoRecurrenteForm({
             <Input
               id={`turno-fecha-${rpId}`}
               type="date"
-              min={todayISO()}
+              min={hoyMexico()}
               value={dateInput}
               onChange={(e) => setDateInput(e.target.value)}
             />
