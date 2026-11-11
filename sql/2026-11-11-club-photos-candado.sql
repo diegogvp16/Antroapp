@@ -8,8 +8,9 @@
 -- borrar en la carpeta de otro club, porque las políticas abiertas
 -- club_photos_storage_insert_open / _delete_open seguían existiendo (las
 -- permisivas se suman con OR). Se cerró agregando tres políticas
--- RESTRICTIVAS (club_photos_restrictiva_insert, _update y _delete), cuyo
--- SQL no está en este archivo. Reprobado el mismo día: cerrado.
+-- RESTRICTIVAS (club_photos_restrictiva_insert, _update y _delete), en
+-- sql/2026-11-11-club-photos-restrictivas.sql. Reprobado el mismo día:
+-- cerrado.
 --
 -- Problema verificado el 11/11/2026 con sesiones reales: en 'club-photos'
 -- CUALQUIERA (anónimo, cliente, dueño de otro antro) puede subir archivos a

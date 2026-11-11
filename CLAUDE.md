@@ -399,8 +399,7 @@ Ordenada por gravedad. Verificado contra producción el 11/11/2026.
   `club_photos_storage_insert_open` y `club_photos_storage_delete_open`
   **siguen existiendo**; están neutralizadas por las restrictivas (que se
   aplican con AND), pero conviene borrarlas para que no confundan. El SQL
-  de las tres restrictivas no está guardado en `sql/`
-  **(por confirmar con Diego: guardar una copia)**.
+  de las tres restrictivas está en `sql/2026-11-11-club-photos-restrictivas.sql`.
 - Verificación de dueños: el bucket `verificacion-docs` solo lo usan el dueño
   de cada carpeta y el admin (verificado con dueño ajeno, cliente, RP, staff y
   anónimo); el dueño no puede autoverificarse, ni crear un antro ya
@@ -471,7 +470,7 @@ Dragones). Evitar explícitamente el look genérico morado-degradado.
 4. Un dueño con dos antros rompe `/dueno/panel`: soportar varios o impedir
    en la base que un dueño tenga dos.
 5. Limpieza menor: borrar las políticas abiertas viejas de `club-photos`
-   (ya neutralizadas) y guardar en `sql/` el SQL de sus tres restrictivas.
+   (ya neutralizadas por las restrictivas).
 
 ---
 
