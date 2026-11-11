@@ -400,6 +400,19 @@ Ordenada por gravedad. Verificado contra producción el 11/11/2026.
   **siguen existiendo**; están neutralizadas por las restrictivas (que se
   aplican con AND), pero conviene borrarlas para que no confundan. El SQL
   de las tres restrictivas está en `sql/2026-11-11-club-photos-restrictivas.sql`.
+- **Comisiones, pagos por día y documentos de verificación**
+  (`sql/2026-11-11-restrictivas-comisiones-y-pagos.sql`, 4 políticas
+  restrictivas): staff, gerente y dueño ya no fabrican comisiones de RP ni
+  pagos por día insertando directo (solo nacen por
+  `registrar_comision_reserva` / `registrar_pago_dia`; fuera del admin solo
+  se inserta el bono de plataforma, pendiente, de una reserva orgánica); el
+  staff ya no lee `commissions`; el dueño ya no borra filas de
+  `verificacion_documentos`. Verificado el 11/11/2026 con sesiones reales y
+  con los flujos de la UI (check-in y consumo, bono orgánico, asistencia por
+  QR y manual, nómina del RP, panel del gerente, dashboard del admin).
+  **Ojo:** siguen existiendo, neutralizadas por las restrictivas, las
+  permisivas viejas `commissions_insert_club_staff`,
+  `rp_pagos_dia_insert_club_staff` y `verif_docs_delete`.
 - Verificación de dueños: el bucket `verificacion-docs` solo lo usan el dueño
   de cada carpeta y el admin (verificado con dueño ajeno, cliente, RP, staff y
   anónimo); el dueño no puede autoverificarse, ni crear un antro ya
@@ -462,15 +475,34 @@ Dragones). Evitar explícitamente el look genérico morado-degradado.
 
 ## 9. Pendientes inmediatos
 
-1. El índice de "1 reserva por día"
+Por prioridad:
+
+1. **Reescribir `registrar_comision_reserva` y `registrar_pago_dia`**
+   (versión actual en `sql/2026-11-11-funciones-registrar-ACTUALES.sql`)
+   para que lean el consumo de `consumption_entries`, calculen la semana en
+   `America/Mexico_City` dentro de la base, validen que la reserva
+   pertenezca al RP y al club, y sean idempotentes. Hoy confían en datos
+   del navegador (consumo y rango de la semana) y se pueden duplicar.
+2. Mover el cálculo del bono de plataforma a una función en la base (hoy lo
+   calcula el staff en el navegador y lo inserta directo).
+3. Mover `bono_organica_*` y la config de comisiones de `clubs` a una tabla
+   con lectura restringida: hoy cualquier usuario con sesión lee los
+   términos de todos los antros (ver sección 7, punto 9).
+4. Política de UPDATE en `commissions` para marcarlas pagadas, solo gerente
+   y dueño (hoy nadie puede, ni el admin desde el navegador).
+5. Cuenta de grupo, caja, coordinador de piso y alta masiva de RPs
+   (plantillas de ~130 por antro).
+6. El índice de "1 reserva por día"
    (`sql/2026-11-borrador-una-reserva-por-dia.sql`), junto con el cambio de
    código para mostrar un mensaje claro al rechazar un duplicado.
-2. Arreglar el auto-deploy de Vercel.
-3. El candado de `suscripcion_activa` en la base (sección 7, punto 2).
-4. Un dueño con dos antros rompe `/dueno/panel`: soportar varios o impedir
+7. Arreglar el auto-deploy de Vercel.
+8. El candado de `suscripcion_activa` en la base (sección 7, punto 2).
+9. Un dueño con dos antros rompe `/dueno/panel`: soportar varios o impedir
    en la base que un dueño tenga dos.
-5. Limpieza menor: borrar las políticas abiertas viejas de `club-photos`
-   (ya neutralizadas por las restrictivas).
+10. Limpieza menor: borrar las permisivas viejas ya neutralizadas por
+    restrictivas (`club_photos_storage_insert_open`,
+    `club_photos_storage_delete_open`, `commissions_insert_club_staff`,
+    `rp_pagos_dia_insert_club_staff` y `verif_docs_delete`).
 
 ---
 
@@ -496,6 +528,9 @@ Dragones). Evitar explícitamente el look genérico morado-degradado.
   contra la API. Lo que la UI no permite no está prohibido: cualquier campo
   que importe para publicar o cobrar tiene que estar protegido en la base
   (RLS o trigger).
+- **Una función SECURITY DEFINER que recibe datos del cliente (montos,
+  rangos de fechas) hereda toda la confianza que no debería.** Calcula
+  dentro de la base lo que se pueda.
 - **Un INSERT que "pasa" no significa que guardó lo que mandaste**:
   `clubs_candado_insert` corrige los valores en silencio. Para probar un
   candado, leer después lo que quedó guardado.
