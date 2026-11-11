@@ -48,3 +48,6 @@ next-env.d.ts
 /screenshots-*/
 /REPORTE-*.md
 /.claude/
+
+# respaldos locales con datos personales (nunca a Git)
+backups/

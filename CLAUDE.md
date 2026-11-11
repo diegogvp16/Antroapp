@@ -420,11 +420,21 @@ Ordenada por gravedad. Verificado contra producción el 11/11/2026.
 
 ### Datos de prueba en producción
 
-La base de producción tiene antros de prueba ("Antro Demo", "Lounge Elite",
-"Club Nocturno XYZ") junto a los reales ("SIX GDL", "El Vaquero"). Además, los
-5 antros tienen 3 fotos cada uno que son **copias de las fotos reales de SIX
-GDL**, puestas a propósito para poder evaluar la galería. No son fotos reales de
-esos antros.
+Los antros de prueba "Antro Demo", "Lounge Elite" y "Club Nocturno XYZ" **se
+quitaron de producción el 11/11/2026**, con sus reservas de prueba (6, todas
+orgánicas y sin cliente ni RP), sus filas de `club_photos` y sus archivos del
+bucket. No tenían dueño, staff, RPs, mesas ni comisiones. Quedan solo "SIX
+GDL" y "El Vaquero" (este en `borrador`, así que el listado público muestra
+solo SIX GDL). El respaldo completo está en
+`backups/2026-11-11-antros-de-prueba.json`, **solo local**: `backups/` está en
+`.gitignore` porque trae nombres y teléfonos.
+
+El Vaquero tiene 3 fotos que son **copias de las fotos reales de SIX GDL**,
+puestas a propósito para evaluar la galería. No son fotos reales de ese antro.
+
+Quedan cuentas que parecen de prueba (2 usuarios de auth sin perfil, "Landing
+Test" y varios clientes de Diego). Se dejaron a propósito: borrarlas es
+decisión de Diego.
 
 ---
 
