@@ -432,6 +432,17 @@ solo SIX GDL). El respaldo completo está en
 El Vaquero tiene 3 fotos que son **copias de las fotos reales de SIX GDL**,
 puestas a propósito para evaluar la galería. No son fotos reales de ese antro.
 
+**Panic Room** (`8e433d37-ac56-407e-82a6-4e405d6d9fdc`), negocio real, se
+cargó el 12/11/2026 como **borrador oculto**: `estado_verificacion =
+'borrador'`, `suscripcion_activa = false`, sin dueño (`dueno_id` nulo), con 4
+fotos tomadas de su Instagram (con su marca de agua, sin recortar).
+**Pendiente de autorización del cliente**: no publicarlo ni verificarlo hasta
+que la dé. Los datos y fotos originales viven en `demo-assets/panic-room/`,
+que está en `.gitignore` (imágenes de un tercero, nunca a Git). Ojo: "oculto"
+solo vale para la interfaz. Cualquier usuario con sesión puede leer su fila
+de `clubs` por la API (ver sección 7, punto 9), cualquiera puede leer sus
+filas de `club_photos`, y las fotos están en el bucket público.
+
 Quedan cuentas que parecen de prueba (2 usuarios de auth sin perfil, "Landing
 Test" y varios clientes de Diego). Se dejaron a propósito: borrarlas es
 decisión de Diego.

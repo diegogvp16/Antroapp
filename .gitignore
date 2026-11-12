@@ -51,3 +51,6 @@ next-env.d.ts
 
 # respaldos locales con datos personales (nunca a Git)
 backups/
+
+# imágenes de terceros para cargar negocios (nunca a Git)
+demo-assets/
