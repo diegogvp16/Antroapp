@@ -423,11 +423,32 @@ Ordenada por gravedad. Verificado contra producción el 11/11/2026.
 Los antros de prueba "Antro Demo", "Lounge Elite" y "Club Nocturno XYZ" **se
 quitaron de producción el 11/11/2026**, con sus reservas de prueba (6, todas
 orgánicas y sin cliente ni RP), sus filas de `club_photos` y sus archivos del
-bucket. No tenían dueño, staff, RPs, mesas ni comisiones. Quedan solo "SIX
-GDL" y "El Vaquero" (este en `borrador`, así que el listado público muestra
-solo SIX GDL). El respaldo completo está en
-`backups/2026-11-11-antros-de-prueba.json`, **solo local**: `backups/` está en
-`.gitignore` porque trae nombres y teléfonos.
+bucket. No tenían dueño, staff, RPs, mesas ni comisiones. El respaldo completo
+está en `backups/2026-11-11-antros-de-prueba.json`, **solo local**: `backups/`
+está en `.gitignore` porque trae nombres y teléfonos.
+
+**Club Demo** (`d2f531df-8116-442e-b967-4a1004fcd02e`) es el **antro de
+demostración** de la plataforma, publicado (verificado y con suscripción).
+Hasta el 12/11/2026 era "SIX GDL": se le cambiaron nombre, dirección, ciudad,
+horario, ambiente y depósito ($100) y se borraron lat/lng. Respaldo de su
+fila y fotos anteriores en `backups/2026-11-12-six-gdl-antes-de-club-demo.json`.
+Lo que conserva de SIX GDL:
+- Sus **3 fotos siguen siendo las de SIX GDL** (y su `storage_path` dice "SIX
+  GDL"). Faltan fotos propias: cuando existan en `demo-assets/club-demo/`, se
+  reemplazan.
+- Su dueño (diegogv), el gerente lolo, los RPs SIXRP, John, Juanito y pedro
+  (4 correos `@six.com`), sus 29 mesas, sus 439 turnos y sus 13 reservas
+  anteriores.
+
+Datos `demo_` de Club Demo (para borrarlos juntos cuando haga falta):
+- RPs ficticios: `demo_mariana@example.com` (Mariana Ruiz, turno fijo jue-sáb
+  indefinido y comisión individual de $150 fija), `demo_andres@example.com`
+  (Andrés Solís) y `demo_valeria@example.com` (Valeria Cantú), ambos con turno
+  suelto el 12/11/2026. Contraseña en
+  `backups/2026-11-12-club-demo-credenciales.json` (solo local).
+- 6 reservas del 12/11/2026 con teléfonos `0000000001` a `0000000006`:
+  pendiente, confirmada, usada sin mesa, usada con mesa 3, usada con mesa 5 +
+  consumo de $2,400 + comisión de RP de $150 (pendiente), y pendiente de RP.
 
 El Vaquero tiene 3 fotos que son **copias de las fotos reales de SIX GDL**,
 puestas a propósito para evaluar la galería. No son fotos reales de ese antro.
@@ -438,10 +459,13 @@ cargó el 12/11/2026 como **borrador oculto**: `estado_verificacion =
 fotos tomadas de su Instagram (con su marca de agua, sin recortar).
 **Pendiente de autorización del cliente**: no publicarlo ni verificarlo hasta
 que la dé. Los datos y fotos originales viven en `demo-assets/panic-room/`,
-que está en `.gitignore` (imágenes de un tercero, nunca a Git). Ojo: "oculto"
-solo vale para la interfaz. Cualquier usuario con sesión puede leer su fila
-de `clubs` por la API (ver sección 7, punto 9), cualquiera puede leer sus
-filas de `club_photos`, y las fotos están en el bucket público.
+que está en `.gitignore` (imágenes de un tercero, nunca a Git). Desde el
+12/11/2026 también está oculto por la API: las restrictivas de
+`sql/2026-11-12-clubs-select-solo-publicados.sql` (bloques 1 y 2, aplicados)
+dejan ver un antro no publicado y sus fotos solo a admin, su dueño y su
+staff/RPs (prueba: `node scripts/probar-clubs-visibilidad.mjs`). Ojo: los
+archivos del bucket `club-photos` siguen siendo públicos para quien ya tenga
+la URL exacta.
 
 Quedan cuentas que parecen de prueba (2 usuarios de auth sin perfil, "Landing
 Test" y varios clientes de Diego). Se dejaron a propósito: borrarlas es
