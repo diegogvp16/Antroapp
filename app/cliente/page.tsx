@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Search, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { textoCover } from "@/lib/cover";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -301,6 +302,7 @@ export default function ClientePage() {
                 userLocation !== null &&
                 distanceKm !== null &&
                 sortedClubs[0]?.club.id === club.id;
+              const cover = textoCover(club);
               return (
                 <Link
                   key={club.id}
@@ -314,16 +316,14 @@ export default function ClientePage() {
                     className="absolute inset-0 h-full w-full object-cover"
                   />
                   <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1.5 bg-gradient-to-t from-noche-bg via-noche-bg/75 to-transparent px-3.5 pb-3.5 pt-16">
-                    {isCover && (
+                    {isCover && (esElMasCercano || cover) && (
                       <div className="flex items-center gap-2">
                         {esElMasCercano && (
                           <span className="rounded-sm bg-noche-vino px-2 py-0.5 text-xs text-noche-text">
                             El más cercano
                           </span>
                         )}
-                        <Badge variant="vip">
-                          Depósito ${club.deposito_monto}
-                        </Badge>
+                        {cover && <Badge variant="vip">{cover}</Badge>}
                       </div>
                     )}
                     <h2 className={`leading-none ${tile.title}`}>
@@ -336,9 +336,9 @@ export default function ClientePage() {
                           ` · ${formatDistance(distanceKm)}`}
                       </p>
                     )}
-                    {!isCover && (
+                    {!isCover && cover && (
                       <p className="text-xs font-medium text-noche-accent">
-                        ${club.deposito_monto}
+                        {cover}
                       </p>
                     )}
                   </div>
@@ -393,9 +393,11 @@ export default function ClientePage() {
                           ` · ${formatDistance(distanceKm)}`}
                       </span>
                     </span>
-                    <span className="flex-shrink-0 text-sm font-medium text-noche-accent">
-                      ${club.deposito_monto}
-                    </span>
+                    {textoCover(club) && (
+                      <span className="flex-shrink-0 text-sm font-medium text-noche-accent">
+                        {textoCover(club)}
+                      </span>
+                    )}
                   </Link>
                 </li>
               ))}

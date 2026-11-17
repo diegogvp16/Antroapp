@@ -33,7 +33,12 @@ export interface Club {
   nombre: string;
   direccion: string;
   horario: string;
+  // Sin uso: la app no cobra depósitos. Se conserva en la base, no mostrar.
   deposito_monto: number;
+  // Cover informativo (sql/2026-11-borrador-cover.sql, aún sin aplicar:
+  // mientras tanto llegan undefined y no se muestra nada).
+  cover_modo?: "monto" | "libre" | "consultar" | "oculto";
+  cover_monto?: number | null;
   dueno_id: string | null;
   suscripcion_activa: boolean;
   suscripcion_activada_en: string | null;

@@ -22,6 +22,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { hoyMexico } from "@/lib/fechas";
+import { textoCover } from "@/lib/cover";
 import type { Club } from "@/types";
 
 interface ReservaResumen {
@@ -317,7 +318,8 @@ function ReservarPage() {
         <CardHeader>
           <CardTitle>Reservar en {club.nombre}</CardTitle>
           <CardDescription>
-            Llena tus datos para tu reserva. Depósito: ${club.deposito_monto}
+            Llena tus datos para tu reserva. Apartar lugar no tiene costo.
+            {textoCover(club) && ` ${textoCover(club)} en la puerta.`}
           </CardDescription>
         </CardHeader>
         <CardContent className="px-6 pb-6">

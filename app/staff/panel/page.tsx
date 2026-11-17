@@ -1125,7 +1125,7 @@ export default function StaffPanelPage() {
                     className="text-sm text-status-warn"
                     role="alert"
                   >
-                    Esta reserva ya hizo check-in.
+                    Esta reserva ya tiene la entrada confirmada.
                   </p>
                   <div className="text-sm">
                     <p className="font-medium">
@@ -1153,12 +1153,15 @@ export default function StaffPanelPage() {
                       {scanState.reserva.fecha}
                     </p>
                   </div>
+                  <p className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
+                    El QR no garantiza la entrada.
+                  </p>
                   <Button
                     type="button"
                     onClick={() => handleConfirmCheckIn(scanState.reserva)}
                     disabled={checkingIn}
                   >
-                    {checkingIn ? "Confirmando..." : "Confirmar llegada"}
+                    {checkingIn ? "Confirmando..." : "Confirmar entrada"}
                   </Button>
                 </div>
               )}
@@ -1166,7 +1169,7 @@ export default function StaffPanelPage() {
               {scanState.status === "success" && (
                 <div className="flex flex-col gap-3">
                   <p className="text-sm text-status-ok">
-                    ¡Check-in confirmado!
+                    ¡Entrada confirmada!
                   </p>
                   <Button type="button" onClick={resumeScanning}>
                     Escanear siguiente

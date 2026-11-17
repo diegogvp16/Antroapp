@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { textoCover } from "@/lib/cover";
 import { Button } from "@/components/ui/button";
 import { BackLink } from "@/components/back-link";
 import { GaleriaAntro } from "@/components/galeria-antro";
@@ -184,12 +185,20 @@ export default function ClubDetailPage() {
                 <dt className="text-noche-muted">Horario</dt>
                 <dd className="font-medium">{club.horario}</dd>
               </div>
+              {/* La app no cobra nada: apartar es gratis. El cover, si el
+                  antro lo informa, lo cobra el antro en la puerta. */}
               <div className="flex flex-col gap-1">
-                <dt className="text-noche-muted">Depósito</dt>
+                <dt className="text-noche-muted">Apartar lugar</dt>
                 <dd className="text-lg font-semibold text-noche-accent">
-                  ${club.deposito_monto}
+                  Sin costo
                 </dd>
               </div>
+              {textoCover(club) && (
+                <div className="col-span-2 flex flex-col gap-1">
+                  <dt className="text-noche-muted">En la puerta</dt>
+                  <dd className="font-medium">{textoCover(club)}</dd>
+                </div>
+              )}
             </dl>
 
             {detalles.length > 0 && (

@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { textoCover } from "@/lib/cover";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -639,9 +640,11 @@ export default function AdminPage() {
                       {club.direccion}
                     </p>
                   </div>
-                  <span className="whitespace-nowrap text-sm font-semibold">
-                    Depósito: ${club.deposito_monto}
-                  </span>
+                  {textoCover(club) && (
+                    <span className="whitespace-nowrap text-sm font-semibold">
+                      {textoCover(club)}
+                    </span>
+                  )}
                 </CardContent>
                 <CardContent className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3 text-sm">
                   <span className="text-muted-foreground">
