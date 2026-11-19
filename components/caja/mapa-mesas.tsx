@@ -58,8 +58,8 @@ export function MapaMesas({
               onClick={() => onSeleccionar(mesa.id)}
               className="flex min-w-0 flex-col gap-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              <div className="flex items-center justify-between gap-1">
-                <span className="truncate text-base font-semibold">{mesa.numero}</span>
+              <div className="flex flex-wrap items-center justify-between gap-1">
+                <span className="text-base font-semibold whitespace-nowrap">{mesa.numero}</span>
                 <Badge variant={ESTADO_MESA_BADGE[estado]}>{ESTADO_MESA_LABEL[estado]}</Badge>
               </div>
               {totales ? (

@@ -191,3 +191,57 @@ lo visible está en el bloque 3.
 4. **Cuando quieras el pase**: pídelo explícitamente. El orden exacto está
    en CLAUDE.md, sección 9. La mañana del 25 corre
    `node scripts/demo-datos.mjs --fecha=2026-11-25 --si` (no antes).
+
+---
+
+## Noche demo en dev y diagnóstico de duplicados (20/11/2026)
+
+### Noche demo sembrada en antroapp-dev
+
+Con `node scripts/demo-datos.mjs --env=.env.dev --si` (candado: se niega si
+la URL o la llave son de producción; probado con un `.env.dev` falso).
+Sin `--fecha`, usa la **noche en curso** (corte 08:00) para que la caja se
+pueda operar en vivo. Quedó la noche del **jueves 19/11/2026**:
+
+- 40 reservas de 5 RPs (Mariana, Diego, Valeria, Luis, Fernanda) y
+  orgánicas; 27 con entrada confirmada y 13 por llegar (para escanear).
+- Caja: 12 mesas compartidas (2 o 3 cuentas cada una, cada cuenta con su
+  RP): **5 cuadradas** (con sus comisiones), **2 cerradas** (pagadas, falta
+  cuadrar) y **5 abiertas** (con saldo). En una mesa abierta hay un walk-in
+  y un consumo **anulado con motivo** ("Capturada dos veces por error").
+- Semana anterior (jue 12, vie 13 y sáb 14 de noviembre): todas las mesas
+  cuadradas, noches cerradas con su cuadre y comisiones **pendientes** (para
+  recorrer los estados de la nómina).
+- Club Demo Dev Tijuana conserva su historia (panel de grupo).
+
+**Importante:** la caja solo opera la noche en curso. Después de las 08:00
+del 20/11 la noche cambia; el día que pruebes, primero corre
+`node scripts/dev/sembrar-dev.mjs` y luego
+`node scripts/demo-datos.mjs --env=.env.dev --si`.
+
+### Qué usuario usar en cada pantalla (vista previa o `node scripts/dev/servidor-dev.mjs`)
+
+Contraseña de todos: `backups/dev-credenciales.json` (campo `password`).
+
+| Pantalla | Usuario | Qué ver |
+|---|---|---|
+| `/staff/panel` | `dev_staff@example.com` | Reservas de la noche; "Confirmar entrada sin cámara" en las 13 que faltan; acceso a la caja. |
+| `/staff/caja` | `dev_staff@example.com` | Mesas abiertas, cerradas y cuadradas; sentar, consumir y cobrar en las abiertas. El staff **no** anula ni cuadra. |
+| `/staff/caja` (gerente) | `dev_gerente@example.com` | Cuadrar las 2 mesas cerradas, ver el anulado con su motivo, pestaña "Cuadre de la noche". |
+| `/staff/nomina` | `dev_gerente@example.com` | Semana anterior (‹): los 5 RPs con comisiones pendientes → Enviar a revisión → Validar → Marcar pagada; Anular con motivo; CSV. |
+| `/grupo` | `dev_gerente@example.com` | "Resumen de tu antro": solo Club Demo Dev. |
+| `/dueno/panel`, `/dueno/nomina` | `dev_dueno@example.com` | Panel del dueño (cover), nómina del antro. |
+| `/grupo` | `dev_dueno@example.com` | Panel de grupo: Guadalajara y Tijuana, cada uno en su hora. |
+| `/rp/panel` | `demo_mariana@example.com` (o `demo_diego`, `demo_valeria`, `demo_luis`, `demo_fernanda`) | Reservas de la semana, nómina con esta semana y la anterior. |
+| `/cliente` | `dev_cliente@example.com` | Listado con Club Demo Dev y su cover; reservar (la segunda la misma noche se rechaza). |
+| `/admin` | `dev_admin@example.com` | Antros (los no publicados colapsados), "Errores recientes". |
+| Staff de Tijuana | `dev_staff_tijuana`, `dev_gerente_tijuana` | Su propio antro (otra zona horaria). |
+
+### Diagnóstico de duplicados en PRODUCCIÓN (solo lectura)
+
+Corrido el 20/11/2026 con solo SELECT (no se creó el índice):
+- 136 reservas que cuentan (pendiente, confirmada, usada); **ninguna** tiene
+  cuenta de cliente (todas son anónimas o de RP).
+- **Opción A** (la del índice: cliente, antro, noche): **0 duplicados**. El
+  índice de `sql/2026-11-20-estabilidad.sql` se puede crear sin conflictos.
+- Opción B (informativa: teléfono, antro, noche): 0.

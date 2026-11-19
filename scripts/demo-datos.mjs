@@ -18,6 +18,15 @@
 // medianoche (hasta las 03:30) siguen siendo de esa misma noche.
 //
 // Usa la service role key de .env.local; nunca imprime su valor.
+//
+// MODO DEV: --env=.env.dev apunta a antroapp-dev ("Club Demo Dev") y se
+// niega a correr si la URL o la llave son de producción. En dev además
+// arma la CAJA de cada noche (mesas compartidas con cuentas por cliente y su
+// RP, consumos, pagos, cuadres y comisiones nacidas al cuadrar): la noche
+// objetivo queda con mesas abiertas, cerradas y cuadradas y una anulación
+// con motivo; la semana anterior, todo cuadrado. Sin --fecha, en dev toma la
+// noche en curso (corte 08:00) para poder operar la caja en vivo.
+//   node scripts/demo-datos.mjs --env=.env.dev --si
 
 import { createRequire } from "node:module";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -27,8 +36,11 @@ import { dirname, join } from "node:path";
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), "..");
 const { createClient } = createRequire(join(RAIZ, "package.json"))("@supabase/supabase-js");
+const ARCHIVO_ENV = (process.argv.find((a) => a.startsWith("--env=")) ?? "--env=.env.local").slice(6);
+if (!/^\.env\.(local|dev)$/.test(ARCHIVO_ENV)) { console.log("ERROR: --env debe ser .env.local o .env.dev"); process.exit(1); }
+const DEV = ARCHIVO_ENV === ".env.dev";
 const env = Object.fromEntries(
-  readFileSync(join(RAIZ, ".env.local"), "utf8")
+  readFileSync(join(RAIZ, ARCHIVO_ENV), "utf8")
     .split(/\r?\n/)
     .filter((l) => l.includes("=") && !l.trim().startsWith("#"))
     .map((l) => {
@@ -36,18 +48,28 @@ const env = Object.fromEntries(
       return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^["']|["']$/g, "")];
     }),
 );
+// Candado: en modo dev la URL y la llave deben ser de antroapp-dev.
+const REF_DEV = "ygumrpckbtlngzspqdvo", REF_PROD = "kigltjvakwuuulvzbyri";
+const refDe = (jwt) => { try { return JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString()).ref; } catch { return null; } };
+if (DEV && (!env.NEXT_PUBLIC_SUPABASE_URL?.includes(REF_DEV) || env.NEXT_PUBLIC_SUPABASE_URL.includes(REF_PROD) || refDe(env.SUPABASE_SERVICE_ROLE_KEY ?? "") !== REF_DEV)) {
+  console.log("ERROR: --env=.env.dev no apunta a antroapp-dev. No se toca nada.");
+  process.exit(1);
+}
+console.log(`Entorno: ${DEV ? "DEV (antroapp-dev)" : "PRODUCCIÓN"}`);
 const svc = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-const CLUB_ID = "d2f531df-8116-442e-b967-4a1004fcd02e";
-const CREDENCIALES = join(RAIZ, "backups", "2026-11-12-club-demo-credenciales.json");
+const CLUB_ID = DEV ? "0de70000-0000-4000-8000-000000000001" : "d2f531df-8116-442e-b967-4a1004fcd02e";
+const CLUB_NOMBRE = DEV ? "Club Demo Dev" : "Club Demo";
+const CREDENCIALES = join(RAIZ, "backups", DEV ? "dev-credenciales.json" : "2026-11-12-club-demo-credenciales.json");
 const ZONA = "America/Mexico_City";
 const MARCA_TEL = "0000000";
 
 const args = process.argv.slice(2);
 const ESCRIBIR = args.includes("--si");
-const FECHA = (args.find((a) => a.startsWith("--fecha=")) ?? "--fecha=2026-11-25").slice(8);
+const nocheEnCurso = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City" }).format(new Date(Date.now() - 8 * 3600e3));
+const FECHA = (args.find((a) => a.startsWith("--fecha=")) ?? `--fecha=${DEV ? nocheEnCurso : "2026-11-25"}`).slice(8);
 if (!/^\d{4}-\d{2}-\d{2}$/.test(FECHA)) salir(`Fecha inválida: ${FECHA}`);
 
 function salir(msg) {
@@ -107,9 +129,9 @@ const elegir = (xs) => xs[Math.floor(azar() * xs.length)];
 
 // ---------- Club ----------
 const club = ok(await svc.from("clubs").select("id, nombre").eq("id", CLUB_ID).maybeSingle(), "club");
-if (!club || club.nombre !== "Club Demo") salir("Club Demo no existe o cambió de nombre; no se toca nada.");
+if (!club || club.nombre !== CLUB_NOMBRE) salir(`${CLUB_NOMBRE} no existe o cambió de nombre; no se toca nada.`);
 const mesas = ok(await svc.from("club_tables").select("id, numero").eq("club_id", CLUB_ID), "mesas")
-  .sort((a, b) => Number(a.numero) - Number(b.numero));
+  .sort((a, b) => a.numero.localeCompare(b.numero, "es", { numeric: true }));
 
 // ---------- Cuentas demo_* ----------
 const usuarios = [];
@@ -240,6 +262,12 @@ if (!ESCRIBIR) {
 }
 
 // ---------- Escritura ----------
+// 0. En dev, la caja de Club Demo Dev se borra antes que sus reservas (la caja
+//    no se borra por la API: se usa el permiso de limpieza de pruebas de dev).
+if (DEV) {
+  const { limpiarCajaDev } = await import("./dev/sembrar-historia-dev.mjs");
+  await limpiarCajaDev([CLUB_ID], "__ninguno__");
+}
 // 1. Borrado de lo demo.
 for (const ids of trozos(borrarIds)) {
   ok(await svc.from("consumption_entries").delete().in("reservation_id", ids), "borrar consumos");
@@ -279,9 +307,17 @@ ok(await svc.from("rp_schedule").insert(REPARTO.map((r) => ({
 // 4. Reservas, consumos, comisiones y asistencia.
 generar();
 for (const xs of trozos(reservas)) ok(await svc.from("reservations").insert(xs), "reservas");
-for (const xs of trozos(consumos)) ok(await svc.from("consumption_entries").insert(xs), "consumos");
-for (const xs of trozos(comisiones)) ok(await svc.from("commissions").insert(xs), "comisiones");
+if (!DEV) {
+  for (const xs of trozos(consumos)) ok(await svc.from("consumption_entries").insert(xs), "consumos");
+  for (const xs of trozos(comisiones)) ok(await svc.from("commissions").insert(xs), "comisiones");
+}
 ok(await svc.from("rp_attendance").insert(asistencias), "asistencia");
+if (DEV) {
+  const { escribirCajaDev } = await import("./dev/demo-caja-dev.mjs");
+  const caja = await escribirCajaDev({ clubId: CLUB_ID, fechaObjetivo: FECHA, reservas, consumos, reparto: REPARTO, rpIds, mesas, azar, entre });
+  console.log(`Caja: ${caja.noches} noches, ${caja.sesiones} mesas (${caja.abiertas} abiertas, ${caja.cerradas} cerradas, ${caja.cuadradas} cuadradas), ${caja.consumos} consumos, ${caja.anulados} anulado con motivo, ${caja.comisiones} comisiones.`);
+  for (const [noche, r] of Object.entries(caja.porNoche)) resumen[noche] = { ...resumen[noche], consumo: r.consumo, comisiones: r.comisiones };
+}
 
 // ---------- Resumen y verificación contra la base ----------
 const pesos = (n) => `$${n.toLocaleString("es-MX")}`;
@@ -293,13 +329,16 @@ for (const noche of Object.keys(resumen)) {
   const ids = enBase.map((x) => x.id);
   let consumoBase = 0, comisionBase = 0;
   for (const t of trozos(ids)) {
-    consumoBase += ok(await svc.from("consumption_entries").select("monto").in("reservation_id", t), "v consumos").reduce((s, c) => s + Number(c.monto), 0);
+    consumoBase += DEV
+      ? ok(await svc.from("caja_consumos").select("monto_centavos").eq("anulado", false).in("reservation_id", t), "v consumos caja").reduce((s, c) => s + Number(c.monto_centavos) / 100, 0)
+      : ok(await svc.from("consumption_entries").select("monto").in("reservation_id", t), "v consumos").reduce((s, c) => s + Number(c.monto), 0);
     comisionBase += ok(await svc.from("commissions").select("monto").in("reservation_id", t), "v comisiones").reduce((s, c) => s + Number(c.monto), 0);
   }
-  const cuadra = enBase.length === r.reservas && enBase.filter((x) => x.status === "usada").length === r.entradas && consumoBase === r.consumo && comisionBase === r.comisiones;
+  const cent = (x) => Math.round(x * 100);
+  const cuadra = enBase.length === r.reservas && enBase.filter((x) => x.status === "usada").length === r.entradas && cent(consumoBase) === cent(r.consumo) && cent(comisionBase) === cent(r.comisiones);
   todoCuadra &&= cuadra;
   console.log(`${etiqueta(noche)}: ${r.reservas} reservas, ${r.entradas} con entrada, consumo ${pesos(r.consumo)}, comisiones ${pesos(r.comisiones)} ${cuadra ? "✓ coincide con la base" : "✗ NO coincide con la base"}`);
 }
 const noDemoDespues = await contarNoDemo();
-console.log(`Reservas no-demo de Club Demo: antes ${noDemoAntes}, después ${noDemoDespues}${noDemoAntes === noDemoDespues ? " ✓" : " ✗"}`);
+console.log(`Reservas no-demo de ${CLUB_NOMBRE}: antes ${noDemoAntes}, después ${noDemoDespues}${noDemoAntes === noDemoDespues ? " ✓" : " ✗"}`);
 if (!todoCuadra || noDemoAntes !== noDemoDespues) process.exit(1);
