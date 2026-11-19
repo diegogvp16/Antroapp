@@ -8,12 +8,39 @@
 // secuencias, funciones, tipos), sus buckets y usuarios de auth. Solo dev.
 
 import { readFileSync } from "node:fs";
-import { conectarDevEscritura } from "./conexion.mjs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { conectarDevEscritura, verificarEnvDev } from "./conexion.mjs";
+
+// Vacía todos los buckets de dev con la API de Storage (service role de dev).
+async function vaciarStorageDev() {
+  const env = verificarEnvDev();
+  const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const { createClient } = createRequire(path.join(raiz, "package.json"))("@supabase/supabase-js");
+  const svc = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  const { data: buckets } = await svc.storage.listBuckets();
+  let borrados = 0;
+  for (const b of buckets ?? []) {
+    const { data: carpetas } = await svc.storage.from(b.id).list("", { limit: 1000 });
+    for (const c of carpetas ?? []) {
+      const { data: archivos } = await svc.storage.from(b.id).list(c.name, { limit: 1000 });
+      const rutas = (archivos ?? []).map((a) => `${c.name}/${a.name}`);
+      if (rutas.length) {
+        await svc.storage.from(b.id).remove(rutas);
+        borrados += rutas.length;
+      }
+    }
+  }
+  console.log(`Storage de dev vaciado (${borrados} archivos)`);
+}
 
 const args = process.argv.slice(2);
 const reiniciar = args.includes("--reiniciar");
 const archivos = args.filter((a) => !a.startsWith("--"));
 if (!archivos.length) throw new Error("Uso: node scripts/db/aplicar-dev.mjs [--reiniciar] <archivo.sql> ...");
+
+if (reiniciar) await vaciarStorageDev();
 
 const db = await conectarDevEscritura();
 try {
@@ -47,11 +74,10 @@ try {
           execute format('drop type if exists public.%I cascade', r.typname);
         end loop;
       end $$;`);
-    // Storage y auth de dev: objetos y usuarios de prueba.
-    await db.q("delete from storage.objects");
-    await db.q("delete from storage.buckets");
+    // Usuarios de prueba de dev. (Los archivos de Storage ya se vaciaron con
+    // la API antes de la transacción: Supabase no deja borrarlos por SQL.)
     await db.q("delete from auth.users");
-    console.log("dev reiniciado (public, storage y auth vacíos)");
+    console.log("dev reiniciado (public y auth vacíos; Storage vaciado por API)");
   }
   for (const archivo of archivos) {
     const sql = readFileSync(archivo, "utf8");
