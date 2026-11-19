@@ -1,0 +1,107 @@
+# Avance hacia la junta del 25/11/2026
+
+> Se actualiza al terminar cada bloque. Todo el trabajo está en la rama
+> `desarrollo` y en **antroapp-dev**. Nada se ha aplicado en producción, no
+> hay push a `master` ni deploy a producción, y no se tocaron las variables
+> de Production en Vercel. El bloque 6 (pase a producción) espera a que Diego
+> lo pida de forma explícita.
+
+## Cómo probar lo de `desarrollo`
+
+- **Vista previa de Vercel** (rama `desarrollo`, apunta a antroapp-dev, no a
+  producción): https://antroapp-git-desarrollo-antroapp.vercel.app
+  (la URL fija de la rama; cada push genera además una URL propia). Vercel
+  pide iniciar sesión con tu cuenta para abrirla (protección de vistas
+  previas).
+- **Usuarios de prueba de dev**: `dev_admin`, `dev_dueno`, `dev_gerente`,
+  `dev_staff`, `dev_rp`, `dev_cliente` (todos `@example.com`). La contraseña
+  está en `backups/dev-credenciales.json` (solo en tu computadora).
+- Antro de prueba: **Club Demo Dev** (publicado, 12 mesas, reservas de hoy).
+- Para volver a dejar dev limpio: `node scripts/dev/sembrar-dev.mjs`.
+
+---
+
+## Bloque 1 · Entorno dev — ✅ terminado (commit `b81a85e`)
+
+**Qué quedó**
+- antroapp-dev tiene el esquema de producción replicado: tablas, funciones,
+  triggers, RLS (incluidas las restrictivas), GRANT explícitos para anon,
+  authenticated y service_role, buckets y políticas de Storage, y el event
+  trigger `ensure_rls`. Comparado contra el catálogo de producción: idéntico.
+- Herramientas con candados (`scripts/db/`): a producción solo lectura del
+  catálogo; a dev escritura solo si la URL y las llaves son de dev.
+- Datos ficticios en dev con un usuario por rol (`scripts/dev/sembrar-dev.mjs`).
+- `scripts/probar-clubs-visibilidad.mjs --env=.env.dev`: **58/58**.
+- Vercel Preview apunta a antroapp-dev (verificado en el código que se manda
+  al navegador: trae el ref de dev y ninguno de producción). Production no
+  se tocó.
+- CLAUDE.md: sección "Ramas y entornos".
+
+**Qué falló**: nada pendiente.
+
+**Qué debe probar Diego**: abrir la vista previa, entrar con `dev_cliente` y
+ver "Club Demo Dev" en el listado (prueba de que Preview usa dev).
+
+---
+
+## Bloque 2 · Cover y caja en dev — ✅ terminado (commit `dc8e280`)
+
+**Qué quedó**
+- `sql/2026-11-20-cover.sql`, `sql/2026-11-20-caja-por-mesa.sql` y
+  `sql/2026-11-20-caja-candado-puerta.sql` (este último se aplica DESPUÉS de
+  publicar el código nuevo), corregidos y aplicados **solo en dev**, cada uno
+  con su rollback. Los rollbacks se probaron: dejan dev idéntico a
+  producción.
+- Errores corregidos de los borradores: no daban GRANT (en dev nadie podía
+  leer la caja) y una verificación con `set local role anon` dejaba el resto
+  de la transacción corriendo como anónimo.
+- **Nada se borra en caja**: un trigger impide DELETE/TRUNCATE incluso con la
+  service role; un consumo o pago solo se anula, una vez y con motivo; una
+  noche cerrada o una mesa cuadrada no se reabren; nada entra a una noche
+  cerrada.
+- Revisión adversarial (4 revisores): 15 problemas reales encontrados y
+  corregidos. Los más serios: un RP podía meter reservas en cualquier antro
+  y cobrar comisión ahí; el staff podía convertir una reserva orgánica en
+  una de RP; cualquiera dado de baja podía reactivarse solo.
+- `node scripts/dev/probar-caja.mjs`: **148/148** pruebas por rol con
+  sesiones reales (anónimo, cliente, RP, staff, gerente, dueño propio y
+  ajeno, admin, dueño de grupo): cada rol ve solo lo suyo, la comisión nace
+  al cuadrar la mesa (y por cuenta: dos RPs en una misma mesa cobran sobre
+  lo de su cliente), nada se borra, el cliente nunca paga.
+
+**Qué falló**: nada pendiente.
+
+**Qué debe probar Diego**: nada a mano en este bloque (es base de datos);
+lo visible está en el bloque 3.
+
+## Bloque 3 · Pantallas de mesas y caja — ✅ terminado (commit `69525bb`)
+
+**Qué quedó**
+- `/staff/caja`: mesas de la noche con su estado, cuentas por cliente con su
+  RP, sentar (reserva con entrada confirmada o walk-in), agregar consumo,
+  anular con motivo, cobro por método, cerrar con saldo cero, cuadrar y
+  reabrir mesa (gerente), cuadre de la noche con conteo físico y diferencia.
+- `/staff/panel`: escáner con "Confirmar entrada" por las funciones de la
+  base, aviso "El QR no garantiza la entrada", "Confirmar entrada sin
+  cámara" en cada reserva, acceso "Caja y mesas de la noche". Ya no hay
+  "Asignar mesa" ni "Agregar consumo" viejos. Después de medianoche sigue
+  mostrando la noche en curso (corte 08:00).
+- Cover informativo en el panel del dueño y en el alta del admin; el
+  listado y la ficha lo muestran ("Cover $350").
+- Recorrido con Playwright contra dev, a 390 y 360 px: staff (escáner con
+  cámara simulada, confirmar sin cámara, abrir mesa, sentar dos clientes,
+  consumo, cobro, cerrar), gerente (cuadrar, walk-in, anular con motivo,
+  cerrar la noche), dueño (cover), cliente (ve el cover), admin (campo de
+  cover). Sin errores de consola ni de red. La comisión de $150 del RP nació
+  al cuadrar la mesa.
+
+**Qué falló**: nada pendiente.
+
+**Qué debe probar Diego a mano** (en la vista previa, con usuarios `dev_*`):
+1. `dev_staff`: Panel → "Confirmar entrada sin cámara" en una reserva →
+   "Caja y mesas de la noche" → abrir una mesa → "+ Sentar cliente" → agregar
+   consumo → registrar pago → "Cerrar mesa".
+2. `dev_gerente`: en esa mesa "Cuadrar mesa"; pestaña "Cuadre de la noche".
+3. `dev_dueno`: Panel → "Cover en la puerta" → Monto → guardar; luego
+   `dev_cliente` ve "Cover $..." en el listado.
+4. Para repetir la prueba con datos frescos: `node scripts/dev/sembrar-dev.mjs`.
