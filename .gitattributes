@@ -1,0 +1,4 @@
+# SQL y scripts siempre con LF: un \r dentro del cuerpo de una función
+# de Postgres hace que la base y el archivo dejen de ser idénticos.
+*.sql text eol=lf
+*.mjs text eol=lf

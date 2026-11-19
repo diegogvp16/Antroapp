@@ -589,6 +589,33 @@ Dragones). Evitar explícitamente el look genérico morado-degradado.
 
 ## 9. Pendientes inmediatos
 
+### Hecho en `desarrollo` y antroapp-dev, FALTA el pase a producción (bloque 6)
+
+Todo probado en dev (`scripts/dev/probar-caja.mjs` 167/167,
+`probar-clubs-visibilidad --env=.env.dev` 68/68, recorridos con Playwright).
+El pase lo pide Diego de forma explícita. Orden, cada paso con su rollback
+(probados: dejan el esquema idéntico al de producción):
+
+1. Respaldo del día (ver `docs/respaldos.md`).
+2. `sql/2026-11-20-cover.sql`
+3. `sql/2026-11-20-caja-por-mesa.sql` (caja, puerta, grupo, candados de
+   reservas y perfiles, reservas desde la noche operativa)
+4. `sql/2026-11-20-estabilidad.sql` (1 reserva por noche, funciones
+   registrar_* sin confiar en el navegador, intentos de login, errores).
+   Antes, el diagnóstico de duplicados de
+   `sql/2026-11-borrador-una-reserva-por-dia.sql`.
+5. `sql/2026-11-20-nomina-y-grupo.sql`
+6. Merge de `desarrollo` a `master` (publica el código nuevo).
+7. **Después** del código nuevo: `sql/2026-11-20-caja-candado-puerta.sql`
+   (rompe el "Confirmar entrada" viejo si se aplica antes).
+8. Recorrido de los 6 roles en producción.
+
+Con eso quedan resueltos los pendientes 1, 4, 5 (caja; falta alta masiva de
+RPs), 6 y el error del panel de staff después de medianoche. El 2 (bono de
+plataforma) ya no aplica: no hay bono.
+
+### Lista anterior
+
 Por prioridad:
 
 1. **Reescribir `registrar_comision_reserva` y `registrar_pago_dia`**
@@ -621,6 +648,26 @@ Por prioridad:
 ---
 
 ## 10. Lecciones aprendidas
+
+- **En dev "Automatically expose new tables" está apagado**: una tabla sin
+  GRANT explícitos no la lee nadie. Todo SQL nuevo lleva sus GRANT para
+  anon, authenticated y service_role (en prod la exposición automática da
+  todo y hay que revocar).
+- **`set local role` dentro de un archivo que se aplica en una transacción
+  se queda para TODO lo que sigue.** Las verificaciones con otro rol van en
+  pruebas aparte, no en el SQL a aplicar.
+- **En plpgsql, `a and new.columna` evalúa `new.columna` aunque `a` sea
+  falso**: en un trigger compartido por tablas distintas, anidar los if.
+- **Con service_role o postgres no hay RLS**: "nada se borra" y la
+  coherencia de la caja se hacen con triggers, no con políticas.
+- **Supabase no deja borrar `storage.objects` por SQL**: se vacía con la API
+  de Storage.
+- **Finales de línea**: con `core.autocrlf` un `.sql` puede quedar con CRLF
+  y el `` termina dentro del cuerpo de las funciones. `.gitattributes`
+  fija LF para `*.sql` y `*.mjs`, y `aplicar-dev.mjs` lo normaliza.
+- **El límite de intentos de la app** (/api/auth/login) solo cubre los
+  formularios; contra quien llama a Supabase Auth directo están los límites
+  y el CAPTCHA del dashboard de Supabase.
 
 - **Las políticas permisivas de Storage se suman entre sí (OR).** Una sola
   política mal acotada (por ejemplo, sin filtrar `bucket_id`) abre **todos**

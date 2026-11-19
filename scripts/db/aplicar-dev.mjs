@@ -80,7 +80,9 @@ try {
     console.log("dev reiniciado (public y auth vacíos; Storage vaciado por API)");
   }
   for (const archivo of archivos) {
-    const sql = readFileSync(archivo, "utf8");
+    // Sin retornos de carro: un CRLF dentro del cuerpo de una función queda
+    // guardado en la base y deja de ser idéntica al archivo.
+    const sql = readFileSync(archivo, "utf8").replace(/\r\n/g, "\n");
     try {
       await db.q(sql);
       console.log(`aplicado: ${archivo}`);

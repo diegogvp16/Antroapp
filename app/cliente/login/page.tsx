@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { iniciarSesion } from "@/lib/login";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,22 +34,18 @@ export default function ClienteLoginPage() {
 
     setSubmitting(true);
     try {
-      const supabase = createClient();
-      const { data, error: signInError } =
-        await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        });
-
-      if (signInError || !data.session) {
-        setError("Email o contraseña incorrectos.");
+      // Pasa por /api/auth/login: límite de intentos en el servidor.
+      const resultado = await iniciarSesion(email.trim(), password);
+      if (!resultado.ok) {
+        setError(resultado.error);
         return;
       }
+      const supabase = createClient();
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("role, activo")
-        .eq("id", data.session.user.id)
+        .eq("id", resultado.userId)
         .maybeSingle();
 
       if (profileError || !profile) {

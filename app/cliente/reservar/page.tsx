@@ -183,6 +183,11 @@ function ReservarPage() {
       });
 
       if (insertError) {
+        // Índice único: una reserva por cliente, antro y noche.
+        if (insertError.code === "23505") {
+          setError("Ya tienes una reserva en este antro para esa noche.");
+          return;
+        }
         console.error("Supabase insert error (reservations):", insertError);
         throw insertError;
       }

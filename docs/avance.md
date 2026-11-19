@@ -136,3 +136,58 @@ lo visible está en el bloque 3.
 2. `dev_dueno`: Panel → "Resumen y grupo": deben salir Guadalajara y Tijuana.
 3. `dev_staff`: no le aparecen "Nómina" ni "Resumen de mi antro".
 4. `dev_rp`: pestaña Nómina con los montos por estado.
+
+## Bloque 5 · Estabilidad — ✅ terminado
+
+**Qué quedó**
+- **Límite de intentos de login**: los tres logins (cliente, dueño, admin)
+  entran por `/api/auth/login`. Con 5 fallos de un mismo correo (o 20 de una
+  misma IP) en 15 minutos, bloquea 15 minutos aunque la contraseña sea la
+  correcta. Correo e IP se guardan como hash; nunca la contraseña.
+- **Una reserva por cliente, antro y noche** (índice único; las anónimas y
+  las de RP no chocan). El cliente ve "Ya tienes una reserva en este antro
+  para esa noche."
+- **Panel de staff después de medianoche**: usa la noche operativa (corte
+  08:00); hecho en el bloque 3.
+- **`registrar_comision_reserva` y `registrar_pago_dia` reescritas**: ya no
+  confían en el navegador (consumo, semana, RP o club). La comisión solo nace
+  en la caja al cuadrar la mesa; la función vieja solo re-liquida, sin
+  duplicar. El pago por día calcula su semana en la base y no se duplica.
+- **Aviso de errores**: pantallas de error con mensaje amable que avisan
+  solas; el admin ve "Errores recientes" en su panel.
+- **Respaldos**: guía en `docs/respaldos.md` (revisar y probar una
+  restauración sin tocar producción).
+- Todos los rollbacks, aplicados en orden inverso, dejan dev idéntico a
+  producción. `npx next build` pasa.
+- Pruebas: 23/23 del bloque (límite de login, avisos, reserva duplicada,
+  login de los 6 roles), `probar-caja` 167/167 y visibilidad 68/68.
+
+**Qué falló**: nada pendiente.
+
+**Qué debe probar Diego a mano**:
+1. En la vista previa, entra con `dev_cliente` y una contraseña mala 6
+   veces: al sexto intento debe decir "Demasiados intentos. Espera 15
+   minutos…".
+2. Con `dev_cliente`, reserva dos veces en Club Demo Dev para la misma
+   noche: la segunda debe decir "Ya tienes una reserva…".
+3. Entra con `dev_admin`: arriba aparece "Errores recientes".
+
+---
+
+## Lo que Diego tiene que hacer a mano (antes del bloque 6)
+
+1. **Respaldos** (`docs/respaldos.md`, paso 1): revisar el plan de Supabase y
+   que haya respaldos diarios de producción. Si el plan es Free, subirlo a
+   Pro antes de tener caja real.
+2. **Protección de login en Supabase** (dashboard de **producción** →
+   Authentication):
+   - Rate Limits: revisar el límite de inicios de sesión por IP.
+   - Attack Protection: activar CAPTCHA (Turnstile o hCaptcha) y
+     "Leaked password protection".
+   Nuestro límite cubre los formularios de la app; esto cubre a quien llame
+   a Supabase directo.
+3. **Probar en la vista previa** lo listado en cada bloque (usuarios `dev_*`,
+   contraseña en `backups/dev-credenciales.json`).
+4. **Cuando quieras el pase**: pídelo explícitamente. El orden exacto está
+   en CLAUDE.md, sección 9. La mañana del 25 corre
+   `node scripts/demo-datos.mjs --fecha=2026-11-25 --si` (no antes).

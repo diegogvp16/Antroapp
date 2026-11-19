@@ -16,6 +16,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { VerificacionesPendientes } from "@/components/verificaciones-pendientes";
+import { ErroresRecientes } from "@/components/errores-recientes";
 import { CoverCampo } from "@/components/cover-campo";
 import type { Club, CoverModo } from "@/types";
 
@@ -416,6 +417,8 @@ export default function AdminPage() {
         </div>
 
         <VerificacionesPendientes onCambio={fetchClubs} />
+
+        <ErroresRecientes />
 
         <section className="flex flex-col gap-4">
           <h2 className="text-lg font-semibold">Dashboard general</h2>
