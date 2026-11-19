@@ -40,12 +40,55 @@ Notas importantes:
 - **Todo es client-side**. Prácticamente todas las páginas son `"use client"` y
   hablan con Supabase desde el navegador con la *anon key*. La seguridad
   depende por completo de RLS y de los triggers de la base (sección 7).
-- **Deploy manual**: `npx vercel --prod --scope antroapp`. Sin `--scope`
-  responde "Not authorized". El auto-deploy desde GitHub **no existe**: el
-  proyecto de Vercel no está conectado a ningún repositorio (verificado el
-  19/11/2026; `vercel git connect` falla porque la app de Vercel en GitHub no
-  tiene acceso a `diegogvp16/Antroapp`). Lo que se sube con el CLI lo filtra
-  `.vercelignore` (`backups/`, `demo-assets/`, `docs/`, `sql/`, capturas).
+- **Deploy automático desde GitHub** (conectado el 19/11/2026): cada push a
+  `master` publica en producción (antroapp.vercel.app) sin preguntar. Cualquier
+  otra rama genera un deploy Preview. El deploy manual
+  (`npx vercel --prod --scope antroapp`) queda solo para emergencias. Lo que
+  se sube con el CLI lo filtra `.vercelignore` (`backups/`, `demo-assets/`,
+  `docs/`, `sql/`, capturas).
+
+### Ramas y entornos
+
+| | Producción | Desarrollo |
+|---|---|---|
+| Rama de Git | `master` | `desarrollo` (y sus ramas) |
+| Vercel | Production (antroapp.vercel.app) | Preview (URL por deploy) |
+| Supabase | `kigltjvakwuuulvzbyri` | antroapp-dev, `ygumrpckbtlngzspqdvo` |
+| Llaves locales | `.env.local` | `.env.dev` |
+
+- **Todo se trabaja en `desarrollo`.** A `master` solo se pasa con merge,
+  cuando lo nuevo ya pasó sus pruebas en dev. `desarrollo` no sigue a
+  ninguna rama remota de `master` (un `git push` pelón no llega a master).
+- **Vercel Preview usa las llaves de dev** (configurado con
+  `node scripts/dev/vercel-preview-a-dev.mjs`, que lee `.env.dev`). Nunca
+  mezclar llaves de dev y prod. Las `NEXT_PUBLIC_*` van como tipo `config`
+  (Vercel no permite Secret con ese prefijo); la service role como Secret.
+- **`.env.dev`** (gitignored) trae la URL y las llaves legacy de dev, y
+  `DATABASE_URL_DEV` / `DATABASE_URL_PROD` (Session pooler).
+- **Herramientas de base** (`scripts/db/`), con candados en
+  `scripts/db/conexion.mjs`:
+  - A **producción** solo se conecta en modo solo lectura
+    (`default_transaction_read_only = on`) y solo acepta SELECT/WITH sobre el
+    catálogo (`pg_catalog`, `information_schema`, `storage.buckets`…); rechaza
+    cualquier otra sentencia y cualquier tabla de datos.
+  - A **dev** escribe, pero se niega si la URL o el ref de las llaves son de
+    producción.
+- **Esquema**: `node scripts/db/extraer-esquema.mjs --origen=prod
+  --salida=sql/esquema/esquema-prod.sql` lo saca del catálogo (tablas,
+  funciones, triggers, RLS incluidas restrictivas, GRANT explícitos a
+  anon/authenticated/service_role, buckets, políticas de Storage, event
+  trigger). `node scripts/db/aplicar-dev.mjs [--reiniciar] <archivo.sql>` lo
+  aplica en dev en una sola transacción. En dev "Automatically expose new
+  tables" está desactivado: **toda tabla nueva necesita sus GRANT
+  explícitos** en su SQL.
+- **Datos de dev**: `node scripts/dev/sembrar-dev.mjs` crea datos ficticios
+  (un usuario por rol `dev_<rol>@example.com`, "Club Demo Dev" publicado,
+  un borrador con dueño y uno sin dueño). Contraseña en
+  `backups/dev-credenciales.json`.
+- **Pruebas contra dev**: `node scripts/probar-clubs-visibilidad.mjs
+  --env=.env.dev` (58/58 el 19/11/2026).
+- **SQL nuevo**: primero en dev (con sus pruebas por rol), y solo después en
+  producción por el SQL Editor, con su rollback listo.
 - Rutas de servidor (usan la *service role key*, y antes verifican quién
   llama por la cookie de sesión):
   - `app/api/admin/create-staff/route.ts`
@@ -58,7 +101,11 @@ npm run dev          # desarrollo (Turbopack)
 npx tsc --noEmit     # type-check — correr SIEMPRE antes de dar algo por hecho
 npx eslint .         # lint
 npx next build       # build de producción, antes de cualquier deploy
-npx vercel --prod --scope antroapp   # deploy manual (requiere login previo)
+npx vercel --prod --scope antroapp   # deploy manual de emergencia
+node scripts/db/extraer-esquema.mjs --origen=prod --salida=sql/esquema/esquema-prod.sql
+node scripts/db/aplicar-dev.mjs --reiniciar sql/esquema/esquema-prod.sql   # solo dev
+node scripts/dev/sembrar-dev.mjs                                           # solo dev
+node scripts/probar-clubs-visibilidad.mjs --env=.env.dev
 ```
 
 ---
@@ -500,11 +547,13 @@ decisión de Diego.
 - **Por fases, con aprobación de Diego en cada paso.** Los cambios grandes se
   parten en checkpoints: se entrega una parte, Diego la revisa, y hasta
   entonces se sigue. No adelantarse a la siguiente fase.
-- **SQL**: Claude Code **no tiene acceso** al dashboard de Supabase ni conexión
-  directa a Postgres (solo PostgREST con las keys del `.env.local`). Todo cambio
-  de esquema se entrega como SQL **completo y listo para pegar** en el SQL
-  Editor, en un solo bloque. Después de que Diego lo corra, verificar por
-  introspección que quedó aplicado antes de seguir.
+- **SQL**: Claude Code escribe directo **solo en antroapp-dev**
+  (`DATABASE_URL_DEV`). A producción solo lee el catálogo, en solo lectura
+  (sección 2, "Ramas y entornos"). No hay token personal de Supabase y no se
+  usa. Todo cambio de esquema en producción se entrega como SQL **completo y
+  listo para pegar** en el SQL Editor, en un solo bloque y con su rollback,
+  después de pasar sus pruebas en dev. Después de que Diego lo corra,
+  verificar por introspección que quedó aplicado antes de seguir.
 - **Nada de `git commit`, `git push` ni deploy sin que Diego lo pida
   explícitamente.** El trabajo se deja en el working tree para que él lo revise.
 - **Verificar antes de afirmar**: `npx tsc --noEmit` después de cada cambio, y
