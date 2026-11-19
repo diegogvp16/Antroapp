@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -540,6 +541,25 @@ export default function DuenoPanelPage() {
             onClick={handleLogout}
           >
             Cerrar sesión
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Button
+            render={<Link href="/dueno/nomina" />}
+            nativeButton={false}
+            variant="outline"
+            className="w-full"
+          >
+            Nómina de RPs
+          </Button>
+          <Button
+            render={<Link href="/grupo" />}
+            nativeButton={false}
+            variant="outline"
+            className="w-full"
+          >
+            Resumen y grupo
           </Button>
         </div>
 

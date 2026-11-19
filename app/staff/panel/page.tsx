@@ -1239,6 +1239,28 @@ export default function StaffPanelPage() {
           Caja y mesas de la noche
         </Button>
 
+        {/* Solo el gerente: el staff no ve sueldos ni consumos del antro. */}
+        {staffRole === "gerente" && (
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              render={<Link href="/staff/nomina" />}
+              nativeButton={false}
+              variant="outline"
+              className="w-full"
+            >
+              Nómina
+            </Button>
+            <Button
+              render={<Link href="/grupo" />}
+              nativeButton={false}
+              variant="outline"
+              className="w-full"
+            >
+              Resumen de mi antro
+            </Button>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
           <Card size="sm">
             <CardContent className="flex flex-col gap-1 px-4">

@@ -346,17 +346,57 @@ try {
   const nom = await debePasar("gerente ve la nómina de la semana", S.gerenteA.rpc("nomina_semana", { p_club_id: clubs.A.id, p_anio: anio, p_semana: semana }));
   {
     const f1 = (nom ?? []).find((f) => f.rp_id === rp1), f2 = (nom ?? []).find((f) => f.rp_id === rp2);
-    revisar("nómina: RP 1 $150 y RP 2 $100 pendientes (por noche de la reserva)", f1?.comision_pendiente_centavos === 15000 && f2?.comision_pendiente_centavos === 10000 && f1?.reservas_entraron === 1, JSON.stringify({ f1: f1?.comision_pendiente_centavos, f2: f2?.comision_pendiente_centavos, e: f1?.reservas_entraron }));
+    revisar("nómina: RP 1 $150 y RP 2 $100 pendientes (por noche de la reserva)", f1?.pendiente_centavos === 15000 && f2?.pendiente_centavos === 10000 && f1?.reservas_entraron === 1 && f1?.total_centavos === 15000, JSON.stringify({ f1: f1?.pendiente_centavos, f2: f2?.pendiente_centavos, e: f1?.reservas_entraron }));
   }
   await debePasar("dueño de grupo LEE la nómina", S.grupo.rpc("nomina_semana", { p_club_id: clubs.A.id, p_anio: anio, p_semana: semana }));
   const mia = await debePasar("RP ve solo su fila (nomina_semana_mia)", S.rp1.rpc("nomina_semana_mia", { p_anio: anio, p_semana: semana }));
   revisar("nomina_semana_mia: una sola fila, la suya", (mia ?? []).length === 1 && mia[0].rp_id === rp1);
-  await debeFallar("dueño de grupo no marca pagado (solo lee)", S.grupo.rpc("nomina_marcar_pagada", { p_club_id: clubs.A.id, p_rp_id: rp1, p_anio: anio, p_semana: semana }));
-  await debeFallar("staff no marca pagado", S.staffA.rpc("nomina_marcar_pagada", { p_club_id: clubs.A.id, p_rp_id: rp1, p_anio: anio, p_semana: semana }));
-  await debePasar("gerente marca pagada la semana del RP 1", S.gerenteA.rpc("nomina_marcar_pagada", { p_club_id: clubs.A.id, p_rp_id: rp1, p_anio: anio, p_semana: semana }));
+
+  // ======================= Panel de grupo =======================
+  console.log("\n== Panel de grupo (solo lectura)");
   {
-    const c = ok(await svc.from("commissions").select("status, pagada_por").eq("reservation_id", R1.id).single(), "comisión R1");
-    revisar("comisión del RP 1 queda pagada con quién la marcó", c.status === "pagada" && c.pagada_por === U.gerenteA.id);
+    const rango = { p_desde: clubs.A.noche < clubs.B.noche ? clubs.A.noche : clubs.B.noche, p_hasta: clubs.A.noche > clubs.B.noche ? clubs.A.noche : clubs.B.noche };
+    const g = await debePasar("dueño de grupo ve el resumen", S.grupo.rpc("grupo_resumen", rango));
+    const a = (g ?? []).find((x) => x.club_id === clubs.A.id);
+    revisar("grupo: ve sus dos antros (dos ciudades)", (g ?? []).filter((x) => [clubs.A.id, clubs.B.id].includes(x.club_id)).length === 2, `${(g ?? []).length} filas`);
+    revisar("grupo: consumo de A $1,850, 4 cuentas, ticket $462.50, comisiones $250",
+      a?.consumo_centavos === 185000 && a?.cuentas_con_consumo === 4 && a?.ticket_promedio_centavos === 46250 && a?.comisiones_centavos === 25000 && a?.noches_cerradas === 1,
+      JSON.stringify({ c: a?.consumo_centavos, n: a?.cuentas_con_consumo, t: a?.ticket_promedio_centavos, com: a?.comisiones_centavos, cerr: a?.noches_cerradas }));
+    const ger = await debePasar("gerente ve el resumen", S.gerenteA.rpc("grupo_resumen", rango));
+    revisar("gerente: solo su antro", (ger ?? []).length === 1 && ger[0].club_id === clubs.A.id, `${(ger ?? []).length} filas`);
+    const db = await S.duenoB.rpc("grupo_resumen", rango);
+    revisar("dueño de B: solo su antro", (db.data ?? []).length === 1 && db.data[0].club_id === clubs.B.id, `${(db.data ?? []).length} filas`);
+    for (const quien of ["staffA", "rp1", "cliente"]) {
+      const r = await S[quien].rpc("grupo_resumen", rango);
+      revisar(`${quien}: el resumen sale vacío (no ve consumo ni comisiones)`, !r.error && (r.data ?? []).length === 0, r.error?.message ?? `${(r.data ?? []).length} filas`);
+    }
+    await debeFallar("anónimo no llama el resumen", S.anon.rpc("grupo_resumen", rango));
+    await debeFallar("rango de más de 93 días no pasa", S.grupo.rpc("grupo_resumen", { p_desde: "2026-01-01", p_hasta: "2026-12-31" }), "rango");
+  }
+
+  // ======================= Estados de la nómina =======================
+  console.log("\n== Estados de la nómina");
+  const sem = { p_club_id: clubs.A.id, p_anio: anio, p_semana: semana };
+  const mover = (c, rp, desde, hacia, motivo) => c.rpc("nomina_cambiar_estado", { ...sem, p_rp_id: rp, p_desde: desde, p_hacia: hacia, p_motivo: motivo ?? null });
+  await debeFallar("no se salta de pendiente a pagada", mover(S.gerenteA, rp1, "pendiente", "pagada"), "no se puede");
+  await debeFallar("staff no cambia la nómina", mover(S.staffA, rp1, "pendiente", "en_revision"), "gerente");
+  await debeFallar("dueño de grupo no cambia la nómina (solo lee)", mover(S.grupo, rp1, "pendiente", "en_revision"), "gerente");
+  await debePasar("gerente: pendiente → en revisión", mover(S.gerenteA, rp1, "pendiente", "en_revision"));
+  await debePasar("gerente: en revisión → validada", mover(S.gerenteA, rp1, "en_revision", "validada"));
+  await debePasar("dueño: validada → pagada (nomina_marcar_pagada)", S.duenoA.rpc("nomina_marcar_pagada", { ...sem, p_rp_id: rp1 }));
+  {
+    const c = ok(await svc.from("commissions").select("status, pagada_por, estado_cambiado_por").eq("reservation_id", R1.id).single(), "comisión R1");
+    revisar("comisión del RP 1 pagada, con quién la marcó", c.status === "pagada" && c.pagada_por === U.duenoA.id && c.estado_cambiado_por === U.duenoA.id);
+  }
+  await debeFallar("una semana pagada no se anula", mover(S.gerenteA, rp1, "pagada", "anulada", "error"), "no se puede");
+  await debeFallar("anular sin motivo no pasa", mover(S.gerenteA, rp2, "pendiente", "anulada"), "motivo");
+  await debePasar("gerente anula la semana del RP 2 con motivo", mover(S.gerenteA, rp2, "pendiente", "anulada", "Reserva duplicada"));
+  {
+    const n2 = ok(await S.gerenteA.rpc("nomina_semana", sem), "nómina");
+    const f1 = n2.find((f) => f.rp_id === rp1), f2 = n2.find((f) => f.rp_id === rp2);
+    revisar("nómina: RP 1 $150 pagada; RP 2 $100 anulada y fuera del total", f1?.pagada_centavos === 15000 && f2?.anulada_centavos === 10000 && f2?.total_centavos === 0 && f2?.comisiones === 0, JSON.stringify({ p1: f1?.pagada_centavos, a2: f2?.anulada_centavos, t2: f2?.total_centavos }));
+    const c2 = ok(await svc.from("commissions").select("status, motivo_anulacion").eq("reservation_id", R2.id).single(), "comisión R2");
+    revisar("la comisión anulada no se borra: queda con su motivo", c2.status === "anulada" && c2.motivo_anulacion === "Reserva duplicada");
   }
 
   // ======================= Cover (informativo) =======================

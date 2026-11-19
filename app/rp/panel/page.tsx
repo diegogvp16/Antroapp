@@ -86,8 +86,10 @@ interface PagoDiaRow {
 
 const COMISION_STATUS_LABEL: Record<string, string> = {
   pendiente: "Pendiente",
+  en_revision: "En revisión",
   validada: "Validada",
   pagada: "Pagada",
+  anulada: "Anulada",
 };
 
 const RESERVA_STATUS_LABEL: Record<string, string> = {
