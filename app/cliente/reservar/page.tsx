@@ -21,7 +21,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { hoyMexico } from "@/lib/fechas";
+import { nocheOperativaMexico } from "@/lib/fechas";
 import { textoCover } from "@/lib/cover";
 import type { Club } from "@/types";
 
@@ -59,7 +59,9 @@ function ReservarPage() {
   const [error, setError] = useState<string | null>(null);
   const [reserva, setReserva] = useState<ReservaResumen | null>(null);
 
-  const minDate = hoyMexico();
+  // Desde la noche en curso (corte 08:00): a la 1:00 a. m. todavía se
+  // reserva para la noche que la puerta acepta.
+  const minDate = nocheOperativaMexico();
   const backHref = club ? `/cliente/${club.id}` : "/cliente";
 
   useEffect(() => {

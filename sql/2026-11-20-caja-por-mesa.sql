@@ -1077,14 +1077,14 @@ begin
       end;
 
       insert into public.commissions (reservation_id, rp_id, tipo, monto, status)
-      values (v_res.id, v_cuenta.rp_id, 'rp', v_centavos / 100.0, 'pendiente')
+      values (v_res.id, v_cuenta.rp_id, 'rp', round(v_centavos / 100.0, 2), 'pendiente')
       on conflict (reservation_id) do nothing;
     end if;
     -- No hay bono de plataforma por reserva orgánica: las columnas
     -- clubs.bono_organica_* se conservan pero no se usan.
 
     -- Compatibilidad: el consumo total queda también en la reserva.
-    update public.reservations set consumo_monto = v_base / 100.0 where id = v_res.id;
+    update public.reservations set consumo_monto = round(v_base / 100.0, 2) where id = v_res.id;
   end if;
 
   update public.mesa_cuentas set liquidada_en = now() where id = v_cuenta.id;

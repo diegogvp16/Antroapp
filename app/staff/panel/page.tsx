@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Html5Qrcode } from "html5-qrcode";
 import { createClient } from "@/lib/supabase/client";
@@ -23,17 +24,57 @@ import {
   turnoAplicaEnFecha,
   type TurnoRow,
 } from "@/lib/turnos";
-import { hoyMexico, semanaMexico } from "@/lib/fechas";
+import { nocheOperativaMexico, semanaMexico } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
-import type {
-  Club,
-  ClubTable,
-  ConsumptionEntry,
-  Profile,
-  Reservation,
-} from "@/types";
+import type { Club, ClubTable, Profile, Reservation } from "@/types";
 
 type RPListItem = Pick<Profile, "id" | "nombre" | "activo">;
+
+type ReservaPanel = Reservation;
+
+// Lo que devuelve puerta_escanear: lo que la puerta necesita ver, sin
+// teléfono ni consumo.
+interface FichaPuerta {
+  reservation_id: string;
+  cliente_nombre: string;
+  personas: number;
+  source: Reservation["source"];
+  rp_nombre: string | null;
+}
+
+function leerFichaPuerta(data: unknown): FichaPuerta | null {
+  if (typeof data !== "object" || data === null) return null;
+  const d = data as Record<string, unknown>;
+  if (
+    typeof d.reservation_id !== "string" ||
+    typeof d.cliente_nombre !== "string" ||
+    typeof d.personas !== "number"
+  ) {
+    return null;
+  }
+  return {
+    reservation_id: d.reservation_id,
+    cliente_nombre: d.cliente_nombre,
+    personas: d.personas,
+    source: d.source === "rp" ? "rp" : "organica",
+    rp_nombre: typeof d.rp_nombre === "string" ? d.rp_nombre : null,
+  };
+}
+
+// Los errores de la base vienen en español (raise exception): se muestran
+// tal cual. PostgrestError no es instancia de Error, por eso se revisa el
+// campo `message` directamente.
+function mensajeDeError(err: unknown, porDefecto: string): string {
+  if (typeof err === "object" && err !== null && "message" in err) {
+    const { message } = err as { message: unknown };
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return porDefecto;
+}
+
+function textoPersonas(n: number): string {
+  return `${n} ${n === 1 ? "persona" : "personas"}`;
+}
 
 type ScheduleRow = TurnoRow;
 
@@ -46,8 +87,7 @@ interface AttendanceRow {
 const QR_READER_ELEMENT_ID = "qr-reader";
 const QR_READER_ATTENDANCE_ELEMENT_ID = "qr-reader-attendance";
 
-const SELECT_CLASSES =
-  "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30";
+const RUTA_CAJA = "/staff/caja";
 
 function formatHora(iso: string) {
   return new Date(iso).toLocaleTimeString([], {
@@ -59,12 +99,11 @@ function formatHora(iso: string) {
 type ScanState =
   | { status: "scanning" }
   | { status: "camera-error"; message: string }
-  | { status: "not-found" }
-  | { status: "wrong-club" }
-  | { status: "already-checked-in"; reserva: Reservation }
-  | { status: "ready"; reserva: Reservation }
-  | { status: "success" }
-  | { status: "lookup-error" };
+  // Error de puerta_escanear, tal cual lo manda la base ("Reserva no
+  // encontrada en tu antro", "Esta reserva ya entró", ...).
+  | { status: "error"; message: string }
+  | { status: "ready"; ficha: FichaPuerta; error?: string }
+  | { status: "success"; ficha: FichaPuerta };
 
 type AttendanceScanState =
   | { status: "scanning" }
@@ -107,7 +146,7 @@ export default function StaffPanelPage() {
   const [clubNombre, setClubNombre] = useState("");
   const [club, setClub] = useState<Club | null>(null);
 
-  const [reservas, setReservas] = useState<Reservation[]>([]);
+  const [reservas, setReservas] = useState<ReservaPanel[]>([]);
   const [rpNombres, setRpNombres] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,26 +157,15 @@ export default function StaffPanelPage() {
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const scanLockRef = useRef(false);
 
+  // Solo para mostrar el número de la mesa donde la caja sentó a alguien.
   const [tables, setTables] = useState<ClubTable[]>([]);
-  const [mesaSelections, setMesaSelections] = useState<Record<string, string>>(
-    {},
-  );
-  const [assigningId, setAssigningId] = useState<string | null>(null);
-  const [assignError, setAssignError] = useState<Record<string, string>>({});
 
-  const [consumptionEntries, setConsumptionEntries] = useState<
-    Record<string, ConsumptionEntry[]>
-  >({});
-  const [consumptionInputs, setConsumptionInputs] = useState<
+  // Confirmar entrada sin cámara (si la cámara falla): mismas funciones de
+  // la base que el escáner.
+  const [entradaManualId, setEntradaManualId] = useState<string | null>(null);
+  const [entradaManualError, setEntradaManualError] = useState<
     Record<string, string>
   >({});
-  const [addingConsumptionId, setAddingConsumptionId] = useState<
-    string | null
-  >(null);
-  const [consumptionError, setConsumptionError] = useState<
-    Record<string, string>
-  >({});
-
   const [markingSinConsumoId, setMarkingSinConsumoId] = useState<
     string | null
   >(null);
@@ -218,12 +246,14 @@ export default function StaffPanelPage() {
     setError(null);
     try {
       const supabase = createClient();
-      const hoy = hoyMexico();
+      // Noche operativa (corte 08:00): después de medianoche se siguen
+      // viendo las reservas de la noche en curso, igual que en la puerta.
+      const noche = nocheOperativaMexico();
 
       const { data, error: queryError } = await supabase
         .from("reservations")
         .select("*")
-        .eq("fecha", hoy)
+        .eq("fecha", noche)
         .eq("club_id", targetClubId)
         .order("created_at", { ascending: false });
 
@@ -231,34 +261,8 @@ export default function StaffPanelPage() {
         throw queryError;
       }
 
-      const rows = (data ?? []) as Reservation[];
+      const rows = (data ?? []) as ReservaPanel[];
       setReservas(rows);
-
-      const reservationIdsWithMesa = rows
-        .filter((r) => r.mesa_id)
-        .map((r) => r.id);
-
-      if (reservationIdsWithMesa.length > 0) {
-        const { data: entriesData, error: entriesError } = await supabase
-          .from("consumption_entries")
-          .select("*")
-          .in("reservation_id", reservationIdsWithMesa)
-          .order("created_at", { ascending: true });
-
-        if (entriesError) {
-          console.error("Error cargando consumo:", entriesError);
-        } else {
-          const grouped: Record<string, ConsumptionEntry[]> = {};
-          for (const entry of (entriesData ?? []) as ConsumptionEntry[]) {
-            const list = grouped[entry.reservation_id] ?? [];
-            list.push(entry);
-            grouped[entry.reservation_id] = list;
-          }
-          setConsumptionEntries(grouped);
-        }
-      } else {
-        setConsumptionEntries({});
-      }
 
       const rpIds = Array.from(
         new Set(
@@ -337,7 +341,7 @@ export default function StaffPanelPage() {
   async function fetchRpSchedules(targetClubId: string) {
     try {
       const supabase = createClient();
-      const hoy = hoyMexico();
+      const hoy = nocheOperativaMexico();
       // Se traen los turnos fijos (valen indefinidamente, su `fecha` puede
       // ser vieja) junto con las fechas sueltas de hoy en adelante.
       const { data, error } = await supabase
@@ -378,7 +382,7 @@ export default function StaffPanelPage() {
     setLoadingAsistencia(true);
     try {
       const supabase = createClient();
-      const hoy = hoyMexico();
+      const hoy = nocheOperativaMexico();
       const { data, error } = await supabase
         .from("rp_attendance")
         .select("id, rp_id, scanned_at, metodo")
@@ -427,7 +431,7 @@ export default function StaffPanelPage() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      const fecha = hoyMexico();
+      const fecha = nocheOperativaMexico();
 
       const { data: attendanceRow, error } = await supabase
         .from("rp_attendance")
@@ -557,34 +561,35 @@ export default function StaffPanelPage() {
     html5QrCodeRef.current?.pause(true);
 
     try {
+      // La base valida que el QR sea de este antro y de la noche operativa
+      // en curso, y lo marca "en puerta". No se lee la tabla directo.
       const supabase = createClient();
-      const { data, error: lookupError } = await supabase
-        .from("reservations")
-        .select("*")
-        .eq("qr_code", decodedText.trim())
-        .maybeSingle();
+      const { data, error: escanearError } = await supabase.rpc(
+        "puerta_escanear",
+        { p_qr: decodedText.trim() },
+      );
 
-      if (lookupError || !data) {
-        setScanState({ status: "not-found" });
+      if (escanearError) {
+        setScanState({ status: "error", message: escanearError.message });
         return;
       }
 
-      const reserva = data as Reservation;
-
-      if (reserva.club_id !== clubId) {
-        setScanState({ status: "wrong-club" });
+      const ficha = leerFichaPuerta(data);
+      if (!ficha) {
+        setScanState({
+          status: "error",
+          message: "No pudimos leer la reserva. Intenta de nuevo.",
+        });
         return;
       }
 
-      if (reserva.status === "usada") {
-        setScanState({ status: "already-checked-in", reserva });
-        return;
-      }
-
-      setScanState({ status: "ready", reserva });
+      setScanState({ status: "ready", ficha });
     } catch (err) {
-      console.error("Error buscando reserva escaneada:", err);
-      setScanState({ status: "lookup-error" });
+      console.error("Error escaneando reserva:", err);
+      setScanState({
+        status: "error",
+        message: "Ocurrió un error. Intenta de nuevo.",
+      });
     }
   }
 
@@ -604,33 +609,41 @@ export default function StaffPanelPage() {
     html5QrCodeRef.current?.resume();
   }
 
-  async function handleConfirmCheckIn(reserva: Reservation) {
+  // "Confirmar entrada": único camino al check-in (status = 'usada'). Si el
+  // antro no deja pasar a alguien, simplemente no se llama.
+  async function handleConfirmarEntrada(ficha: FichaPuerta) {
     setCheckingIn(true);
     try {
       const supabase = createClient();
-      const { error: updateError } = await supabase
-        .from("reservations")
-        .update({ status: "usada" })
-        .eq("id", reserva.id);
+      const { error: confirmarError } = await supabase.rpc(
+        "puerta_confirmar_entrada",
+        { p_reservation_id: ficha.reservation_id },
+      );
 
-      if (updateError) throw updateError;
+      if (confirmarError) {
+        setScanState({ status: "ready", ficha, error: confirmarError.message });
+        return;
+      }
 
-      setScanState({ status: "success" });
+      setScanState({ status: "success", ficha });
       if (clubId) {
         await fetchReservas(clubId);
       }
     } catch (err) {
-      console.error("Error confirmando check-in:", err);
-      setScanState({ status: "lookup-error" });
+      console.error("Error confirmando entrada:", err);
+      setScanState({
+        status: "ready",
+        ficha,
+        error: "Ocurrió un error. Intenta de nuevo.",
+      });
     } finally {
       setCheckingIn(false);
     }
   }
 
   // Crea la fila en "rp_pagos_dia" para UNA asistencia ya insertada,
-  // vía RPC "security definer" -- mismo patrón de "calcular y grabar en
-  // el momento del evento" que createCommissionForReservation, pero el
-  // cálculo vive en la base (no aquí) porque STAFF puede registrar
+  // vía RPC "security definer": el cálculo vive en la base (no aquí)
+  // porque STAFF puede registrar
   // asistencia sin tener permiso de leer club_dia_tarifas (son datos de
   // sueldo); si se calculara con el cliente de STAFF, RLS le devolvería
   // 0 tarifas y el monto quedaría siempre en $0. La función en la base
@@ -671,7 +684,7 @@ export default function StaffPanelPage() {
         data: { user },
       } = await supabase.auth.getUser();
       const nowIso = new Date().toISOString();
-      const fecha = hoyMexico();
+      const fecha = nocheOperativaMexico();
 
       const { data: attendanceRow, error } = await supabase
         .from("rp_attendance")
@@ -735,7 +748,7 @@ export default function StaffPanelPage() {
         return;
       }
 
-      const hoy = hoyMexico();
+      const hoy = nocheOperativaMexico();
       const { data: existingAttendance } = await supabase
         .from("rp_attendance")
         .select("id, scanned_at")
@@ -796,167 +809,37 @@ export default function StaffPanelPage() {
     html5QrCodeAttendanceRef.current?.resume();
   }
 
-  async function handleAssignTable(reserva: Reservation) {
-    const mesaId = mesaSelections[reserva.id] ?? "";
-    setAssignError((prev) => ({ ...prev, [reserva.id]: "" }));
-
-    if (!mesaId) {
-      setAssignError((prev) => ({
-        ...prev,
-        [reserva.id]: "Selecciona una mesa.",
-      }));
-      return;
-    }
-
-    setAssigningId(reserva.id);
+  // Solo marca la reserva; los consumos viven en la caja. La base solo lo
+  // permite para quien entró (trigger reservations_candado_puerta).
+  // Sin cámara: escanea por el QR de la reserva y confirma la entrada. La
+  // base valida antro y noche igual que con el escáner.
+  async function handleEntradaManual(reserva: ReservaPanel) {
+    setEntradaManualId(reserva.id);
+    setEntradaManualError((prev) => ({ ...prev, [reserva.id]: "" }));
     try {
       const supabase = createClient();
-      const { error: updateError } = await supabase
-        .from("reservations")
-        .update({ mesa_id: mesaId })
-        .eq("id", reserva.id);
-
-      if (updateError) throw updateError;
-
-      if (clubId) {
-        await fetchReservas(clubId);
-      }
+      const { error: escanearError } = await supabase.rpc("puerta_escanear", {
+        p_qr: reserva.qr_code,
+      });
+      // Si ya estaba "en puerta", escanear de nuevo no falla; si ya entró, sí.
+      if (escanearError) throw escanearError;
+      const { error: confirmarError } = await supabase.rpc(
+        "puerta_confirmar_entrada",
+        { p_reservation_id: reserva.id },
+      );
+      if (confirmarError) throw confirmarError;
+      if (clubId) await fetchReservas(clubId);
     } catch (err) {
-      console.error("Error asignando mesa:", err);
-      setAssignError((prev) => ({
+      setEntradaManualError((prev) => ({
         ...prev,
-        [reserva.id]: "No pudimos guardar. Intenta de nuevo.",
+        [reserva.id]: mensajeDeError(err, "No pudimos confirmar la entrada."),
       }));
     } finally {
-      setAssigningId(null);
+      setEntradaManualId(null);
     }
   }
 
-  async function fetchConsumptionEntriesForReservation(reservationId: string) {
-    try {
-      const supabase = createClient();
-      const { data, error: entriesError } = await supabase
-        .from("consumption_entries")
-        .select("*")
-        .eq("reservation_id", reservationId)
-        .order("created_at", { ascending: true });
-
-      if (entriesError) throw entriesError;
-
-      setConsumptionEntries((prev) => ({
-        ...prev,
-        [reservationId]: (data ?? []) as ConsumptionEntry[],
-      }));
-    } catch (err) {
-      console.error("Error cargando consumo:", err);
-    }
-  }
-
-  // Calcula y crea la fila en "commissions" para el PRIMER consumo de una
-  // reserva. No se recalcula si se agregan más cargos después — es una
-  // simplificación consciente: la comisión queda fija con el consumo
-  // registrado al momento del primer cargo.
-  async function createCommissionForReservation(
-    reserva: Reservation,
-    consumoMonto: number,
-  ) {
-    if (!club) return;
-    try {
-      const supabase = createClient();
-
-      if (reserva.source === "rp" && reserva.rp_id) {
-        const { inicio, fin } = semanaMexico();
-
-        const { error: rpcError } = await supabase.rpc(
-          "registrar_comision_reserva",
-          {
-            p_reservation_id: reserva.id,
-            p_rp_id: reserva.rp_id,
-            p_club_id: club.id,
-            p_consumo_monto: consumoMonto,
-            p_week_start: inicio.toISOString(),
-            p_week_end: fin.toISOString(),
-          },
-        );
-
-        if (rpcError) throw rpcError;
-      } else if (reserva.source === "organica") {
-        const montoBono =
-          club.bono_organica_tipo === "fijo"
-            ? club.bono_organica_monto
-            : (club.bono_organica_monto / 100) * consumoMonto;
-
-        const { error: insertCommissionError } = await supabase
-          .from("commissions")
-          .insert({
-            reservation_id: reserva.id,
-            rp_id: null,
-            tipo: "plataforma",
-            monto: montoBono,
-            status: "pendiente",
-          });
-
-        if (insertCommissionError) throw insertCommissionError;
-      }
-    } catch (err) {
-      // No bloqueamos la UI del consumo por esto: el consumo ya se guardó
-      // exitosamente, la comisión es un efecto secundario. Se loguea para
-      // poder diagnosticar si algo falla.
-      console.error("Error creando comisión:", err);
-    }
-  }
-
-  async function handleAddConsumption(reserva: Reservation) {
-    const monto = consumptionInputs[reserva.id] ?? "";
-    setConsumptionError((prev) => ({ ...prev, [reserva.id]: "" }));
-
-    const montoNum = Number(monto);
-    if (!monto || !Number.isFinite(montoNum) || montoNum <= 0) {
-      setConsumptionError((prev) => ({
-        ...prev,
-        [reserva.id]: "Ingresa un monto válido.",
-      }));
-      return;
-    }
-
-    setAddingConsumptionId(reserva.id);
-    try {
-      const supabase = createClient();
-
-      const { count: existingEntriesCount, error: countError } =
-        await supabase
-          .from("consumption_entries")
-          .select("id", { count: "exact", head: true })
-          .eq("reservation_id", reserva.id);
-
-      if (countError) throw countError;
-
-      const isFirstEntry = (existingEntriesCount ?? 0) === 0;
-
-      const { error: insertError } = await supabase
-        .from("consumption_entries")
-        .insert({ reservation_id: reserva.id, monto: montoNum });
-
-      if (insertError) throw insertError;
-
-      if (isFirstEntry) {
-        await createCommissionForReservation(reserva, montoNum);
-      }
-
-      setConsumptionInputs((prev) => ({ ...prev, [reserva.id]: "" }));
-      await fetchConsumptionEntriesForReservation(reserva.id);
-    } catch (err) {
-      console.error("Error agregando consumo:", err);
-      setConsumptionError((prev) => ({
-        ...prev,
-        [reserva.id]: "No pudimos agregar el consumo. Intenta de nuevo.",
-      }));
-    } finally {
-      setAddingConsumptionId(null);
-    }
-  }
-
-  async function handleMarkSinConsumo(reserva: Reservation) {
+  async function handleMarkSinConsumo(reserva: ReservaPanel) {
     setSinConsumoError((prev) => ({ ...prev, [reserva.id]: "" }));
     setMarkingSinConsumoId(reserva.id);
     try {
@@ -975,7 +858,10 @@ export default function StaffPanelPage() {
       console.error("Error marcando sin consumo:", err);
       setSinConsumoError((prev) => ({
         ...prev,
-        [reserva.id]: "No pudimos guardar. Intenta de nuevo.",
+        [reserva.id]: mensajeDeError(
+          err,
+          "No pudimos guardar. Intenta de nuevo.",
+        ),
       }));
     } finally {
       setMarkingSinConsumoId(null);
@@ -1017,7 +903,6 @@ export default function StaffPanelPage() {
         .catch(() => {});
       html5QrCodeRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scannerOpen]);
 
   useEffect(() => {
@@ -1066,9 +951,7 @@ export default function StaffPanelPage() {
   const totalOrganicas = reservas.filter((r) => r.source === "organica").length;
   const totalRp = reservas.filter((r) => r.source === "rp").length;
   const totalPersonas = reservas.reduce((sum, r) => sum + r.personas, 0);
-  const totalConsumo = Object.values(consumptionEntries)
-    .flat()
-    .reduce((sum, entry) => sum + Number(entry.monto), 0);
+  const totalEntraron = reservas.filter((r) => r.status === "usada").length;
   const totalSinConsumo = reservas.filter(
     (r) => r.se_retiro_sin_consumir === true,
   ).length;
@@ -1098,45 +981,11 @@ export default function StaffPanelPage() {
                 </p>
               )}
 
-              {scanState.status === "not-found" && (
+              {scanState.status === "error" && (
                 <div className="flex flex-col gap-3">
                   <p className="text-sm text-destructive" role="alert">
-                    Código no válido o no encontrado.
+                    {scanState.message}
                   </p>
-                  <Button type="button" onClick={resumeScanning}>
-                    Escanear siguiente
-                  </Button>
-                </div>
-              )}
-
-              {scanState.status === "wrong-club" && (
-                <div className="flex flex-col gap-3">
-                  <p className="text-sm text-destructive" role="alert">
-                    Este código no pertenece a este antro.
-                  </p>
-                  <Button type="button" onClick={resumeScanning}>
-                    Escanear siguiente
-                  </Button>
-                </div>
-              )}
-
-              {scanState.status === "already-checked-in" && (
-                <div className="flex flex-col gap-3">
-                  <p
-                    className="text-sm text-status-warn"
-                    role="alert"
-                  >
-                    Esta reserva ya tiene la entrada confirmada.
-                  </p>
-                  <div className="text-sm">
-                    <p className="font-medium">
-                      {scanState.reserva.cliente_nombre}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {scanState.reserva.personas} personas ·{" "}
-                      {scanState.reserva.fecha}
-                    </p>
-                  </div>
                   <Button type="button" onClick={resumeScanning}>
                     Escanear siguiente
                   </Button>
@@ -1145,49 +994,66 @@ export default function StaffPanelPage() {
 
               {scanState.status === "ready" && (
                 <div className="flex flex-col gap-3">
-                  <div className="text-sm">
-                    <p className="font-medium">
-                      {scanState.reserva.cliente_nombre}
+                  <div className="flex flex-col gap-1 text-sm">
+                    <p className="break-words text-base font-medium">
+                      {scanState.ficha.cliente_nombre}
                     </p>
                     <p className="text-muted-foreground">
-                      {scanState.reserva.personas} personas ·{" "}
-                      {scanState.reserva.fecha}
+                      {textoPersonas(scanState.ficha.personas)}
+                    </p>
+                    <p className="break-words text-muted-foreground">
+                      {scanState.ficha.source === "rp"
+                        ? `RP: ${scanState.ficha.rp_nombre ?? "—"}`
+                        : "Orgánica"}
                     </p>
                   </div>
-                  <p className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
-                    El QR no garantiza la entrada.
-                  </p>
+                  {scanState.error && (
+                    <p className="text-sm text-destructive" role="alert">
+                      {scanState.error}
+                    </p>
+                  )}
                   <Button
                     type="button"
-                    onClick={() => handleConfirmCheckIn(scanState.reserva)}
+                    size="lg"
+                    className="h-12 w-full text-base"
+                    onClick={() => handleConfirmarEntrada(scanState.ficha)}
                     disabled={checkingIn}
                   >
                     {checkingIn ? "Confirmando..." : "Confirmar entrada"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={resumeScanning}
+                    disabled={checkingIn}
+                  >
+                    Escanear siguiente
                   </Button>
                 </div>
               )}
 
               {scanState.status === "success" && (
                 <div className="flex flex-col gap-3">
-                  <p className="text-sm text-status-ok">
-                    ¡Entrada confirmada!
+                  <p className="break-words text-sm text-status-ok">
+                    ¡Entrada confirmada! {scanState.ficha.cliente_nombre} ·{" "}
+                    {textoPersonas(scanState.ficha.personas)}
                   </p>
                   <Button type="button" onClick={resumeScanning}>
                     Escanear siguiente
+                  </Button>
+                  <Button
+                    render={<Link href={RUTA_CAJA} />}
+                    nativeButton={false}
+                    variant="outline"
+                  >
+                    Sentar en mesa
                   </Button>
                 </div>
               )}
 
-              {scanState.status === "lookup-error" && (
-                <div className="flex flex-col gap-3">
-                  <p className="text-sm text-destructive" role="alert">
-                    Ocurrió un error. Intenta de nuevo.
-                  </p>
-                  <Button type="button" onClick={resumeScanning}>
-                    Escanear siguiente
-                  </Button>
-                </div>
-              )}
+              <p className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
+                El QR no garantiza la entrada.
+              </p>
 
               <Button type="button" variant="outline" onClick={closeScanner}>
                 Cerrar escáner
@@ -1363,6 +1229,16 @@ export default function StaffPanelPage() {
           Escanear QR
         </Button>
 
+        <Button
+          render={<Link href={RUTA_CAJA} />}
+          nativeButton={false}
+          variant="outline"
+          size="lg"
+          className="h-12 w-full text-base"
+        >
+          Caja y mesas de la noche
+        </Button>
+
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
           <Card size="sm">
             <CardContent className="flex flex-col gap-1 px-4">
@@ -1390,12 +1266,8 @@ export default function StaffPanelPage() {
           </Card>
           <Card size="sm">
             <CardContent className="flex flex-col gap-1 px-4">
-              <span className="text-xs text-muted-foreground">
-                Consumo total
-              </span>
-              <span className="text-2xl font-bold">
-                ${totalConsumo.toLocaleString("en-US")}
-              </span>
+              <span className="text-xs text-muted-foreground">Entraron</span>
+              <span className="text-2xl font-bold">{totalEntraron}</span>
             </CardContent>
           </Card>
           <Card size="sm">
@@ -1664,14 +1536,22 @@ export default function StaffPanelPage() {
             <Card key={r.id}>
               <CardHeader>
                 <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <CardTitle>{r.cliente_nombre}</CardTitle>
+                  <div className="min-w-0">
+                    <CardTitle className="break-words">
+                      {r.cliente_nombre}
+                    </CardTitle>
                     <CardDescription>{r.cliente_telefono}</CardDescription>
                   </div>
                   <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
                     <Badge className={STATUS_CLASSES[r.status]}>
                       {STATUS_LABEL[r.status]}
                     </Badge>
+                    {/* Escaneada pero sin "Confirmar entrada" todavía. */}
+                    {r.status !== "usada" && r.puerta_estado === "en_puerta" && (
+                      <Badge className="border-transparent bg-status-warn/12 text-status-warn">
+                        En puerta
+                      </Badge>
+                    )}
                     <Badge className={SOURCE_CLASSES[r.source]}>
                       {r.source === "rp" ? "Vía RP" : "Orgánica"}
                     </Badge>
@@ -1679,7 +1559,7 @@ export default function StaffPanelPage() {
                 </div>
               </CardHeader>
               <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-1 px-6 text-sm text-muted-foreground">
-                <span>{r.personas} personas</span>
+                <span>{textoPersonas(r.personas)}</span>
                 {r.source === "rp" && (
                   <span>
                     RP: {r.rp_id && rpNombres[r.rp_id] ? rpNombres[r.rp_id] : "—"}
@@ -1687,138 +1567,75 @@ export default function StaffPanelPage() {
                 )}
               </CardContent>
 
-              {r.status === "usada" && !r.mesa_id && (
-                <CardContent className="flex flex-col gap-3 border-t border-border px-6 py-4">
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor={`mesa-${r.id}`}>Mesa</Label>
-                    <select
-                      id={`mesa-${r.id}`}
-                      className={SELECT_CLASSES}
-                      value={mesaSelections[r.id] ?? ""}
-                      onChange={(e) =>
-                        setMesaSelections((prev) => ({
-                          ...prev,
-                          [r.id]: e.target.value,
-                        }))
-                      }
-                    >
-                      <option value="" disabled>
-                        Selecciona una mesa
-                      </option>
-                      {tables.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          Mesa {t.numero} (cap. {t.capacidad})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {assignError[r.id] && (
-                    <p className="text-sm text-destructive" role="alert">
-                      {assignError[r.id]}
-                    </p>
-                  )}
+              {/* Sin entrada todavía: confirmar a mano si la cámara falla.
+                  El QR no garantiza la entrada: si no pasa, no se confirma. */}
+              {r.status !== "usada" && (
+                <CardContent className="flex flex-col gap-2 border-t border-border px-6 py-3">
                   <Button
                     type="button"
+                    variant="outline"
                     size="sm"
-                    onClick={() => handleAssignTable(r)}
-                    disabled={assigningId === r.id}
+                    className="w-full sm:w-auto"
+                    onClick={() => handleEntradaManual(r)}
+                    disabled={entradaManualId === r.id}
                   >
-                    {assigningId === r.id ? "Guardando..." : "Asignar mesa"}
+                    {entradaManualId === r.id
+                      ? "Confirmando..."
+                      : "Confirmar entrada sin cámara"}
                   </Button>
-                </CardContent>
-              )}
-
-              {r.mesa_id && r.se_retiro_sin_consumir === true && (
-                <CardContent className="flex flex-col gap-2 border-t border-border px-6 py-4">
-                  <p className="text-sm text-muted-foreground">
-                    Mesa: {tables.find((t) => t.id === r.mesa_id)?.numero ?? "—"}
-                  </p>
-                  <Badge className="w-fit border-transparent bg-muted text-muted-foreground">
-                    Se retiró sin consumir
-                  </Badge>
-                </CardContent>
-              )}
-
-              {r.mesa_id && r.se_retiro_sin_consumir !== true && (
-                <CardContent className="flex flex-col gap-3 border-t border-border px-6 py-4">
-                  <p className="text-sm text-muted-foreground">
-                    Mesa: {tables.find((t) => t.id === r.mesa_id)?.numero ?? "—"}
-                  </p>
-
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">
-                      Consumo total: $
-                      {(consumptionEntries[r.id] ?? []).reduce(
-                        (sum, e) => sum + Number(e.monto),
-                        0,
-                      )}
-                    </span>
-                  </div>
-
-                  {(consumptionEntries[r.id] ?? []).length > 0 && (
-                    <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
-                      {(consumptionEntries[r.id] ?? []).map((entry) => (
-                        <li key={entry.id}>
-                          {formatHora(entry.created_at)} — ${entry.monto}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-
-                  <div className="flex items-end gap-2">
-                    <div className="flex flex-1 flex-col gap-1.5">
-                      <Label htmlFor={`consumo-${r.id}`}>
-                        Agregar consumo ($)
-                      </Label>
-                      <Input
-                        id={`consumo-${r.id}`}
-                        type="number"
-                        min={0}
-                        value={consumptionInputs[r.id] ?? ""}
-                        onChange={(e) =>
-                          setConsumptionInputs((prev) => ({
-                            ...prev,
-                            [r.id]: e.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => handleAddConsumption(r)}
-                      disabled={addingConsumptionId === r.id}
-                    >
-                      {addingConsumptionId === r.id
-                        ? "Agregando..."
-                        : "+ Agregar consumo"}
-                    </Button>
-                  </div>
-                  {consumptionError[r.id] && (
+                  {entradaManualError[r.id] && (
                     <p className="text-sm text-destructive" role="alert">
-                      {consumptionError[r.id]}
+                      {entradaManualError[r.id]}
+                    </p>
+                  )}
+                </CardContent>
+              )}
+
+              {/* Con entrada confirmada: la mesa y el consumo se llevan en la
+                  caja. Aquí solo se manda a sentar o se marca que se fue. */}
+              {r.status === "usada" && (
+                <CardContent className="flex flex-col gap-3 border-t border-border px-6 py-4">
+                  {r.mesa_id && (
+                    <p className="text-sm text-muted-foreground">
+                      Mesa: {tables.find((t) => t.id === r.mesa_id)?.numero ?? "—"}
                     </p>
                   )}
 
-                  {(consumptionEntries[r.id] ?? []).length === 0 && (
-                    <>
+                  {r.se_retiro_sin_consumir === true ? (
+                    <Badge className="w-fit border-transparent bg-muted text-muted-foreground">
+                      Se retiró sin consumir
+                    </Badge>
+                  ) : (
+                    <div className="flex flex-col gap-2 sm:flex-row">
                       <Button
-                        type="button"
-                        variant="outline"
+                        render={<Link href={RUTA_CAJA} />}
+                        nativeButton={false}
                         size="sm"
-                        onClick={() => handleMarkSinConsumo(r)}
-                        disabled={markingSinConsumoId === r.id}
+                        className="w-full sm:w-auto"
                       >
-                        {markingSinConsumoId === r.id
-                          ? "Guardando..."
-                          : "Cliente se retiró sin consumir"}
+                        {r.mesa_id ? "Ver en caja" : "Sentar en mesa"}
                       </Button>
-                      {sinConsumoError[r.id] && (
-                        <p className="text-sm text-destructive" role="alert">
-                          {sinConsumoError[r.id]}
-                        </p>
+                      {!r.mesa_id && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="w-full sm:w-auto"
+                          onClick={() => handleMarkSinConsumo(r)}
+                          disabled={markingSinConsumoId === r.id}
+                        >
+                          {markingSinConsumoId === r.id
+                            ? "Guardando..."
+                            : "Cliente se retiró sin consumir"}
+                        </Button>
                       )}
-                    </>
+                    </div>
+                  )}
+
+                  {sinConsumoError[r.id] && (
+                    <p className="text-sm text-destructive" role="alert">
+                      {sinConsumoError[r.id]}
+                    </p>
                   )}
                 </CardContent>
               )}

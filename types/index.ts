@@ -26,7 +26,13 @@ export interface Reservation {
   consumo_monto: number | null;
   cliente_id: string | null;
   se_retiro_sin_consumir: boolean | null;
+  // Puerta (sql/2026-11-20-caja-por-mesa.sql, bloque 1C). Nulo = no ha
+  // llegado; 'entro' = entrada confirmada (status pasa a 'usada').
+  puerta_estado?: "en_puerta" | "entro" | null;
 }
+
+// Cómo se informa el cover del antro (clubs.cover_modo).
+export type CoverModo = "monto" | "libre" | "consultar" | "oculto";
 
 export interface Club {
   id: string;
@@ -35,10 +41,10 @@ export interface Club {
   horario: string;
   // Sin uso: la app no cobra depósitos. Se conserva en la base, no mostrar.
   deposito_monto: number;
-  // Cover informativo (sql/2026-11-borrador-cover.sql, aún sin aplicar:
-  // mientras tanto llegan undefined y no se muestra nada).
-  cover_modo?: "monto" | "libre" | "consultar" | "oculto";
-  cover_monto?: number | null;
+  // Cover solo informativo: lo cobra el antro en la puerta, la app no cobra
+  // nada. cover_monto va en pesos y solo tiene valor en modo "monto".
+  cover_modo: CoverModo;
+  cover_monto: number | null;
   dueno_id: string | null;
   suscripcion_activa: boolean;
   suscripcion_activada_en: string | null;

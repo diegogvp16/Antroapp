@@ -16,7 +16,7 @@ import {
 import {
   diaSemanaISO,
   etiquetaRango,
-  hoyMexico,
+  nocheOperativaMexico,
   mesOperativo,
   semanaOperativa,
   type RangoNoches,
@@ -154,7 +154,7 @@ export default function RpPanelPage() {
   const [error, setError] = useState<string | null>(null);
   const [reserva, setReserva] = useState<ReservaResumen | null>(null);
 
-  const minDate = hoyMexico();
+  const minDate = nocheOperativaMexico(); // noche en curso (corte 08:00)
 
   useEffect(() => {
     async function loadSession() {
@@ -209,7 +209,7 @@ export default function RpPanelPage() {
           .from("rp_schedule")
           .select("id, fecha, es_fijo, dias_semana, fecha_inicio")
           .eq("rp_id", profile.id)
-          .or(`es_fijo.eq.true,fecha.gte.${hoyMexico()}`)
+          .or(`es_fijo.eq.true,fecha.gte.${nocheOperativaMexico()}`)
           .order("fecha", { ascending: true });
 
         if (turnosError) {
