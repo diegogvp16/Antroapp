@@ -80,7 +80,6 @@ export default function AdminPage() {
   const [clubNombre, setClubNombre] = useState("");
   const [clubDireccion, setClubDireccion] = useState("");
   const [clubHorario, setClubHorario] = useState("");
-  const [clubDeposito, setClubDeposito] = useState("");
   const [clubSubmitting, setClubSubmitting] = useState(false);
   const [clubError, setClubError] = useState<string | null>(null);
 
@@ -92,20 +91,6 @@ export default function AdminPage() {
   const [staffSubmitting, setStaffSubmitting] = useState(false);
   const [staffError, setStaffError] = useState<string | null>(null);
   const [createdStaff, setCreatedStaff] = useState<CreatedStaff[]>([]);
-
-  const [editingBonoClubId, setEditingBonoClubId] = useState<string | null>(
-    null,
-  );
-  const [bonoTipoEdit, setBonoTipoEdit] = useState<
-    Record<string, "fijo" | "porcentaje">
-  >({});
-  const [bonoMontoEdit, setBonoMontoEdit] = useState<Record<string, string>>(
-    {},
-  );
-  const [bonoSubmittingId, setBonoSubmittingId] = useState<string | null>(
-    null,
-  );
-  const [bonoError, setBonoError] = useState<Record<string, string>>({});
 
   const [alertasData, setAlertasData] = useState<Record<string, ConsumoBucket>>(
     {},
@@ -304,18 +289,8 @@ export default function AdminPage() {
     e.preventDefault();
     setClubError(null);
 
-    if (
-      !clubNombre.trim() ||
-      !clubDireccion.trim() ||
-      !clubHorario.trim() ||
-      !clubDeposito
-    ) {
+    if (!clubNombre.trim() || !clubDireccion.trim() || !clubHorario.trim()) {
       setClubError("Completa todos los campos.");
-      return;
-    }
-    const depositoNum = Number(clubDeposito);
-    if (!Number.isFinite(depositoNum) || depositoNum < 0) {
-      setClubError("El depósito debe ser un número válido.");
       return;
     }
 
@@ -326,7 +301,6 @@ export default function AdminPage() {
         nombre: clubNombre.trim(),
         direccion: clubDireccion.trim(),
         horario: clubHorario.trim(),
-        deposito_monto: depositoNum,
         suscripcion_activa: true,
         // Lo da de alta AntroApp directamente: no pasa por la revisión de
         // documentos que hace un dueño auto-registrado.
@@ -339,7 +313,6 @@ export default function AdminPage() {
       setClubNombre("");
       setClubDireccion("");
       setClubHorario("");
-      setClubDeposito("");
       await fetchClubs();
     } catch (err) {
       console.error("Error creando club:", err);
@@ -402,71 +375,15 @@ export default function AdminPage() {
     }
   }
 
-  function handleToggleEditBono(club: Club) {
-    if (editingBonoClubId === club.id) {
-      setEditingBonoClubId(null);
-      return;
-    }
-    setBonoTipoEdit((prev) => ({ ...prev, [club.id]: club.bono_organica_tipo }));
-    setBonoMontoEdit((prev) => ({
-      ...prev,
-      [club.id]: String(club.bono_organica_monto),
-    }));
-    setBonoError((prev) => ({ ...prev, [club.id]: "" }));
-    setEditingBonoClubId(club.id);
-  }
-
-  async function handleSaveBono(club: Club) {
-    const tipo = bonoTipoEdit[club.id] ?? "fijo";
-    const montoStr = bonoMontoEdit[club.id] ?? "";
-    setBonoError((prev) => ({ ...prev, [club.id]: "" }));
-
-    if (!montoStr) {
-      setBonoError((prev) => ({ ...prev, [club.id]: "Ingresa un monto." }));
-      return;
-    }
-    const montoNum = Number(montoStr);
-    if (!Number.isFinite(montoNum) || montoNum < 0) {
-      setBonoError((prev) => ({
-        ...prev,
-        [club.id]: "El monto debe ser un número válido.",
-      }));
-      return;
-    }
-    if (tipo === "porcentaje" && montoNum > 100) {
-      setBonoError((prev) => ({
-        ...prev,
-        [club.id]: "El porcentaje no puede ser mayor a 100.",
-      }));
-      return;
-    }
-
-    setBonoSubmittingId(club.id);
-    try {
-      const supabase = createClient();
-      const { error: updateError } = await supabase
-        .from("clubs")
-        .update({ bono_organica_tipo: tipo, bono_organica_monto: montoNum })
-        .eq("id", club.id);
-
-      if (updateError) throw updateError;
-
-      await fetchClubs();
-      setEditingBonoClubId(null);
-    } catch (err) {
-      console.error("Error actualizando bono:", err);
-      setBonoError((prev) => ({
-        ...prev,
-        [club.id]: "No pudimos guardar. Intenta de nuevo.",
-      }));
-    } finally {
-      setBonoSubmittingId(null);
-    }
-  }
-
   if (checkingSession) {
     return null;
   }
+
+  // Un antro está publicado (visible al público) si está verificado y con
+  // suscripción activa. Los demás (borradores, en revisión, rechazados) se
+  // agrupan aparte y colapsados para no mezclarlos con los activos.
+  const clubsPublicados = clubs.filter(estaPublicado);
+  const clubsNoPublicados = clubs.filter((c) => !estaPublicado(c));
 
   return (
     <div className="flex flex-1 flex-col items-center px-6 py-10">
@@ -631,105 +548,24 @@ export default function AdminPage() {
                 No hay antros todavía.
               </p>
             )}
-            {clubs.map((club) => (
-              <Card key={club.id}>
-                <CardContent className="flex flex-wrap items-start justify-between gap-2 px-5 py-4">
-                  <div className="min-w-0 flex-1">
-                    <p className="break-words font-medium">{club.nombre}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {club.direccion}
-                    </p>
-                  </div>
-                  {textoCover(club) && (
-                    <span className="whitespace-nowrap text-sm font-semibold">
-                      {textoCover(club)}
-                    </span>
-                  )}
-                </CardContent>
-                <CardContent className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3 text-sm">
-                  <span className="text-muted-foreground">
-                    Bono plataforma:{" "}
-                    {club.bono_organica_tipo === "fijo"
-                      ? `$${club.bono_organica_monto} fijo`
-                      : `${club.bono_organica_monto}% del consumo`}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleToggleEditBono(club)}
-                  >
-                    {editingBonoClubId === club.id
-                      ? "Cancelar"
-                      : "Editar bono de plataforma"}
-                  </Button>
-                </CardContent>
-                {editingBonoClubId === club.id && (
-                  <CardContent className="flex flex-col gap-3 border-t border-border px-5 py-4">
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor={`bono_tipo_${club.id}`}>
-                        Tipo de bono
-                      </Label>
-                      <select
-                        id={`bono_tipo_${club.id}`}
-                        className={SELECT_CLASSES}
-                        value={bonoTipoEdit[club.id] ?? "fijo"}
-                        onChange={(e) =>
-                          setBonoTipoEdit((prev) => ({
-                            ...prev,
-                            [club.id]: e.target.value as "fijo" | "porcentaje",
-                          }))
-                        }
-                      >
-                        <option value="fijo">Fijo</option>
-                        <option value="porcentaje">
-                          Porcentaje del consumo
-                        </option>
-                      </select>
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor={`bono_monto_${club.id}`}>
-                        {(bonoTipoEdit[club.id] ?? "fijo") === "fijo"
-                          ? "Monto ($)"
-                          : "Porcentaje (%)"}
-                      </Label>
-                      <Input
-                        id={`bono_monto_${club.id}`}
-                        type="number"
-                        min={0}
-                        max={
-                          (bonoTipoEdit[club.id] ?? "fijo") === "porcentaje"
-                            ? 100
-                            : undefined
-                        }
-                        value={bonoMontoEdit[club.id] ?? ""}
-                        onChange={(e) =>
-                          setBonoMontoEdit((prev) => ({
-                            ...prev,
-                            [club.id]: e.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-                    {bonoError[club.id] && (
-                      <p className="text-sm text-destructive" role="alert">
-                        {bonoError[club.id]}
-                      </p>
-                    )}
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => handleSaveBono(club)}
-                      disabled={bonoSubmittingId === club.id}
-                    >
-                      {bonoSubmittingId === club.id
-                        ? "Guardando..."
-                        : "Guardar bono"}
-                    </Button>
-                  </CardContent>
-                )}
-              </Card>
+            {clubsPublicados.map((club) => (
+              <TarjetaAntro key={club.id} club={club} />
             ))}
+            {clubsNoPublicados.length > 0 && (
+              <details className="group rounded-lg border border-border">
+                <summary className="cursor-pointer list-none px-5 py-3 text-sm font-medium">
+                  No publicados ({clubsNoPublicados.length})
+                  <span className="ml-2 text-xs font-normal text-muted-foreground group-open:hidden">
+                    Mostrar
+                  </span>
+                </summary>
+                <div className="flex flex-col gap-3 border-t border-border p-3">
+                  {clubsNoPublicados.map((club) => (
+                    <TarjetaAntro key={club.id} club={club} />
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
 
           <Card>
@@ -770,18 +606,6 @@ export default function AdminPage() {
                     required
                   />
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="club_deposito">Depósito ($)</Label>
-                  <Input
-                    id="club_deposito"
-                    type="number"
-                    min={0}
-                    value={clubDeposito}
-                    onChange={(e) => setClubDeposito(e.target.value)}
-                    required
-                  />
-                </div>
-
                 {clubError && (
                   <p className="text-sm text-destructive" role="alert">
                     {clubError}
@@ -810,15 +634,15 @@ export default function AdminPage() {
             <p className="text-sm text-muted-foreground">Cargando...</p>
           )}
 
-          {!loadingAlertas && clubs.length === 0 && (
+          {!loadingAlertas && clubsPublicados.length === 0 && (
             <p className="text-sm text-muted-foreground">
-              No hay antros todavía.
+              No hay antros publicados todavía.
             </p>
           )}
 
-          {!loadingAlertas && clubs.length > 0 && (
+          {!loadingAlertas && clubsPublicados.length > 0 && (
             <div className="flex flex-col gap-2">
-              {clubs.map((club) => {
+              {clubsPublicados.map((club) => {
                 const bucket = alertasData[club.id];
                 const pctRp =
                   bucket && bucket.rpTotal > 0
@@ -957,7 +781,10 @@ export default function AdminPage() {
                     <option value="" disabled>
                       Selecciona un antro
                     </option>
-                    {clubs.map((club) => (
+                    {/* Solo publicados: los antros que crea el admin nacen
+                        publicados, y un borrador de dueño da de alta a su
+                        propio personal desde su panel. */}
+                    {clubsPublicados.map((club) => (
                       <option key={club.id} value={club.id}>
                         {club.nombre}
                       </option>
@@ -997,5 +824,45 @@ export default function AdminPage() {
         </section>
       </div>
     </div>
+  );
+}
+
+function estaPublicado(club: Club): boolean {
+  return club.estado_verificacion === "verificado" && club.suscripcion_activa;
+}
+
+const ESTADO_LABEL: Record<Club["estado_verificacion"], string> = {
+  borrador: "Borrador",
+  en_revision: "En revisión",
+  verificado: "Verificado",
+  rechazado: "Rechazado",
+};
+
+function TarjetaAntro({ club }: { club: Club }) {
+  const cover = textoCover(club);
+  const publicado = estaPublicado(club);
+  return (
+    <Card>
+      <CardContent className="flex flex-wrap items-start justify-between gap-2 px-5 py-4">
+        <div className="min-w-0 flex-1">
+          <p className="break-words font-medium">{club.nombre}</p>
+          <p className="text-sm text-muted-foreground">{club.direccion}</p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          {!publicado && (
+            <Badge variant="outline">
+              {club.estado_verificacion === "verificado"
+                ? "Sin suscripción"
+                : ESTADO_LABEL[club.estado_verificacion]}
+            </Badge>
+          )}
+          {cover && (
+            <span className="whitespace-nowrap text-sm font-semibold">
+              {cover}
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

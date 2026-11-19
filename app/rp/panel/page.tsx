@@ -13,7 +13,23 @@ import {
   esTurnoFijo,
   type TurnoRow as TurnoScheduleRow,
 } from "@/lib/turnos";
-import { hoyMexico, mesMexico, semanaMexico } from "@/lib/fechas";
+import {
+  diaSemanaISO,
+  etiquetaRango,
+  hoyMexico,
+  mesOperativo,
+  semanaOperativa,
+  type RangoNoches,
+} from "@/lib/fechas";
+import { formatearPesos } from "@/lib/dinero";
+import {
+  RESUMEN_VACIO,
+  rangoQueCubre,
+  resumirPeriodo,
+  type GananciaRp,
+  type ReservaRp,
+  type ResumenPeriodo,
+} from "@/lib/rp-rendimiento";
 import {
   PersonasStepper,
   MIN_PERSONAS,
@@ -42,18 +58,23 @@ interface ReservaResumen {
 
 type TurnoRow = TurnoScheduleRow;
 
-interface RendimientoStats {
-  total: number;
-  usada: number;
-  pendienteOConfirmada: number;
+interface Periodos {
+  semana: RangoNoches;
+  anterior: RangoNoches;
+  mes: RangoNoches;
 }
 
-interface ReservaDetalle {
-  id: string;
-  cliente_nombre: string;
-  fecha: string;
-  status: "pendiente" | "confirmada" | "usada";
+interface Resumenes {
+  semana: ResumenPeriodo;
+  anterior: ResumenPeriodo;
+  mes: ResumenPeriodo;
 }
+
+const RESUMENES_VACIOS: Resumenes = {
+  semana: RESUMEN_VACIO,
+  anterior: RESUMEN_VACIO,
+  mes: RESUMEN_VACIO,
+};
 
 interface PagoDiaRow {
   id: string;
@@ -86,8 +107,17 @@ const DIA_SEMANA_LABEL = [
 ];
 
 function formatFechaConDia(fecha: string) {
-  const d = new Date(`${fecha}T00:00:00`);
-  return `${DIA_SEMANA_LABEL[d.getDay()]} ${fecha}`;
+  return `${DIA_SEMANA_LABEL[diaSemanaISO(fecha)]} ${fecha}`;
+}
+
+// "Pendiente: $1,200 · Pagada: $300"
+function desglosePorEstado(porEstado: Record<string, number>) {
+  return Object.entries(porEstado)
+    .map(
+      ([status, monto]) =>
+        `${COMISION_STATUS_LABEL[status] ?? status}: ${formatearPesos(monto)}`,
+    )
+    .join(" · ");
 }
 
 export default function RpPanelPage() {
@@ -99,26 +129,19 @@ export default function RpPanelPage() {
   const [misTurnos, setMisTurnos] = useState<TurnoRow[]>([]);
   const [loadingTurnos, setLoadingTurnos] = useState(true);
 
-  const [statsSemana, setStatsSemana] = useState<RendimientoStats>({
-    total: 0,
-    usada: 0,
-    pendienteOConfirmada: 0,
-  });
-  const [statsMes, setStatsMes] = useState<RendimientoStats>({
-    total: 0,
-    usada: 0,
-    pendienteOConfirmada: 0,
-  });
-  const [comisionSemana, setComisionSemana] = useState<Record<string, number>>(
-    {},
-  );
-  const [comisionesSemanaCount, setComisionesSemanaCount] = useState(0);
+  // Semana, semana anterior y mes de la noche en curso (corte 08:00).
+  const [periodos] = useState<Periodos>(() => ({
+    semana: semanaOperativa(),
+    anterior: semanaOperativa(new Date(), 1),
+    mes: mesOperativo(),
+  }));
+  const [resumenes, setResumenes] = useState<Resumenes>(RESUMENES_VACIOS);
   const [comisionDesbloqueoReservas, setComisionDesbloqueoReservas] = useState<
     number | null
   >(null);
   const [loadingRendimiento, setLoadingRendimiento] = useState(true);
   const [reservasSemanaDetalle, setReservasSemanaDetalle] = useState<
-    ReservaDetalle[]
+    ReservaRp[]
   >([]);
   const [pagoRpModo, setPagoRpModo] = useState<"reserva" | "dia">("reserva");
   const [pagosDiaSemana, setPagosDiaSemana] = useState<PagoDiaRow[]>([]);
@@ -224,74 +247,82 @@ export default function RpPanelPage() {
       setLoadingRendimiento(true);
       try {
         const supabase = createClient();
-        const { inicio: weekStart, fin: weekEnd } = semanaMexico();
-        const { inicio: monthStart } = mesMexico();
+        // Todo se filtra por la NOCHE (reservations.fecha / rp_pagos_dia.fecha),
+        // no por created_at: una reserva creada el lunes para el sábado
+        // cuenta en la semana del sábado.
+        const cubre = rangoQueCubre(periodos.semana, periodos.anterior, periodos.mes);
 
-        const { data: reservasSemana, error: reservasSemanaError } =
-          await supabase
-            .from("reservations")
-            .select("id, status, cliente_nombre, fecha")
-            .eq("rp_id", rpId)
-            .eq("club_id", clubId)
-            .gte("created_at", weekStart.toISOString())
-            .lte("created_at", weekEnd.toISOString())
-            .order("created_at", { ascending: false });
-
-        if (reservasSemanaError) throw reservasSemanaError;
-        const semanaRows = (reservasSemana ?? []) as ReservaDetalle[];
-        setStatsSemana({
-          total: semanaRows.length,
-          usada: semanaRows.filter((r) => r.status === "usada").length,
-          pendienteOConfirmada: semanaRows.filter((r) => r.status !== "usada")
-            .length,
-        });
-        setReservasSemanaDetalle(semanaRows);
-
-        const { data: reservasMes, error: reservasMesError } = await supabase
+        const { data: reservasData, error: reservasError } = await supabase
           .from("reservations")
-          .select("id, status")
+          .select("id, status, cliente_nombre, fecha")
           .eq("rp_id", rpId)
           .eq("club_id", clubId)
-          .gte("created_at", monthStart.toISOString());
+          .gte("fecha", cubre.desde)
+          .lte("fecha", cubre.hasta)
+          .order("fecha", { ascending: false });
 
-        if (reservasMesError) throw reservasMesError;
-        const mesRows = reservasMes ?? [];
-        setStatsMes({
-          total: mesRows.length,
-          usada: mesRows.filter((r) => r.status === "usada").length,
-          pendienteOConfirmada: mesRows.filter((r) => r.status !== "usada")
-            .length,
-        });
+        if (reservasError) throw reservasError;
+        const reservas = (reservasData ?? []) as ReservaRp[];
 
+        let ganancias: GananciaRp[] = [];
         if (modo === "dia") {
           const { data: pagosDia, error: pagosDiaError } = await supabase
             .from("rp_pagos_dia")
             .select("id, fecha, posicion, monto, status")
             .eq("rp_id", rpId)
-            .gte("created_at", weekStart.toISOString())
-            .lte("created_at", weekEnd.toISOString())
+            .gte("fecha", cubre.desde)
+            .lte("fecha", cubre.hasta)
             .order("fecha", { ascending: true });
 
           if (pagosDiaError) throw pagosDiaError;
-          setPagosDiaSemana((pagosDia ?? []) as PagoDiaRow[]);
+          const pagos = (pagosDia ?? []) as PagoDiaRow[];
+          ganancias = pagos.map((p) => ({
+            noche: p.fecha,
+            monto: Number(p.monto),
+            status: p.status,
+          }));
+          setPagosDiaSemana(
+            pagos.filter(
+              (p) =>
+                p.fecha >= periodos.semana.desde &&
+                p.fecha <= periodos.semana.hasta,
+            ),
+          );
         } else {
           const { data: comisiones, error: comisionesError } = await supabase
             .from("commissions")
-            .select("monto, status")
+            .select("monto, status, reservations!inner(fecha)")
             .eq("rp_id", rpId)
             .eq("tipo", "rp")
-            .gte("created_at", weekStart.toISOString())
-            .lte("created_at", weekEnd.toISOString());
+            .gte("reservations.fecha", cubre.desde)
+            .lte("reservations.fecha", cubre.hasta);
 
           if (comisionesError) throw comisionesError;
-          const comisionRows = comisiones ?? [];
-          const sums: Record<string, number> = {};
-          for (const row of comisionRows) {
-            sums[row.status] = (sums[row.status] ?? 0) + Number(row.monto);
-          }
-          setComisionSemana(sums);
-          setComisionesSemanaCount(comisionRows.length);
+          // SAFETY: el join !inner con reservations devuelve un solo objeto
+          // por comisión (reservation_id es una llave foránea a una fila).
+          const filas = (comisiones ?? []) as unknown as {
+            monto: number;
+            status: string;
+            reservations: { fecha: string };
+          }[];
+          ganancias = filas.map((c) => ({
+            noche: c.reservations.fecha,
+            monto: Number(c.monto),
+            status: c.status,
+          }));
         }
+
+        setResumenes({
+          semana: resumirPeriodo(reservas, ganancias, periodos.semana),
+          anterior: resumirPeriodo(reservas, ganancias, periodos.anterior),
+          mes: resumirPeriodo(reservas, ganancias, periodos.mes),
+        });
+        setReservasSemanaDetalle(
+          reservas.filter(
+            (r) =>
+              r.fecha >= periodos.semana.desde && r.fecha <= periodos.semana.hasta,
+          ),
+        );
       } catch (err) {
         console.error("Error cargando rendimiento del RP:", err);
       } finally {
@@ -300,7 +331,7 @@ export default function RpPanelPage() {
     }
 
     loadSession();
-  }, [router]);
+  }, [router, periodos]);
 
   async function handleLogout() {
     const supabase = createClient();
@@ -415,8 +446,50 @@ export default function RpPanelPage() {
           <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-1">
               <h1 className="text-xl font-semibold">Hola, {session.nombre}</h1>
-              <p className="text-sm text-muted-foreground">{clubNombre}</p>
+              <p className="text-sm text-muted-foreground">
+                RP en{" "}
+                <span className="font-medium text-foreground">{clubNombre}</span>
+              </p>
             </div>
+
+            <Card className="w-full">
+              <CardHeader>
+                <CardTitle>
+                  {pagoRpModo === "dia" ? "Pago por día" : "Comisiones"}
+                </CardTitle>
+                <CardDescription>
+                  Lo paga {clubNombre ?? "tu antro"} en su nómina.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3 px-6 pb-6">
+                {loadingRendimiento ? (
+                  <p className="text-sm text-muted-foreground">Cargando...</p>
+                ) : (
+                  <dl className="grid grid-cols-2 gap-3">
+                    {(
+                      [
+                        ["Esta semana", resumenes.semana],
+                        ["Este mes", resumenes.mes],
+                      ] as const
+                    ).map(([titulo, resumen]) => (
+                      <div
+                        key={titulo}
+                        className="flex flex-col gap-0.5 rounded-md border border-border px-3 py-2"
+                      >
+                        <dt className="text-xs text-muted-foreground">{titulo}</dt>
+                        <dd className="text-lg font-semibold tabular-nums">
+                          {formatearPesos(resumen.ganado)}
+                        </dd>
+                        <dd className="text-xs text-muted-foreground">
+                          {resumen.entraron} de {resumen.reservas} entraron
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+              </CardContent>
+            </Card>
+
             <Button
               type="button"
               variant="outline"
@@ -474,50 +547,69 @@ export default function RpPanelPage() {
           <Card className="w-full">
             <CardHeader>
               <CardTitle>Nómina</CardTitle>
+              <CardDescription>
+                Cuenta por la noche de cada reserva. Lo paga tu antro.
+              </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4 px-6 pb-6">
               {loadingRendimiento ? (
                 <p className="text-sm text-muted-foreground">Cargando...</p>
-              ) : pagoRpModo === "reserva" ? (
+              ) : (
                 <>
-                  <div className="flex flex-col gap-1">
-                    <p className="text-sm font-medium">
-                      Comisión acumulada esta semana
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {Object.keys(comisionSemana).length === 0
-                        ? "Sin comisiones esta semana todavía."
-                        : Object.entries(comisionSemana)
-                            .map(
-                              ([status, monto]) =>
-                                `${COMISION_STATUS_LABEL[status] ?? status}: $${monto.toLocaleString("en-US")}`,
-                            )
-                            .join(" · ")}
-                    </p>
-                  </div>
-
-                  {comisionDesbloqueoReservas !== null && (
-                    <div className="flex flex-col gap-1 border-t border-border pt-3">
-                      <p className="text-sm font-medium">
-                        Desbloqueo de comisión semanal
+                  {(
+                    [
+                      ["Esta semana", periodos.semana, resumenes.semana],
+                      ["Semana anterior", periodos.anterior, resumenes.anterior],
+                    ] as const
+                  ).map(([titulo, rango, resumen], i) => (
+                    <div
+                      key={titulo}
+                      className={
+                        i > 0
+                          ? "flex flex-col gap-1 border-t border-border pt-3"
+                          : "flex flex-col gap-1"
+                      }
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="text-sm font-medium">{titulo}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {etiquetaRango(rango)}
+                        </p>
+                      </div>
+                      <p className="text-lg font-semibold tabular-nums">
+                        {formatearPesos(resumen.ganado)}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {comisionesSemanaCount >= comisionDesbloqueoReservas
-                          ? `Llevas ${comisionesSemanaCount} de ${comisionDesbloqueoReservas} reservas necesarias esta semana ✅`
-                          : `Llevas ${comisionesSemanaCount} de ${comisionDesbloqueoReservas}, te faltan ${comisionDesbloqueoReservas - comisionesSemanaCount} para desbloquear comisión.`}
+                        {resumen.registrosGanancia === 0
+                          ? pagoRpModo === "dia"
+                            ? "Sin días pagados en esta semana."
+                            : "Sin comisiones en esta semana."
+                          : `${resumen.registrosGanancia} ${pagoRpModo === "dia" ? "días" : "comisiones"} · ${desglosePorEstado(resumen.ganadoPorEstado)}`}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {resumen.reservas} reservas, {resumen.entraron} entraron
                       </p>
                     </div>
-                  )}
-                </>
-              ) : (
-                <div className="flex flex-col gap-1">
-                  <p className="text-sm font-medium">Pago por día esta semana</p>
-                  {pagosDiaSemana.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      Sin días pagados esta semana todavía.
-                    </p>
-                  ) : (
-                    <>
+                  ))}
+
+                  {pagoRpModo === "reserva" &&
+                    comisionDesbloqueoReservas !== null &&
+                    comisionDesbloqueoReservas > 0 && (
+                      <div className="flex flex-col gap-1 border-t border-border pt-3">
+                        <p className="text-sm font-medium">
+                          Desbloqueo de comisión semanal
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {resumenes.semana.entraron >= comisionDesbloqueoReservas
+                            ? `Llevas ${resumenes.semana.entraron} de ${comisionDesbloqueoReservas} reservas con entrada esta semana. Comisión desbloqueada.`
+                            : `Llevas ${resumenes.semana.entraron} de ${comisionDesbloqueoReservas} reservas con entrada; te faltan ${comisionDesbloqueoReservas - resumenes.semana.entraron} para desbloquear comisión.`}
+                        </p>
+                      </div>
+                    )}
+
+                  {pagoRpModo === "dia" && pagosDiaSemana.length > 0 && (
+                    <div className="flex flex-col gap-1 border-t border-border pt-3">
+                      <p className="text-sm font-medium">Días de esta semana</p>
                       <ul className="flex flex-col gap-1 text-sm text-muted-foreground">
                         {pagosDiaSemana.map((p) => (
                           <li
@@ -525,24 +617,18 @@ export default function RpPanelPage() {
                             className="flex items-center justify-between"
                           >
                             <span>
-                              {p.fecha} (día {p.posicion})
+                              {formatFechaConDia(p.fecha)} (día {p.posicion})
                             </span>
-                            <span>
-                              ${p.monto.toLocaleString("en-US")} ·{" "}
+                            <span className="tabular-nums">
+                              {formatearPesos(Number(p.monto))} ·{" "}
                               {COMISION_STATUS_LABEL[p.status] ?? p.status}
                             </span>
                           </li>
                         ))}
                       </ul>
-                      <p className="mt-1 text-sm font-medium">
-                        Total: $
-                        {pagosDiaSemana
-                          .reduce((sum, p) => sum + Number(p.monto), 0)
-                          .toLocaleString("en-US")}
-                      </p>
-                    </>
+                    </div>
                   )}
-                </div>
+                </>
               )}
             </CardContent>
           </Card>
@@ -560,11 +646,16 @@ export default function RpPanelPage() {
                 ) : (
                   <>
                     <div className="flex flex-col gap-1">
-                      <p className="text-sm font-medium">Esta semana</p>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="text-sm font-medium">Esta semana</p>
+                        <p className="text-xs text-muted-foreground">
+                          {etiquetaRango(periodos.semana)}
+                        </p>
+                      </div>
                       <p className="text-sm text-muted-foreground">
-                        {statsSemana.total} reservas — {statsSemana.usada}{" "}
-                        asistieron, {statsSemana.pendienteOConfirmada} sin
-                        llegar aún
+                        {resumenes.semana.reservas} reservas —{" "}
+                        {resumenes.semana.entraron} entraron,{" "}
+                        {resumenes.semana.sinEntrar} sin entrar
                       </p>
                       {reservasSemanaDetalle.length > 0 && (
                         <ul className="mt-1 flex flex-col gap-1 text-xs text-muted-foreground">
@@ -573,14 +664,14 @@ export default function RpPanelPage() {
                               key={r.id}
                               className="flex items-center justify-between gap-2"
                             >
-                              <span>
-                                {r.cliente_nombre} · {r.fecha}
+                              <span className="min-w-0 truncate">
+                                {r.cliente_nombre} · {formatFechaConDia(r.fecha)}
                               </span>
                               <span
                                 className={
                                   r.status === "usada"
-                                    ? "font-medium text-status-ok"
-                                    : ""
+                                    ? "shrink-0 font-medium text-status-ok"
+                                    : "shrink-0"
                                 }
                               >
                                 {RESERVA_STATUS_LABEL[r.status] ?? r.status}
@@ -592,11 +683,19 @@ export default function RpPanelPage() {
                     </div>
 
                     <div className="flex flex-col gap-1 border-t border-border pt-3">
+                      <p className="text-sm font-medium">Semana anterior</p>
+                      <p className="text-sm text-muted-foreground">
+                        {resumenes.anterior.reservas} reservas —{" "}
+                        {resumenes.anterior.entraron} entraron
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-1 border-t border-border pt-3">
                       <p className="text-sm font-medium">Este mes</p>
                       <p className="text-sm text-muted-foreground">
-                        {statsMes.total} reservas — {statsMes.usada}{" "}
-                        asistieron, {statsMes.pendienteOConfirmada} sin
-                        llegar aún
+                        {resumenes.mes.reservas} reservas —{" "}
+                        {resumenes.mes.entraron} entraron,{" "}
+                        {resumenes.mes.sinEntrar} sin entrar
                       </p>
                     </div>
                   </>

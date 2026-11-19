@@ -26,7 +26,6 @@ export default function DuenoSignupPage() {
   const [clubNombre, setClubNombre] = useState("");
   const [clubDireccion, setClubDireccion] = useState("");
   const [clubHorario, setClubHorario] = useState("");
-  const [clubDeposito, setClubDeposito] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,8 +43,7 @@ export default function DuenoSignupPage() {
       !password ||
       !clubNombre.trim() ||
       !clubDireccion.trim() ||
-      !clubHorario.trim() ||
-      !clubDeposito
+      !clubHorario.trim()
     ) {
       setError("Por favor completa todos los campos.");
       return;
@@ -54,11 +52,6 @@ export default function DuenoSignupPage() {
       setError(
         `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`,
       );
-      return;
-    }
-    const depositoNum = Number(clubDeposito);
-    if (!Number.isFinite(depositoNum) || depositoNum < 0) {
-      setError("El depósito debe ser un número válido.");
       return;
     }
 
@@ -95,7 +88,6 @@ export default function DuenoSignupPage() {
         nombre: clubNombre.trim(),
         direccion: clubDireccion.trim(),
         horario: clubHorario.trim(),
-        deposito_monto: depositoNum,
         dueno_id: signUpData.user.id,
         suscripcion_activa: false,
       });
@@ -213,17 +205,6 @@ export default function DuenoSignupPage() {
                     value={clubHorario}
                     onChange={(e) => setClubHorario(e.target.value)}
                     placeholder="ej. 10pm - 4am"
-                    required
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="club_deposito">Depósito ($)</Label>
-                  <Input
-                    id="club_deposito"
-                    type="number"
-                    min={0}
-                    value={clubDeposito}
-                    onChange={(e) => setClubDeposito(e.target.value)}
                     required
                   />
                 </div>

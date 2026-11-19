@@ -230,6 +230,11 @@ Decidido con el socio. **Nada de esto está implementado como cobro real todaví
   ("YYYY-MM-DD"), `semanaMexico()` (lunes 00:00:00.000 a domingo
   23:59:59.999) y `mesMexico()`. No escribir otra versión de "hoy" o de la
   semana en una página: usar estas.
+- **Noche operativa**: de 00:00 a 07:59 sigue siendo la noche anterior
+  (`nocheOperativaMexico()`, `semanaOperativa(ahora, semanasAtras)`,
+  `mesOperativo()`, que devuelven fechas "YYYY-MM-DD"). El rendimiento y la
+  nómina del RP (`/rp/panel`, `lib/rp-rendimiento.ts`) cuentan por la noche
+  de la reserva (`reservations.fecha`), no por `created_at`.
 - Convención de día de semana en todo el código: domingo=0 … sábado=6.
 
 ### Turnos y asistencia de RP
@@ -434,21 +439,31 @@ horario, ambiente y depósito ($100) y se borraron lat/lng. Respaldo de su
 fila y fotos anteriores en `backups/2026-11-12-six-gdl-antes-de-club-demo.json`.
 Lo que conserva de SIX GDL:
 - Sus **3 fotos siguen siendo las de SIX GDL** (y su `storage_path` dice "SIX
-  GDL"). Faltan fotos propias: cuando existan en `demo-assets/club-demo/`, se
-  reemplazan.
-- Su dueño (diegogv), el gerente lolo, los RPs SIXRP, John, Juanito y pedro
-  (4 correos `@six.com`), sus 29 mesas, sus 439 turnos y sus 13 reservas
-  anteriores.
+  GDL"). Faltan fotos propias: medidas y pasos en
+  `demo-assets/club-demo/LEEME.md` (carpeta solo local).
+- Su dueño (diegogv), el gerente lolo, los RPs "RP Demo", John, Juanito y
+  pedro, sus 29 mesas y sus turnos. El 17/11/2026 se borraron sus 13 reservas
+  viejas y los correos `@six.com` pasaron a `*.demo@example.com` (respaldo
+  en `backups/2026-11-17-club-demo-restos-six.json`).
 
-Datos `demo_` de Club Demo (para borrarlos juntos cuando haga falta):
-- RPs ficticios: `demo_mariana@example.com` (Mariana Ruiz, turno fijo jue-sáb
-  indefinido y comisión individual de $150 fija), `demo_andres@example.com`
-  (Andrés Solís) y `demo_valeria@example.com` (Valeria Cantú), ambos con turno
-  suelto el 12/11/2026. Contraseña en
+Datos demo de Club Demo: **los genera `scripts/demo-datos.mjs`**, que se
+puede volver a correr cuando haga falta.
+- Uso: `node scripts/demo-datos.mjs --fecha=2026-11-25` (simula) y luego con
+  `--si` (escribe). Borra primero solo lo demo de Club Demo: reservas con
+  teléfono `0000000…` y sin `cliente_id` (con sus consumos y comisiones), y
+  turnos, asistencias y comisiones individuales de las cuentas `demo_*` del
+  club. Nunca borra cuentas.
+- Genera la noche objetivo (40 reservas, 27 con entrada, mesa y consumo; 13
+  sin entrar para escanear en vivo) y las noches jueves–sábado de la semana
+  anterior. Usa la noche operativa (corte 08:00, hora de la Ciudad de México).
+- RPs: `demo_mariana` ($150 fijo), `demo_diego` (10 %), `demo_valeria`
+  ($200 fijo), `demo_luis` (8 %) y `demo_fernanda` ($150 fijo), con turno fijo
+  mié–sáb. `demo_andres` existe pero sin datos. Contraseña en
   `backups/2026-11-12-club-demo-credenciales.json` (solo local).
-- 6 reservas del 12/11/2026 con teléfonos `0000000001` a `0000000006`:
-  pendiente, confirmada, usada sin mesa, usada con mesa 3, usada con mesa 5 +
-  consumo de $2,400 + comisión de RP de $150 (pendiente), y pendiente de RP.
+- Corrida actual (19/11/2026, objetivo miércoles 25/11): jueves 19 (28/18),
+  viernes 20 (31/21), sábado 21 (28/19) y miércoles 25 (40/27) — reservas/con
+  entrada. Ojo: las noches futuras ya traen consumos (es a propósito para la
+  demo).
 
 El Vaquero tiene 3 fotos que son **copias de las fotos reales de SIX GDL**,
 puestas a propósito para evaluar la galería. No son fotos reales de ese antro.

@@ -1,0 +1,13 @@
+# Lo que NO se sube a Vercel con "npx vercel --prod" (no depender de que el CLI aplique .gitignore).
+# Datos personales e imágenes de terceros: nunca salen de esta máquina.
+backups/
+demo-assets/
+.env*
+!.env.local.example
+# Material local que la app no necesita para compilar.
+docs/
+sql/
+scripts/
+screenshots-*/
+REPORTE-*.md
+.claude/

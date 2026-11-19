@@ -34,7 +34,6 @@ export default function DuenoPanelPage() {
   const [clubNombre, setClubNombre] = useState("");
   const [clubDireccion, setClubDireccion] = useState("");
   const [clubHorario, setClubHorario] = useState("");
-  const [clubDeposito, setClubDeposito] = useState("");
   const [clubLat, setClubLat] = useState("");
   const [clubLng, setClubLng] = useState("");
   const [clubAmbiente, setClubAmbiente] = useState("");
@@ -129,7 +128,6 @@ export default function DuenoPanelPage() {
       setClubNombre(loadedClub.nombre);
       setClubDireccion(loadedClub.direccion);
       setClubHorario(loadedClub.horario);
-      setClubDeposito(String(loadedClub.deposito_monto));
       setClubLat(loadedClub.lat !== null ? String(loadedClub.lat) : "");
       setClubLng(loadedClub.lng !== null ? String(loadedClub.lng) : "");
       setClubAmbiente(loadedClub.ambiente ?? "");
@@ -220,18 +218,8 @@ export default function DuenoPanelPage() {
     setClubSaved(false);
 
     if (!club) return;
-    if (
-      !clubNombre.trim() ||
-      !clubDireccion.trim() ||
-      !clubHorario.trim() ||
-      !clubDeposito
-    ) {
-      setClubError("Completa todos los campos.");
-      return;
-    }
-    const depositoNum = Number(clubDeposito);
-    if (!Number.isFinite(depositoNum) || depositoNum < 0) {
-      setClubError("El depósito debe ser un número válido.");
+    if (!clubNombre.trim() || !clubDireccion.trim() || !clubHorario.trim()) {
+      setClubError("Completa nombre, dirección y horario.");
       return;
     }
 
@@ -275,7 +263,6 @@ export default function DuenoPanelPage() {
           nombre: clubNombre.trim(),
           direccion: clubDireccion.trim(),
           horario: clubHorario.trim(),
-          deposito_monto: depositoNum,
           lat: latNum,
           lng: lngNum,
           ambiente: clubAmbiente.trim() || null,
@@ -615,17 +602,6 @@ export default function DuenoPanelPage() {
                     id="club_horario"
                     value={clubHorario}
                     onChange={(e) => setClubHorario(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="club_deposito">Depósito ($)</Label>
-                  <Input
-                    id="club_deposito"
-                    type="number"
-                    min={0}
-                    value={clubDeposito}
-                    onChange={(e) => setClubDeposito(e.target.value)}
                     required
                   />
                 </div>

@@ -112,6 +112,45 @@ export function semanaMexico(ahora: Date = new Date()): RangoFechas {
   };
 }
 
+// Hora (Ciudad de México) en que termina la noche de operación. Lo que pasa
+// entre la medianoche y las 07:59 sigue siendo de la noche anterior.
+export const CORTE_NOCHE_HORA = 8;
+
+// Noche de operación en curso, como "YYYY-MM-DD": hoy, salvo de 00:00 a
+// 07:59, que todavía es la noche de ayer. México no tiene horario de verano
+// desde 2022, así que restar 8 horas al instante equivale a restarlas al
+// reloj de pared.
+export function nocheOperativaMexico(ahora: Date = new Date()): string {
+  return hoyMexico(new Date(ahora.getTime() - CORTE_NOCHE_HORA * 3_600_000));
+}
+
+export interface RangoNoches {
+  // Fechas de calendario "YYYY-MM-DD", inclusivas, para comparar contra
+  // columnas de tipo date (por ejemplo reservations.fecha).
+  desde: string;
+  hasta: string;
+}
+
+// Semana de operación (lunes a domingo) que contiene la noche en curso.
+// `semanasAtras` = 1 da la semana anterior.
+export function semanaOperativa(
+  ahora: Date = new Date(),
+  semanasAtras = 0,
+): RangoNoches {
+  const noche = nocheOperativaMexico(ahora);
+  const dia = diaSemanaISO(noche);
+  const lunes = sumarDiasISO(noche, (dia === 0 ? -6 : 1 - dia) - 7 * semanasAtras);
+  return { desde: lunes, hasta: sumarDiasISO(lunes, 6) };
+}
+
+// Mes de la noche en curso: del día 1 al último día, como fechas de
+// calendario.
+export function mesOperativo(ahora: Date = new Date()): RangoNoches {
+  const { anio, mes } = desdeISO(nocheOperativaMexico(ahora));
+  const siguiente = mes === 12 ? aISO(anio + 1, 1, 1) : aISO(anio, mes + 1, 1);
+  return { desde: aISO(anio, mes, 1), hasta: sumarDiasISO(siguiente, -1) };
+}
+
 // Mes en curso: día 1 00:00:00.000 al último día 23:59:59.999, hora de la
 // Ciudad de México.
 export function mesMexico(ahora: Date = new Date()): RangoFechas {
@@ -125,4 +164,27 @@ export function mesMexico(ahora: Date = new Date()): RangoFechas {
     inicio: instanteEnMexico(primero, 0, 0, 0, 0),
     fin: instanteEnMexico(ultimo, 23, 59, 59, 999),
   };
+}
+
+const formatoNoche = new Intl.DateTimeFormat("es-MX", {
+  timeZone: "UTC",
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+});
+
+// "2026-11-25" -> "mié 25 nov". La fecha es de calendario, así que se
+// formatea en UTC para que la zona del dispositivo no la mueva de día.
+export function etiquetaNoche(fechaISO: string): string {
+  const { anio, mes, dia } = desdeISO(fechaISO);
+  const partes: Record<string, string> = {};
+  for (const p of formatoNoche.formatToParts(new Date(Date.UTC(anio, mes - 1, dia)))) {
+    partes[p.type] = p.value.replace(/\./g, "");
+  }
+  return `${partes.weekday} ${partes.day} ${partes.month}`;
+}
+
+// "lun 23 nov – dom 29 nov"
+export function etiquetaRango(rango: RangoNoches): string {
+  return `${etiquetaNoche(rango.desde)} – ${etiquetaNoche(rango.hasta)}`;
 }
