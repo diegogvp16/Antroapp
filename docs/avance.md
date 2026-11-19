@@ -105,3 +105,34 @@ lo visible está en el bloque 3.
 3. `dev_dueno`: Panel → "Cover en la puerta" → Monto → guardar; luego
    `dev_cliente` ve "Cover $..." en el listado.
 4. Para repetir la prueba con datos frescos: `node scripts/dev/sembrar-dev.mjs`.
+
+## Bloque 4 · Nómina semanal y panel de grupo — ✅ terminado (commit `a33b82d`)
+
+**Qué quedó**
+- Nómina por la noche de la reserva (semana lunes a domingo) con estados
+  **pendiente → en revisión → validada → pagada**, y **anulada** con motivo
+  (lo anulado no se borra y no suma). Las transiciones las valida la base;
+  solo gerente, dueño o admin las hacen; queda quién, cuándo y bitácora.
+- `/staff/nomina` (gerente) y `/dueno/nomina`: selector de semana, totales
+  por estado, una tarjeta por RP con sus botones, anular con motivo,
+  **Exportar CSV**. El staff ve "Solo el gerente ve la nómina".
+- `/grupo`: panel de solo lectura con totales del grupo (reservas, % de
+  entrada, consumo de la caja, ticket promedio, comisiones, noches cerradas)
+  y cada antro por ciudad, en su propia hora. El dueño de grupo ve todos sus
+  antros; el gerente solo el suyo ("Resumen de tu antro"); staff, RP y
+  cliente no.
+- Dev ahora tiene un segundo antro en Tijuana, un grupo (dueña: `dev_dueno`)
+  y 8 noches de historia por antro.
+- Pruebas: `probar-caja` 167/167 (incluye estados de nómina y grupo),
+  `probar-clubs-visibilidad --env=.env.dev` 68/68. Recorrido con Playwright
+  (gerente, dueño, staff, RP) sin errores de consola ni de red.
+
+**Qué falló**: nada pendiente. No hubo que recortar alcance.
+
+**Qué debe probar Diego a mano** (vista previa, usuarios `dev_*`):
+1. `dev_gerente`: Panel → "Nómina" → en la semana en curso, "Enviar a
+   revisión" → "Validar" → "Marcar pagada" en RP Dev; prueba "Anular" (pide
+   motivo) y "Exportar CSV". Luego "Resumen de mi antro" (solo su antro).
+2. `dev_dueno`: Panel → "Resumen y grupo": deben salir Guadalajara y Tijuana.
+3. `dev_staff`: no le aparecen "Nómina" ni "Resumen de mi antro".
+4. `dev_rp`: pestaña Nómina con los montos por estado.
