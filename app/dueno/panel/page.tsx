@@ -3,7 +3,7 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { Club, ClubPhoto, ClubTable, Profile } from "@/types";
+import { formatearFechaLarga } from "@/lib/fechas";
+import { ordenarMesas } from "@/lib/mesas";
+
+// Mesas visibles antes de "Ver todas": la lista completa puede tener decenas.
+const MESAS_VISIBLES = 12;
 
 const SELECT_CLASSES =
   "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30";
@@ -69,8 +74,7 @@ export default function DuenoPanelPage() {
   const [tableError, setTableError] = useState<string | null>(null);
   const [deletingTableId, setDeletingTableId] = useState<string | null>(null);
 
-  const [bonoTipo, setBonoTipo] = useState<"fijo" | "porcentaje">("fijo");
-  const [bonoMonto, setBonoMonto] = useState("");
+  const [verTodasLasMesas, setVerTodasLasMesas] = useState(false);
 
   useEffect(() => {
     async function loadSession() {
@@ -136,8 +140,6 @@ export default function DuenoPanelPage() {
       setClubEdadMinima(
         loadedClub.edad_minima !== null ? String(loadedClub.edad_minima) : "",
       );
-      setBonoTipo(loadedClub.bono_organica_tipo);
-      setBonoMonto(String(loadedClub.bono_organica_monto));
       return loadedClub;
     } catch (err) {
       console.error("Error cargando club del dueño:", err);
@@ -189,7 +191,7 @@ export default function DuenoPanelPage() {
         .order("numero", { ascending: true });
 
       if (error) throw error;
-      setTables((data ?? []) as ClubTable[]);
+      setTables(ordenarMesas((data ?? []) as ClubTable[]));
     } catch (err) {
       console.error("Error cargando mesas:", err);
     }
@@ -534,10 +536,9 @@ export default function DuenoPanelPage() {
             <h2 className="text-lg font-semibold">Suscripción</h2>
             {club.suscripcion_activa ? (
               <Badge className="border-transparent bg-status-ok/12 text-status-ok">
-                Suscripción activa desde{" "}
                 {club.suscripcion_activada_en
-                  ? new Date(club.suscripcion_activada_en).toLocaleDateString()
-                  : ""}
+                  ? `Activa desde el ${formatearFechaLarga(club.suscripcion_activada_en)}`
+                  : "Suscripción activa"}
               </Badge>
             ) : (
               <Badge className="border-transparent bg-status-warn/12 text-status-warn">
@@ -791,8 +792,13 @@ export default function DuenoPanelPage() {
           <h2 className="text-lg font-semibold">Fotos de mi antro</h2>
           <Card>
             <CardContent className="flex flex-col gap-3 px-6 py-6">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="photos">Subir fotos</Label>
+              <div className="flex flex-col gap-2">
+                <p className="text-sm text-muted-foreground">
+                  JPG o WebP horizontales, de preferencia 1600 × 1200. La
+                  primera foto es la portada del listado.
+                </p>
+                {/* El input nativo dice "Choose Files" en inglés: se oculta y
+                    se usa una etiqueta con estilo de botón. */}
                 <input
                   id="photos"
                   type="file"
@@ -800,8 +806,19 @@ export default function DuenoPanelPage() {
                   multiple
                   onChange={handleUploadPhotos}
                   disabled={uploadingPhotos}
-                  className="text-sm"
+                  className="sr-only"
                 />
+                <label
+                  htmlFor="photos"
+                  className={buttonVariants({
+                    variant: "outline",
+                    className: uploadingPhotos
+                      ? "pointer-events-none w-fit opacity-50"
+                      : "w-fit cursor-pointer",
+                  })}
+                >
+                  Elegir fotos
+                </label>
               </div>
               {uploadingPhotos && (
                 <p className="text-sm text-muted-foreground">Subiendo...</p>
@@ -885,29 +902,50 @@ export default function DuenoPanelPage() {
 
           {tables.length > 0 && (
             <div className="flex flex-col gap-2">
-              {tables.map((table) => (
-                <Card key={table.id}>
-                  <CardContent className="flex items-center justify-between px-5 py-3 text-sm">
-                    <span className="font-medium">Mesa {table.numero}</span>
-                    <div className="flex items-center gap-3">
-                      <span className="text-muted-foreground">
-                        Capacidad: {table.capacidad}
+              <p className="text-sm text-muted-foreground">
+                {tables.length} mesas · capacidad total{" "}
+                {tables.reduce((suma, t) => suma + Number(t.capacidad), 0)}{" "}
+                personas
+              </p>
+              <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {(verTodasLasMesas ? tables : tables.slice(0, MESAS_VISIBLES)).map(
+                  (table) => (
+                    <li
+                      key={table.id}
+                      className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm"
+                    >
+                      <span className="min-w-0 truncate font-medium">
+                        {table.numero}
                       </span>
-                      <Button
+                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                        {table.capacidad} pers.
+                      </span>
+                      <button
                         type="button"
-                        variant="outline"
-                        size="sm"
                         onClick={() => handleDeleteTable(table)}
                         disabled={deletingTableId === table.id}
+                        aria-label={`Eliminar mesa ${table.numero}`}
+                        className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                       >
-                        {deletingTableId === table.id
-                          ? "Borrando..."
-                          : "Eliminar"}
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                        ×
+                      </button>
+                    </li>
+                  ),
+                )}
+              </ul>
+              {tables.length > MESAS_VISIBLES && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="w-fit"
+                  onClick={() => setVerTodasLasMesas((v) => !v)}
+                >
+                  {verTodasLasMesas
+                    ? "Ver menos"
+                    : `Ver todas (${tables.length})`}
+                </Button>
+              )}
             </div>
           )}
         </section>
@@ -922,18 +960,6 @@ export default function DuenoPanelPage() {
             }}
           />
 
-          <Card>
-            <CardContent className="px-6 py-4">
-              <p className="text-sm font-medium">Bono a la plataforma</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {bonoTipo === "fijo"
-                  ? `$${bonoMonto || 0} fijo`
-                  : `${bonoMonto || 0}% del consumo`}{" "}
-                por reserva orgánica válida — acordado con AntroApp, no
-                editable desde aquí.
-              </p>
-            </CardContent>
-          </Card>
         </section>
       </div>
     </div>

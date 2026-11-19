@@ -188,3 +188,15 @@ export function etiquetaNoche(fechaISO: string): string {
 export function etiquetaRango(rango: RangoNoches): string {
   return `${etiquetaNoche(rango.desde)} – ${etiquetaNoche(rango.hasta)}`;
 }
+
+const formatoFechaLarga = new Intl.DateTimeFormat("es-MX", {
+  timeZone: ZONA_OPERACION,
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+
+// Instante (ISO o Date) -> "12 de noviembre de 2026", en hora de México.
+export function formatearFechaLarga(instante: string | Date): string {
+  return formatoFechaLarga.format(new Date(instante));
+}

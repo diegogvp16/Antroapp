@@ -41,9 +41,11 @@ Notas importantes:
   hablan con Supabase desde el navegador con la *anon key*. La seguridad
   depende por completo de RLS y de los triggers de la base (sección 7).
 - **Deploy manual**: `npx vercel --prod --scope antroapp`. Sin `--scope`
-  responde "Not authorized". El auto-deploy desde GitHub **está roto**: los
-  pushes a `master` llegan al repo pero no generan build. Pendiente revisar
-  la conexión Git en el dashboard de Vercel.
+  responde "Not authorized". El auto-deploy desde GitHub **no existe**: el
+  proyecto de Vercel no está conectado a ningún repositorio (verificado el
+  19/11/2026; `vercel git connect` falla porque la app de Vercel en GitHub no
+  tiene acceso a `diegogvp16/Antroapp`). Lo que se sube con el CLI lo filtra
+  `.vercelignore` (`backups/`, `demo-assets/`, `docs/`, `sql/`, capturas).
 - Rutas de servidor (usan la *service role key*, y antes verifican quién
   llama por la cookie de sesión):
   - `app/api/admin/create-staff/route.ts`
@@ -341,7 +343,7 @@ Ordenada por gravedad. Verificado contra producción el 11/11/2026.
 
 ### 🟡 Medios
 
-4. **Auto-deploy de Vercel roto.** Deploy manual con
+4. **Auto-deploy de Vercel sin conectar** (ver sección 2). Deploy manual con
    `npx vercel --prod --scope antroapp` mientras tanto.
 5. **`/dueno/signup` no es transaccional**: crea el perfil y luego el club en
    dos pasos. Si falla el segundo, queda un dueño sin antro que ve "Antro no
@@ -441,8 +443,11 @@ Lo que conserva de SIX GDL:
 - Sus **3 fotos siguen siendo las de SIX GDL** (y su `storage_path` dice "SIX
   GDL"). Faltan fotos propias: medidas y pasos en
   `demo-assets/club-demo/LEEME.md` (carpeta solo local).
-- Su dueño (diegogv), el gerente lolo, los RPs "RP Demo", John, Juanito y
-  pedro, sus 29 mesas y sus turnos. El 17/11/2026 se borraron sus 13 reservas
+- Su dueño (diegogv), la gerente "Lorena Olvera" (`lolo.demo@example.com`),
+  los RPs "Carlos Méndez" (`jj.demo`), "Jimena Rosas" (`juan.demo`), "Pablo
+  Treviño" (`pedro.demo`) —renombrados el 19/11/2026, respaldo en
+  `backups/2026-11-19-renombres-personal-club-demo.json`— y "RP Demo", que es
+  una cuenta Gmail real de Diego (no se toca); sus 29 mesas y sus turnos. El 17/11/2026 se borraron sus 13 reservas
   viejas y los correos `@six.com` pasaron a `*.demo@example.com` (respaldo
   en `backups/2026-11-17-club-demo-restos-six.json`).
 

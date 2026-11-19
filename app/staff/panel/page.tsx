@@ -24,6 +24,7 @@ import {
   type TurnoRow,
 } from "@/lib/turnos";
 import { hoyMexico, semanaMexico } from "@/lib/fechas";
+import { ordenarMesas } from "@/lib/mesas";
 import type {
   Club,
   ClubTable,
@@ -319,7 +320,7 @@ export default function StaffPanelPage() {
           .order("numero", { ascending: true });
 
         if (error) throw error;
-        setTables((data ?? []) as ClubTable[]);
+        setTables(ordenarMesas((data ?? []) as ClubTable[]));
       } catch (err) {
         console.error("Error cargando mesas:", err);
       }
