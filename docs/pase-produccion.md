@@ -48,7 +48,7 @@
 | 5 | `sql/2026-11-20-estabilidad.sql` | REVERSIBLE | 2 min |
 | 6 | `sql/2026-11-20-nomina-y-grupo.sql` | REVERSIBLE | 2 min |
 | 7 | `sql/2026-11-21-rp-panel.sql` y `sql/2026-11-21-caja-permisos.sql` | REVERSIBLE | 2 min |
-| 7b | **Solo si `noche2` ya se integró a `desarrollo`**: `sql/2026-11-21-caja-idempotencia.sql` | REVERSIBLE | 2 min |
+| 7b | **Solo si `noche2` ya se integró a `desarrollo`**: `sql/2026-11-21-caja-idempotencia.sql` y `sql/2026-11-21-grupo-conversion.sql` | REVERSIBLE | 2 min |
 | 8 | Merge `desarrollo` → `master` (auto-deploy) | REVERSIBLE (redeploy anterior) | 10 min |
 | 9 | `sql/2026-11-20-caja-candado-puerta.sql` | REVERSIBLE | 2 min |
 | 10 | Recorrido de los 6 roles en producción | — | 30 min |
@@ -232,6 +232,16 @@ protección (llama como antes).
 - **Rollback**: `sql/2026-11-21-caja-idempotencia-rollback.sql` (va antes del
   rollback del paso 7 en la cadena inversa). Probado en dev: deja el esquema
   idéntico.
+
+Junto con él, `sql/2026-11-21-grupo-conversion.sql`: `grupo_resumen` con
+conversión, reservas por venir y consumo con reserva, y
+`grupo_rendimiento_rp` (detalle en `docs/numeros-dashboards.md`). Si falta,
+`/grupo` sigue funcionando sin esas cifras.
+
+- **Verificar**: `select proname from pg_proc where proname = 'grupo_rendimiento_rp';` (1).
+- **Rollback**: `sql/2026-11-21-grupo-conversion-rollback.sql` (esquema idéntico, probado en dev).
+
+La rama `fase2` (inventario y propinas, `sql/fase2/`) **no** forma parte del pase.
 
 ## 8. Merge a `master` (publica el código)
 
