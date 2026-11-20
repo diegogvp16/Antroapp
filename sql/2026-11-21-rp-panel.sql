@@ -176,7 +176,7 @@ begin
     from public.clubs c where c.id = v_club;
   end if;
 
-  if v_modo is distinct from 'reserva' or coalesce(v_n, 0) <= 0 then
+  if v_modo is distinct from 'reserva' or coalesce(v_n, 0) <= 1 then  -- con 1, la primera ya paga: no hay cuota
     return jsonb_build_object('tiene_cuota', false);
   end if;
 
