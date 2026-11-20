@@ -17,6 +17,14 @@
   --color-noche-vino: var(--noche-vino);
   --color-noche-text: var(--noche-text);
   --color-noche-muted: var(--noche-muted);
+  --color-caja-fondo: var(--caja-fondo);
+  --color-caja-superficie: var(--caja-superficie);
+  --color-caja-borde: var(--caja-borde);
+  --color-caja-dorado: var(--caja-dorado);
+  --color-caja-texto: var(--caja-texto);
+  --color-caja-secundario: var(--caja-secundario);
+  --color-caja-ok: var(--caja-ok);
+  --color-caja-aviso: var(--caja-aviso);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -293,4 +301,54 @@ body:has(.theme-noche) {
   html {
     @apply font-sans;
   }
+}
+/*
+ * Tema "caja" (operación de la noche, /staff/caja): oscuro para no deslumbrar
+ * en el antro. Fondo #0C0B0A, superficies #12100E, bordes #25211D, dorado
+ * #D4AF5A solo para lo abierto y la acción principal, texto #F4EFE6,
+ * secundario #A39B8F, ok #8FD1A4, aviso #E3BE6A. Solo Inter, sin sombras ni
+ * degradados. Re-mapea los tokens de shadcn para que Button/Input/Badge se
+ * restilicen solos dentro de .theme-caja.
+ */
+:root {
+  --caja-fondo: #0c0b0a;
+  --caja-superficie: #12100e;
+  --caja-borde: #25211d;
+  --caja-dorado: #d4af5a;
+  --caja-texto: #f4efe6;
+  --caja-secundario: #a39b8f;
+  --caja-ok: #8fd1a4;
+  --caja-aviso: #e3be6a;
+}
+
+.theme-caja {
+  --background: var(--caja-fondo);
+  --foreground: var(--caja-texto);
+  --card: var(--caja-superficie);
+  --card-foreground: var(--caja-texto);
+  --popover: var(--caja-superficie);
+  --popover-foreground: var(--caja-texto);
+  --primary: var(--caja-dorado);
+  --primary-foreground: #14110b;
+  --secondary: #1a1714;
+  --secondary-foreground: var(--caja-texto);
+  --muted: #1a1714;
+  --muted-foreground: var(--caja-secundario);
+  --accent: #1a1714;
+  --accent-foreground: var(--caja-texto);
+  --destructive: #e58a7a;
+  --border: var(--caja-borde);
+  --input: #34302a;
+  --ring: var(--caja-dorado);
+  --status-ok: var(--caja-ok);
+  --status-warn: var(--caja-aviso);
+  --radius: 0.5rem;
+  background-color: var(--caja-fondo);
+  color: var(--caja-texto);
+  color-scheme: dark;
+}
+
+/* Gana a body:has(.theme-control): la caja vive dentro de /staff. */
+body:has(.theme-caja) {
+  background-color: var(--caja-fondo);
 }

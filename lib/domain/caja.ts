@@ -370,3 +370,161 @@ export interface DatosCaja {
   // Nombres de perfiles (RPs y personal) por id.
   nombres: Record<string, string>;
 }
+
+// ---------------------------------------------------------------------------
+// Rediseño de la caja (mapa y detalle). La interfaz no muestra cuentas por
+// persona, pero la base sigue guardando cada consumo en una cuenta (la
+// comisión de cada RP sale de su cuenta): aquí se resume todo por mesa.
+// ---------------------------------------------------------------------------
+
+// "4" -> "Mesa 4"; "VIP 1" se queda igual.
+export function nombreMesa(numero: string): string {
+  return /^\d+$/.test(numero.trim()) ? `Mesa ${numero.trim()}` : numero.trim();
+}
+
+// Renglón de consumo. No hay catálogo de productos: el consumo se guarda
+// como concepto libre + monto total. Para mostrar "2 × Cerveza · $90" el
+// concepto se escribe "2 × Cerveza" y el monto es el total del renglón.
+export interface Renglon {
+  cantidad: number;
+  producto: string;
+  unitario: number; // centavos
+  total: number; // centavos
+}
+
+const PATRON_CANTIDAD = /^(\d{1,3})\s*[×x]\s*(.+)$/u;
+
+export function leerRenglon(concepto: string | null, totalCentavos: number): Renglon {
+  const texto = (concepto ?? "").trim();
+  const m = texto.match(PATRON_CANTIDAD);
+  if (m) {
+    const cantidad = Number(m[1]);
+    if (cantidad >= 1 && totalCentavos % cantidad === 0) {
+      return { cantidad, producto: m[2].trim(), unitario: totalCentavos / cantidad, total: totalCentavos };
+    }
+  }
+  return { cantidad: 1, producto: texto || "Consumo", unitario: totalCentavos, total: totalCentavos };
+}
+
+// Concepto a guardar para un renglón (máximo 120 caracteres, como la base).
+export function armarConcepto(cantidad: number, producto: string): string {
+  const p = producto.trim().replace(/\s+/g, " ");
+  return (cantidad > 1 ? `${cantidad} × ${p}` : p).slice(0, 120);
+}
+
+export interface ProductoReciente {
+  producto: string;
+  unitario: number; // centavos
+  veces: number;
+}
+
+// Productos ya registrados esta noche (para agregarlos con −/+ sin volver a
+// escribir el precio). Sale de los consumos vigentes, no de un catálogo.
+export function productosDeLaNoche(consumos: CajaConsumo[], limite = 12): ProductoReciente[] {
+  const mapa = new Map<string, ProductoReciente>();
+  for (const c of consumos) {
+    if (c.anulado || !c.concepto) continue;
+    const r = leerRenglon(c.concepto, c.monto_centavos);
+    if (r.producto === "Consumo") continue;
+    const clave = `${r.producto.toLowerCase()}|${r.unitario}`;
+    const previo = mapa.get(clave);
+    mapa.set(clave, { producto: r.producto, unitario: r.unitario, veces: (previo?.veces ?? 0) + r.cantidad });
+  }
+  return [...mapa.values()].sort((a, b) => b.veces - a.veces || a.producto.localeCompare(b.producto, "es")).slice(0, limite);
+}
+
+export type EstadoTarjeta = "libre" | "abierta" | "por_cuadrar" | "cuadrada";
+
+export interface ResumenMesa {
+  mesa: MesaCaja;
+  estado: EstadoTarjeta;
+  // Grupo que se muestra: el abierto, o el cerrado por cuadrar, o el último cuadrado.
+  sesion: MesaSesion | null;
+  // Grupos ya cuadrados antes del actual esta noche (de más viejo a más nuevo).
+  anteriores: MesaSesion[];
+  grupos: number;
+  cuentas: MesaCuenta[];
+  cliente: string | null;
+  otrosClientes: number;
+  personas: number;
+  rps: string[];
+  consumo: number;
+  cobrado: number;
+  saldo: number;
+  // Consumo de la mesa en toda la noche (todos sus grupos).
+  consumoNoche: number;
+}
+
+export function resumirMesa(mesa: MesaCaja, datos: DatosCaja): ResumenMesa {
+  const sesiones = datos.sesiones
+    .filter((s) => s.mesa_id === mesa.id)
+    .sort((a, b) => a.abierta_en.localeCompare(b.abierta_en));
+  const { sesion } = estadoMesa(sesiones);
+  const estado: EstadoTarjeta = !sesion
+    ? "libre"
+    : sesion.estado === "abierta"
+      ? "abierta"
+      : sesion.estado === "cerrada"
+        ? "por_cuadrar"
+        : "cuadrada";
+  const anteriores = sesion ? sesiones.filter((s) => s.id !== sesion.id && s.estado === "cuadrada") : [];
+  const cuentas = sesion ? datos.cuentas.filter((c) => c.sesion_id === sesion.id) : [];
+  const r = sesion ? resumenSesion(sesion.id, datos.consumos, datos.pagos) : { consumido: 0, cobrado: 0, saldo: 0 };
+  const idsSesiones = new Set(sesiones.map((s) => s.id));
+  const rps = [...new Set(cuentas.map((c) => c.rp_id).filter((x): x is string => !!x))].map(
+    (id) => datos.nombres[id] ?? "RP",
+  );
+  return {
+    mesa,
+    estado,
+    sesion,
+    anteriores,
+    grupos: sesiones.length,
+    cuentas,
+    cliente: cuentas[0]?.cliente_nombre ?? null,
+    otrosClientes: Math.max(0, cuentas.length - 1),
+    personas: cuentas.reduce((s, c) => s + (c.personas ?? 0), 0),
+    rps,
+    consumo: r.consumido,
+    cobrado: r.cobrado,
+    saldo: r.saldo,
+    consumoNoche: sumarVigentes(datos.consumos.filter((c) => idsSesiones.has(c.sesion_id))),
+  };
+}
+
+export type PestanaMapa = "todas" | "abiertas" | "por_cuadrar" | "libres";
+
+export const PESTANAS_MAPA: { id: PestanaMapa; etiqueta: string }[] = [
+  { id: "todas", etiqueta: "Todas" },
+  { id: "abiertas", etiqueta: "Abiertas" },
+  { id: "por_cuadrar", etiqueta: "Por cuadrar" },
+  { id: "libres", etiqueta: "Libres" },
+];
+
+export function enPestana(m: ResumenMesa, p: PestanaMapa): boolean {
+  if (p === "todas") return true;
+  if (p === "abiertas") return m.estado === "abierta";
+  if (p === "por_cuadrar") return m.estado === "por_cuadrar";
+  return m.estado === "libre";
+}
+
+const sinAcentos = (t: string) => t.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+
+// Búsqueda por mesa, cliente (de cualquier cuenta) o RP.
+export function coincideBusqueda(m: ResumenMesa, texto: string): boolean {
+  const q = sinAcentos(texto.trim());
+  if (!q) return true;
+  const campos = [m.mesa.numero, nombreMesa(m.mesa.numero), ...m.cuentas.map((c) => c.cliente_nombre), ...m.rps];
+  return campos.some((c) => sinAcentos(c).includes(q));
+}
+
+export interface TotalesNoche {
+  consumo: number;
+  cobrado: number;
+  porCobrar: number;
+}
+
+export function totalesNoche(datos: DatosCaja): TotalesNoche {
+  const r = resumen(datos.consumos, datos.pagos);
+  return { consumo: r.consumido, cobrado: r.cobrado, porCobrar: Math.max(0, r.saldo) };
+}

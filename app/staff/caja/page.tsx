@@ -4,17 +4,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { MensajeError, useAccion } from "@/components/caja/accion";
+import { RefreshCw } from "lucide-react";
 import { CuadreNoche } from "@/components/caja/cuadre-noche";
-import { MapaMesas } from "@/components/caja/mapa-mesas";
-import { MesaDetalle } from "@/components/caja/mesa-detalle";
+import { MapaNoche } from "@/components/caja/mapa-noche";
+import { DetalleMesa } from "@/components/caja/detalle-mesa";
 import { etiquetaNoche } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
 import { cn } from "@/lib/utils";
 import {
+  formatearCentavos,
+  resumirMesa,
+  totalesNoche,
   PERMISOS_CAJA,
   SIN_PERMISOS,
   type CajaConsumo,
@@ -168,8 +168,7 @@ export default function StaffCajaPage() {
   const [recargando, setRecargando] = useState(false);
   const [vista, setVista] = useState<Vista>("mesas");
   const [mesaId, setMesaId] = useState<string | null>(null);
-  const [abriendoId, setAbriendoId] = useState<string | null>(null);
-  const abrir = useAccion();
+  const [esGerente, setEsGerente] = useState(false);
   // Solo cuenta la respuesta de la última recarga (si se piden dos seguidas).
   const ultimaCarga = useRef(0);
 
@@ -199,6 +198,7 @@ export default function StaffCajaPage() {
         return;
       }
       const club = perfil.club_id as string;
+      setEsGerente(perfil.role === "gerente");
 
       const [clubRes, ...permisosRes] = await Promise.all([
         supabase.from("clubs").select("nombre").eq("id", club).maybeSingle(),
@@ -242,119 +242,82 @@ export default function StaffCajaPage() {
     recargar();
   }, [recargar]);
 
-  async function abrirMesa(id: string) {
-    setAbriendoId(id);
-    const ok = await abrir.ejecutar(
-      () => createClient().rpc("caja_abrir_mesa", { p_mesa_id: id }),
-      recargar,
-    );
-    setAbriendoId(null);
-    if (ok) setMesaId(id);
-  }
-
   const nocheCerrada = datos?.noche?.estado === "cerrada";
-  const mesa = datos && mesaId ? datos.mesas.find((m) => m.id === mesaId) : undefined;
+  const resumenes = datos ? datos.mesas.map((m) => resumirMesa(m, datos)) : [];
+  const actual = mesaId ? resumenes.find((r) => r.mesa.id === mesaId) : undefined;
+  const totales = datos ? totalesNoche(datos) : null;
 
   return (
-    <div className="flex flex-1 flex-col items-center px-4 py-6 sm:px-6 sm:py-10">
-      <div className="flex w-full max-w-2xl min-w-0 flex-col gap-5">
-        <Link
-          href="/staff/panel"
-          className="w-fit text-sm font-medium text-muted-foreground hover:text-foreground"
-        >
-          ← Panel
-        </Link>
-
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="break-words text-2xl font-semibold tracking-tight">
-              Caja{clubNombre ? ` · ${clubNombre}` : ""}
-            </h1>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <span>{fecha ? `Noche del ${etiquetaNoche(fecha)}` : "Noche en curso"}</span>
+    <div className="theme-caja flex flex-1 flex-col items-center px-4 pt-3 pb-4 font-sans">
+      <div className="flex w-full max-w-md min-w-0 flex-col gap-3">
+        {!actual && (
+          <header className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <Link href="/staff/panel" className="-ml-2 flex h-11 items-center px-2 text-sm text-caja-secundario hover:text-caja-texto">
+                ← Panel
+              </Link>
+              <span className="ml-auto text-sm text-caja-secundario">{clubNombre}</span>
+              <button
+                type="button"
+                onClick={recargar}
+                disabled={!clubId || recargando}
+                aria-label="Actualizar"
+                className="-mr-2 flex size-11 items-center justify-center rounded-md text-caja-secundario hover:text-caja-texto disabled:opacity-40"
+              >
+                <RefreshCw className={cn("size-4", recargando && "animate-spin")} />
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <h1 className="text-base font-semibold">{fecha ? `Noche del ${etiquetaNoche(fecha)}` : "Noche en curso"}</h1>
               {datos && (
-                <Badge variant={nocheCerrada ? "warn" : datos.noche ? "ok" : "neutral"}>
+                <span className={cn("text-xs", nocheCerrada ? "text-caja-aviso" : datos.noche ? "text-caja-ok" : "text-caja-secundario")}>
                   {nocheCerrada ? "Noche cerrada" : datos.noche ? "Noche abierta" : "Sin mesas abiertas"}
-                </Badge>
+                </span>
+              )}
+              {permisos.cerrar_noche && (
+                <button
+                  type="button"
+                  onClick={() => setVista(vista === "cuadre" ? "mesas" : "cuadre")}
+                  className="ml-auto h-11 rounded-md border border-caja-borde px-3 text-sm"
+                >
+                  {vista === "cuadre" ? "Ver mesas" : "Cuadre de la noche"}
+                </button>
               )}
             </div>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={recargar}
-            disabled={!clubId || recargando}
-          >
-            {recargando ? "Actualizando..." : "Actualizar"}
-          </Button>
-        </div>
-
-        {permisos.cerrar_noche && (
-          <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" role="tablist">
-            {(
-              [
-                ["mesas", "Mesas de la noche"],
-                ["cuadre", "Cuadre de la noche"],
-              ] as const
-            ).map(([v, etiqueta]) => (
-              <button
-                key={v}
-                type="button"
-                role="tab"
-                aria-selected={vista === v}
-                onClick={() => setVista(v)}
-                className={cn(
-                  "h-8 rounded-md text-sm font-medium text-muted-foreground",
-                  vista === v && "bg-background text-foreground shadow-sm",
-                )}
-              >
-                {etiqueta}
-              </button>
-            ))}
-          </div>
+            {totales && (
+              <dl className="grid grid-cols-3 gap-2 rounded-lg border border-caja-borde bg-caja-superficie px-3 py-2 text-xs">
+                <div><dt className="text-caja-secundario">Consumo</dt><dd className="text-sm font-medium tabular-nums">{formatearCentavos(totales.consumo)}</dd></div>
+                <div><dt className="text-caja-secundario">Cobrado</dt><dd className="text-sm font-medium tabular-nums">{formatearCentavos(totales.cobrado)}</dd></div>
+                <div><dt className="text-caja-secundario">Por cobrar</dt><dd className={cn("text-sm font-medium tabular-nums", totales.porCobrar > 0 && "text-caja-dorado")}>{formatearCentavos(totales.porCobrar)}</dd></div>
+              </dl>
+            )}
+          </header>
         )}
 
         {errorCarga && (
-          <Card size="sm">
-            <CardContent className="flex flex-col gap-2 px-4">
-              <p className="text-sm text-destructive" role="alert">
-                No pudimos cargar la caja. {errorCarga}
-              </p>
-              <Button type="button" variant="outline" size="sm" className="w-fit" onClick={recargar}>
-                Reintentar
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="flex flex-col gap-2 rounded-lg border border-caja-borde p-3">
+            <p className="text-sm text-destructive" role="alert">No pudimos cargar la caja. {errorCarga}</p>
+            <button type="button" onClick={recargar} className="h-11 w-fit rounded-md border border-caja-borde px-3 text-sm">Reintentar</button>
+          </div>
         )}
 
-        {vista === "mesas" && <MensajeError mensaje={abrir.error} />}
-
         {!datos ? (
-          !errorCarga && <p className="text-sm text-muted-foreground">Cargando la caja...</p>
-        ) : vista === "cuadre" && permisos.cerrar_noche ? (
+          !errorCarga && <p className="text-sm text-caja-secundario">Cargando la caja...</p>
+        ) : vista === "cuadre" && permisos.cerrar_noche && !actual ? (
           <CuadreNoche datos={datos} onCambio={recargar} />
-        ) : mesa ? (
-          <MesaDetalle
-            key={mesa.id}
-            mesa={mesa}
+        ) : actual ? (
+          <DetalleMesa
+            key={actual.mesa.id}
+            m={actual}
             datos={datos}
             permisos={permisos}
-            onCambio={recargar}
+            esGerente={esGerente}
+            nocheCerrada={nocheCerrada}
             onVolver={() => setMesaId(null)}
-            onAbrir={abrirMesa}
-            abriendo={abriendoId === mesa.id}
+            onCambio={recargar}
           />
         ) : (
-          <section className="flex flex-col gap-3">
-            <h2 className="text-lg font-semibold">Mesas de la noche</h2>
-            <MapaMesas
-              datos={datos}
-              puedeAbrir={permisos.abrir_mesa && !nocheCerrada}
-              abriendoId={abriendoId}
-              onSeleccionar={setMesaId}
-              onAbrir={abrirMesa}
-            />
-          </section>
+          <MapaNoche mesas={resumenes} onAbrirMesa={setMesaId} />
         )}
       </div>
     </div>

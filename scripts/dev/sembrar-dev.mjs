@@ -39,7 +39,9 @@ const hoyMx = (desfase = 0) => {
 
 // ---------- Limpieza de una siembra anterior ----------
 const { data: lista } = await svc.auth.admin.listUsers({ perPage: 1000 });
-const previos = (lista?.users ?? []).filter((u) => /^dev_[a-z0-9_]+@example\.com$/.test(u.email ?? ""));
+// dev_* y las demo_* de la noche demo (todas ficticias, solo dev): si
+// quedaran, su perfil seguiría ligado al antro y no se podría recrear.
+const previos = (lista?.users ?? []).filter((u) => /^(dev|demo)_[a-z0-9_]+@example\.com$/.test(u.email ?? ""));
 const clubs = [CLUB_DEMO_DEV, CLUB_BORRADOR_DEV, CLUB_SIN_DUENO, CLUB_TIJUANA_DEV];
 // La caja no se borra por la API (bloque 6B): se limpia con el permiso de pruebas.
 await limpiarCajaDev(clubs, GRUPO_DEV);

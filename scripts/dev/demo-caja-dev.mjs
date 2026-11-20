@@ -15,6 +15,25 @@
 import { randomUUID } from "node:crypto";
 import { conectarDevEscritura } from "../db/conexion.mjs";
 
+// Concepto realista para cada monto de la demo, con el formato que muestra la
+// caja ("N × producto"; el monto guardado es el total del renglón).
+const CONCEPTO_POR_MONTO = {
+  1200: "2 × Botella de vino tinto",
+  1650: "3 × Cubeta de cerveza",
+  1800: "1 × Botella de ron",
+  2200: "1 × Botella de vodka",
+  2400: "2 × Botella de mezcal",
+  2900: "1 × Botella de tequila reposado",
+  3200: "1 × Botella de tequila añejo",
+  3600: "1 × Botella de whisky 12 años",
+  4200: "2 × Botella de ginebra",
+  4800: "2 × Botella de tequila",
+  5500: "1 × Botella de champaña",
+  6400: "2 × Botella de whisky",
+  7800: "3 × Botella de tequila cristalino",
+};
+const conceptoDe = (pesos) => CONCEPTO_POR_MONTO[pesos] ?? "Consumo";
+
 export async function escribirCajaDev({ clubId, fechaObjetivo, reservas, consumos, reparto, rpIds, mesas, azar, entre }) {
   const db = await conectarDevEscritura();
   const tot = { noches: 0, sesiones: 0, abiertas: 0, cerradas: 0, cuadradas: 0, consumos: 0, anulados: 0, comisiones: 0, porNoche: {} };
@@ -60,7 +79,7 @@ export async function escribirCajaDev({ clubId, fechaObjetivo, reservas, consumo
           for (const c of consumosDe(r.id)) {
             const cent = Math.round(c.monto * 100);
             await db.q(`insert into public.caja_consumos (club_id, noche_id, sesion_id, mesa_id, cuenta_id, reservation_id, rp_id, monto_centavos, concepto, registrado_por, registrado_en)
-                        values ($1, $2, $3, $4, $5, $6, $7, $8, 'Consumo', $9, $10)`, [clubId, nocheId, sesion, mesa, cuenta, r.id, r.rp_id, cent, staff.id, c.created_at]);
+                        values ($1, $2, $3, $4, $5, $6, $7, $8, $11, $9, $10)`, [clubId, nocheId, sesion, mesa, cuenta, r.id, r.rp_id, cent, staff.id, c.created_at, conceptoDe(c.monto)]);
             base += cent;
             tot.consumos++;
           }
@@ -73,10 +92,10 @@ export async function escribirCajaDev({ clubId, fechaObjetivo, reservas, consumo
         if (objetivo && estado === "abierta" && tot.anulados === 0) {
           const walk = randomUUID();
           await db.q(`insert into public.mesa_cuentas (id, club_id, sesion_id, origen, cliente_nombre, personas, creada_por) values ($1, $2, $3, 'walk_in', 'Walk-in en barra', 2, $4)`, [walk, clubId, sesion, staff.id]);
-          await db.q(`insert into public.caja_consumos (club_id, noche_id, sesion_id, mesa_id, cuenta_id, monto_centavos, concepto, registrado_por) values ($1, $2, $3, $4, $5, 85000, 'Botella', $6)`, [clubId, nocheId, sesion, mesa, walk, staff.id]);
+          await db.q(`insert into public.caja_consumos (club_id, noche_id, sesion_id, mesa_id, cuenta_id, monto_centavos, concepto, registrado_por) values ($1, $2, $3, $4, $5, 85000, '1 × Botella de tequila', $6)`, [clubId, nocheId, sesion, mesa, walk, staff.id]);
           regMesa += 85000;
           const [anulado] = await db.q(`insert into public.caja_consumos (club_id, noche_id, sesion_id, mesa_id, cuenta_id, reservation_id, rp_id, monto_centavos, concepto, registrado_por)
-                      values ($1, $2, $3, $4, $5, $6, $7, 95000, 'Botella (capturada dos veces)', $8) returning id`, [clubId, nocheId, sesion, mesa, cuentas[0].cuenta, cuentas[0].r.id, cuentas[0].r.rp_id, staff.id]);
+                      values ($1, $2, $3, $4, $5, $6, $7, 95000, '1 × Botella de whisky 18 años', $8) returning id`, [clubId, nocheId, sesion, mesa, cuentas[0].cuenta, cuentas[0].r.id, cuentas[0].r.rp_id, staff.id]);
           await db.q(`update public.caja_consumos set anulado = true, anulado_por = $2, anulado_en = now(), motivo_anulacion = 'Capturada dos veces por error' where id = $1`, [anulado.id, gerente.id]);
           await db.q(`insert into public.caja_eventos (club_id, noche_id, sesion_id, tipo, detalle, hecho_por) values ($1, $2, $3, 'anular_consumo', $4, $5)`,
             [clubId, nocheId, sesion, JSON.stringify({ consumo_id: anulado.id, monto_centavos: 95000, motivo: "Capturada dos veces por error" }), gerente.id]);
