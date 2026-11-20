@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0a0a">
+<title>Sin conexión · AntroApp</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b0a0a; color: #f2efe9; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { min-height: 100%; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; gap: 16px; max-width: 420px; margin: 0 auto; padding: 24px 16px calc(24px + env(safe-area-inset-bottom)); }
+  .marca { width: 48px; height: 48px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1.25; }
+  p { margin: 0; font-size: 15px; line-height: 1.5; color: #b9b2a6; }
+  button { height: 48px; border: 0; border-radius: 8px; background: #c9a227; color: #0b0a0a; font: inherit; font-size: 16px; font-weight: 600; }
+  button:focus-visible { outline: 2px solid #f2efe9; outline-offset: 3px; }
+  small { font-size: 13px; color: #8f887d; line-height: 1.5; }
+</style>
+</head>
+<body>
+<main>
+  <svg class="marca" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="40" fill="#14120f"/><polyline points="146,380 256,120 366,380" fill="none" stroke="#c9a227" stroke-width="30"/><line x1="196" y1="300" x2="316" y2="300" stroke="#c9a227" stroke-width="30"/></svg>
+  <h1>Sin conexión</h1>
+  <p>AntroApp necesita internet para abrir esta pantalla. Revisa la señal o el wifi y vuelve a intentar.</p>
+  <button type="button" onclick="location.reload()">Reintentar</button>
+  <small>Si estabas capturando algo en la caja, no se guardó nada nuevo mientras no hubo señal.</small>
+</main>
+<script>window.addEventListener("online", function () { location.reload(); });</script>
+</body>
+</html>

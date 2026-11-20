@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/card";
 import { nocheOperativaMexico } from "@/lib/fechas";
 import { textoCover } from "@/lib/cover";
+import { enlaceCompartir, mensajeReserva } from "@/lib/domain/compartir";
 import type { Club } from "@/types";
 
 interface ReservaResumen {
@@ -270,9 +271,16 @@ function ReservarPage() {
   }
 
   if (reserva) {
-    const whatsappHref = `https://wa.me/?text=${encodeURIComponent(
-      `Aquí está tu reservación en ${club.nombre} para ${reserva.cliente_nombre} el ${reserva.fecha} (${reserva.personas} personas). Ábrelo aquí para ver tu código: ${window.location.origin}/r/${reserva.qr_code}`,
-    )}`;
+    const whatsappHref = enlaceCompartir(
+      mensajeReserva({
+        quien: "cliente",
+        antro: club.nombre,
+        cliente: reserva.cliente_nombre,
+        fecha: reserva.fecha,
+        personas: reserva.personas,
+        enlace: `${window.location.origin}/r/${reserva.qr_code}`,
+      }),
+    );
 
     return (
       <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-16">

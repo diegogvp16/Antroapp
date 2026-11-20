@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { Reservation } from "@/types";
+import { AVISO_QR, fechaLarga } from "@/lib/domain/compartir";
 
 // Lo que devuelve la función obtener_reserva_por_qr: solo los campos que el
 // boleto necesita mostrar, con el nombre del antro ya resuelto. No es la fila
@@ -123,13 +124,15 @@ export default function ReservaPublicaPage() {
                 </p>
                 <p>
                   <span className="text-muted-foreground">Fecha:</span>{" "}
-                  {reserva.fecha}
+                  {fechaLarga(reserva.fecha)}
                 </p>
                 <p>
                   <span className="text-muted-foreground">Personas:</span>{" "}
                   {reserva.personas}
                 </p>
               </div>
+
+              <p className="w-full text-xs leading-relaxed text-muted-foreground">{AVISO_QR}</p>
 
               <div className="w-full border-t border-border pt-6 text-center">
                 <p className="text-sm text-muted-foreground">
@@ -140,7 +143,7 @@ export default function ReservaPublicaPage() {
                   render={<Link href="/cliente" />}
                   nativeButton={false}
                   variant="outline"
-                  className="mt-3 w-full"
+                  className="mt-3 h-11 w-full"
                 >
                   Ver antros disponibles
                 </Button>

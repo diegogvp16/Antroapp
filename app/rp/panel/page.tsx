@@ -44,6 +44,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { AVISO_QR, enlaceCompartir, fechaLarga, mensajeReserva } from "@/lib/domain/compartir";
 
 interface RpSession {
   id: string;
@@ -53,6 +54,7 @@ interface RpSession {
 
 interface ReservaResumen {
   cliente_nombre: string;
+  telefono: string;
   fecha: string;
   personas: number;
   qr_code: string;
@@ -366,6 +368,7 @@ export default function RpPanelPage() {
 
       setReserva({
         cliente_nombre: clienteNombre.trim(),
+        telefono: clienteTelefono.trim(),
         fecha,
         personas,
         qr_code: qrCode,
@@ -384,10 +387,19 @@ export default function RpPanelPage() {
     return null;
   }
 
+  // Directo al chat del cliente (con el teléfono que capturó el RP).
   const whatsappHref = reserva
-    ? `https://wa.me/?text=${encodeURIComponent(
-        `Aquí está tu reservación en ${clubNombre ?? "tu antro"} para ${reserva.cliente_nombre} el ${reserva.fecha} (${reserva.personas} personas). Ábrelo aquí para ver tu código: ${window.location.origin}/r/${reserva.qr_code}`,
-      )}`
+    ? enlaceCompartir(
+        mensajeReserva({
+          quien: "rp",
+          antro: clubNombre ?? "el antro",
+          cliente: reserva.cliente_nombre,
+          fecha: reserva.fecha,
+          personas: reserva.personas,
+          enlace: `${window.location.origin}/r/${reserva.qr_code}`,
+        }),
+        reserva.telefono,
+      )
     : "#";
 
   if (!session?.clubId) {
@@ -629,13 +641,14 @@ export default function RpPanelPage() {
                     </p>
                     <p>
                       <span className="text-muted-foreground">Fecha:</span>{" "}
-                      {reserva.fecha}
+                      {fechaLarga(reserva.fecha)}
                     </p>
                     <p>
                       <span className="text-muted-foreground">Personas:</span>{" "}
                       {reserva.personas}
                     </p>
                   </div>
+                  <p className="w-full text-xs text-muted-foreground">{AVISO_QR}</p>
                   <Button
                     render={
                       <a
