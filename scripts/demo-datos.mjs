@@ -20,8 +20,10 @@
 // Usa la service role key de .env.local; nunca imprime su valor.
 //
 // MODO DEV: --env=.env.dev apunta a antroapp-dev ("Club Demo Dev") y se
-// niega a correr si la URL o la llave son de producción. En dev además
-// arma la CAJA de cada noche (mesas compartidas con cuentas por cliente y su
+// niega a correr si la URL o la llave son de producción.
+//
+// CAJA: si la base ya tiene las tablas de caja (dev, o producción después del
+// pase), el script arma la CAJA de cada noche (mesas compartidas con cuentas por cliente y su
 // RP, consumos, pagos, cuadres y comisiones nacidas al cuadrar): la noche
 // objetivo queda con mesas abiertas, cerradas y cuadradas y una anulación
 // con motivo; la semana anterior, todo cuadrado. Sin --fecha, en dev toma la
