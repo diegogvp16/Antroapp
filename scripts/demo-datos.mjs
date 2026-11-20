@@ -148,8 +148,10 @@ const demoIds = candidatos.length
   : [];
 
 const REPARTO = [
-  { clave: "mariana", nombre: "Mariana Ruiz", tel: "0000000101", tipo: "fijo", monto: 150 },
-  { clave: "diego", nombre: "Diego Ramírez", tel: "0000000104", tipo: "porcentaje", monto: 10 },
+  // Mariana y Diego tienen cuota (desbloqueo semanal): Mariana la alcanza en
+  // la semana de la noche objetivo y Diego no.
+  { clave: "mariana", nombre: "Mariana Ruiz", tel: "0000000101", tipo: "fijo", monto: 150, desbloqueo: 2 },
+  { clave: "diego", nombre: "Diego Ramírez", tel: "0000000104", tipo: "porcentaje", monto: 10, desbloqueo: 10 },
   { clave: "valeria", nombre: "Valeria Cantú", tel: "0000000103", tipo: "fijo", monto: 200 },
   { clave: "luis", nombre: "Luis Herrera", tel: "0000000105", tipo: "porcentaje", monto: 8 },
   { clave: "fernanda", nombre: "Fernanda Ortiz", tel: "0000000106", tipo: "fijo", monto: 150 },
@@ -250,6 +252,8 @@ function generar() {
   }
   // Noche objetivo: 40 reservas, 27 con entrada.
   cargarNoche(FECHA, lista([10, 8, 7, 6, 5, 4]), repartir([7, 6, 5, 4, 3, 2]));
+  // Mañana: reservas por llegar.
+  cargarNoche(sumarDias(FECHA, 1), lista([2, 2, 1, 1, 1, 1]), repartir([0, 0, 0, 0, 0, 0]));
 }
 
 if (!ESCRIBIR) {
@@ -262,12 +266,23 @@ if (!ESCRIBIR) {
 }
 
 // ---------- Escritura ----------
-// 0. En dev, la caja de Club Demo Dev se borra antes que sus reservas (la caja
-//    no se borra por la API: se usa el permiso de limpieza de pruebas de dev).
-if (DEV) {
-  const { limpiarCajaDev } = await import("./dev/sembrar-historia-dev.mjs");
-  await limpiarCajaDev([CLUB_ID], "__ninguno__");
+// 0. Caja de una demo anterior. La caja no se borra por la API ("nada se
+//    borra en caja"): en dev se limpia con el permiso de pruebas; en
+//    producción el script se detiene y pide limpiarla a mano
+//    (sql/limpiar-demo-caja.sql en el SQL Editor, solo Club Demo y solo
+//    reservas con teléfono 0000000…).
+const { escribirCaja, cajaDemoExistente, hayCaja } = await import("./demo-caja.mjs");
+const CAJA = await hayCaja(svc);
+if (CAJA) {
+  if (DEV) {
+    const { limpiarCajaDev } = await import("./dev/sembrar-historia-dev.mjs");
+    await limpiarCajaDev([CLUB_ID], "__ninguno__");
+  } else {
+    const previas = await cajaDemoExistente(svc, borrarIds);
+    if (previas > 0) salir(`Hay ${previas} cuentas de caja de una demo anterior. En producción la caja no se borra por la API: corre sql/limpiar-demo-caja.sql en el SQL Editor y vuelve a correr este script.`);
+  }
 }
+console.log(`Consumos: ${CAJA ? "caja por mesa (modelo nuevo)" : "modelo viejo (consumption_entries): la base todavía no tiene la caja"}`);
 // 1. Borrado de lo demo.
 for (const ids of trozos(borrarIds)) {
   ok(await svc.from("consumption_entries").delete().in("reservation_id", ids), "borrar consumos");
@@ -298,7 +313,7 @@ for (const r of REPARTO) {
 
 // 3. Comisión individual y turno fijo mié–sáb desde el lunes de la semana anterior.
 ok(await svc.from("rp_comision_overrides").insert(REPARTO.map((r) => ({
-  club_id: CLUB_ID, rp_id: rpIds[r.clave], comision_tipo: r.tipo, comision_monto: r.monto, comision_desbloqueo_reservas: 0,
+  club_id: CLUB_ID, rp_id: rpIds[r.clave], comision_tipo: r.tipo, comision_monto: r.monto, comision_desbloqueo_reservas: r.desbloqueo ?? 0,
 }))), "comisiones individuales");
 ok(await svc.from("rp_schedule").insert(REPARTO.map((r) => ({
   rp_id: rpIds[r.clave], club_id: CLUB_ID, fecha: lunesAnterior, es_fijo: true, dias_semana: [3, 4, 5, 6], fecha_inicio: lunesAnterior,
@@ -307,15 +322,17 @@ ok(await svc.from("rp_schedule").insert(REPARTO.map((r) => ({
 // 4. Reservas, consumos, comisiones y asistencia.
 generar();
 for (const xs of trozos(reservas)) ok(await svc.from("reservations").insert(xs), "reservas");
-if (!DEV) {
+if (!CAJA) {
   for (const xs of trozos(consumos)) ok(await svc.from("consumption_entries").insert(xs), "consumos");
   for (const xs of trozos(comisiones)) ok(await svc.from("commissions").insert(xs), "comisiones");
 }
 ok(await svc.from("rp_attendance").insert(asistencias), "asistencia");
-if (DEV) {
-  const { escribirCajaDev } = await import("./dev/demo-caja-dev.mjs");
-  const caja = await escribirCajaDev({ clubId: CLUB_ID, fechaObjetivo: FECHA, reservas, consumos, reparto: REPARTO, rpIds, mesas, azar, entre });
-  console.log(`Caja: ${caja.noches} noches, ${caja.sesiones} mesas (${caja.abiertas} abiertas, ${caja.cerradas} cerradas, ${caja.cuadradas} cuadradas), ${caja.consumos} consumos, ${caja.anulados} anulado con motivo, ${caja.comisiones} comisiones.`);
+if (CAJA) {
+  const caja = await escribirCaja({
+    svc, clubId: CLUB_ID, fechaObjetivo: FECHA, reservas, consumos, reparto: REPARTO, rpIds, mesas, entre,
+    alHora: (noche, hora, minuto) => mx(noche, hora, minuto).toISOString(),
+  });
+  console.log(`Caja: ${caja.noches} noches, ${caja.sesiones} mesas (${caja.abiertas} abiertas, ${caja.cerradas} por cuadrar, ${caja.cuadradas} cuadradas; ${caja.multigrupo} mesas con varios grupos), ${caja.consumos} consumos, ${caja.anulados} anulado con motivo, ${caja.sinMesa} con entrada sin mesa, ${caja.comisiones} comisiones.`);
   for (const [noche, r] of Object.entries(caja.porNoche)) resumen[noche] = { ...resumen[noche], consumo: r.consumo, comisiones: r.comisiones };
 }
 
@@ -329,7 +346,7 @@ for (const noche of Object.keys(resumen)) {
   const ids = enBase.map((x) => x.id);
   let consumoBase = 0, comisionBase = 0;
   for (const t of trozos(ids)) {
-    consumoBase += DEV
+    consumoBase += CAJA
       ? ok(await svc.from("caja_consumos").select("monto_centavos").eq("anulado", false).in("reservation_id", t), "v consumos caja").reduce((s, c) => s + Number(c.monto_centavos) / 100, 0)
       : ok(await svc.from("consumption_entries").select("monto").in("reservation_id", t), "v consumos").reduce((s, c) => s + Number(c.monto), 0);
     comisionBase += ok(await svc.from("commissions").select("monto").in("reservation_id", t), "v comisiones").reduce((s, c) => s + Number(c.monto), 0);

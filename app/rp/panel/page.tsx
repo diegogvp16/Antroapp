@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BottomNav, type RpTab } from "@/components/bottom-nav";
+import { ReservasRp } from "@/components/rp/reservas-rp";
 import {
   describirTurno,
   esTurnoFijo,
@@ -92,11 +93,6 @@ const COMISION_STATUS_LABEL: Record<string, string> = {
   anulada: "Anulada",
 };
 
-const RESERVA_STATUS_LABEL: Record<string, string> = {
-  pendiente: "Pendiente",
-  confirmada: "Confirmada",
-  usada: "Ingresó",
-};
 
 const DIA_SEMANA_LABEL = [
   "Dom",
@@ -142,9 +138,6 @@ export default function RpPanelPage() {
     number | null
   >(null);
   const [loadingRendimiento, setLoadingRendimiento] = useState(true);
-  const [reservasSemanaDetalle, setReservasSemanaDetalle] = useState<
-    ReservaRp[]
-  >([]);
   const [pagoRpModo, setPagoRpModo] = useState<"reserva" | "dia">("reserva");
   const [pagosDiaSemana, setPagosDiaSemana] = useState<PagoDiaRow[]>([]);
 
@@ -155,6 +148,7 @@ export default function RpPanelPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reserva, setReserva] = useState<ReservaResumen | null>(null);
+  const [mostrarNueva, setMostrarNueva] = useState(false);
 
   const minDate = nocheOperativaMexico(); // noche en curso (corte 08:00)
 
@@ -319,12 +313,6 @@ export default function RpPanelPage() {
           anterior: resumirPeriodo(reservas, ganancias, periodos.anterior),
           mes: resumirPeriodo(reservas, ganancias, periodos.mes),
         });
-        setReservasSemanaDetalle(
-          reservas.filter(
-            (r) =>
-              r.fecha >= periodos.semana.desde && r.fecha <= periodos.semana.hasta,
-          ),
-        );
       } catch (err) {
         console.error("Error cargando rendimiento del RP:", err);
       } finally {
@@ -442,8 +430,8 @@ export default function RpPanelPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center">
-      <main className="mx-auto w-full max-w-sm flex-1 px-6 pt-8 pb-[calc(5rem+env(safe-area-inset-bottom))]">
+    <div className="theme-caja flex flex-1 flex-col items-center font-sans">
+      <main className="mx-auto w-full max-w-md flex-1 px-4 pt-4 pb-[calc(5rem+env(safe-area-inset-bottom))]">
         {activeTab === "perfil" && (
           <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-1">
@@ -637,73 +625,20 @@ export default function RpPanelPage() {
         )}
 
         {activeTab === "reservas" && (
-          <div className="flex flex-col gap-6">
-            <Card className="w-full">
-              <CardHeader>
-                <CardTitle>Mi rendimiento</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4 px-6 pb-6">
-                {loadingRendimiento ? (
-                  <p className="text-sm text-muted-foreground">Cargando...</p>
-                ) : (
-                  <>
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <p className="text-sm font-medium">Esta semana</p>
-                        <p className="text-xs text-muted-foreground">
-                          {etiquetaRango(periodos.semana)}
-                        </p>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {resumenes.semana.reservas} reservas —{" "}
-                        {resumenes.semana.entraron} entraron,{" "}
-                        {resumenes.semana.sinEntrar} sin entrar
-                      </p>
-                      {reservasSemanaDetalle.length > 0 && (
-                        <ul className="mt-1 flex flex-col gap-1 text-xs text-muted-foreground">
-                          {reservasSemanaDetalle.map((r) => (
-                            <li
-                              key={r.id}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <span className="min-w-0 truncate">
-                                {r.cliente_nombre} · {formatFechaConDia(r.fecha)}
-                              </span>
-                              <span
-                                className={
-                                  r.status === "usada"
-                                    ? "shrink-0 font-medium text-status-ok"
-                                    : "shrink-0"
-                                }
-                              >
-                                {RESERVA_STATUS_LABEL[r.status] ?? r.status}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-
-                    <div className="flex flex-col gap-1 border-t border-border pt-3">
-                      <p className="text-sm font-medium">Semana anterior</p>
-                      <p className="text-sm text-muted-foreground">
-                        {resumenes.anterior.reservas} reservas —{" "}
-                        {resumenes.anterior.entraron} entraron
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col gap-1 border-t border-border pt-3">
-                      <p className="text-sm font-medium">Este mes</p>
-                      <p className="text-sm text-muted-foreground">
-                        {resumenes.mes.reservas} reservas —{" "}
-                        {resumenes.mes.entraron} entraron,{" "}
-                        {resumenes.mes.sinEntrar} sin entrar
-                      </p>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-2">
+              <h1 className="text-base font-semibold">Mis reservas</h1>
+              {!reserva && (
+                <button
+                  type="button"
+                  onClick={() => setMostrarNueva((v) => !v)}
+                  aria-expanded={mostrarNueva}
+                  className="h-11 rounded-lg border border-caja-borde px-3 text-sm font-medium text-caja-dorado"
+                >
+                  {mostrarNueva ? "Cerrar" : "+ Nueva reserva"}
+                </button>
+              )}
+            </div>
 
             {reserva ? (
               <Card className="w-full">
@@ -755,7 +690,7 @@ export default function RpPanelPage() {
                   </Button>
                 </CardContent>
               </Card>
-            ) : (
+            ) : mostrarNueva ? (
               <Card className="w-full">
                 <CardHeader>
                   <CardTitle>Nueva reserva para cliente</CardTitle>
@@ -815,7 +750,9 @@ export default function RpPanelPage() {
                   </form>
                 </CardContent>
               </Card>
-            )}
+            ) : null}
+
+            <ReservasRp clubNombre={clubNombre} />
           </div>
         )}
       </main>
