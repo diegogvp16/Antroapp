@@ -70,7 +70,7 @@ function CuadreEnVivo({
     otro: "",
   });
   const [notas, setNotas] = useState("");
-  const { ocupado, error, ejecutar } = useAccion();
+  const { ocupado, error, correr, limpiarError } = useAccion();
 
   const totales = resumen(datos.consumos, datos.pagos);
   const pendientes = datos.sesiones.filter((s) => s.estado !== "cuadrada");
@@ -151,17 +151,27 @@ function CuadreEnVivo({
             onSubmit={async (e) => {
               e.preventDefault();
               if (!conteoCompleto || pendientes.length > 0) return;
-              await ejecutar(
-                () =>
-                  createClient().rpc("caja_cerrar_noche", {
+              const supabase = createClient();
+              await correr(async (paso) => {
+                const r = await paso(() =>
+                  supabase.rpc("caja_cerrar_noche", {
                     p_noche_id: nocheId,
                     p_contado_efectivo_centavos: contadoTotal.efectivo,
                     p_contado_tarjeta_centavos: contadoTotal.tarjeta,
                     p_contado_otro_centavos: contadoTotal.otro,
                     p_notas: notas.trim() || null,
                   }),
-                onCambio,
-              );
+                );
+                if (!r.ok) {
+                  // Si la respuesta se perdió pero la noche sí quedó cerrada,
+                  // repetir no es un error: solo se actualiza la pantalla.
+                  const { data } = await supabase.from("caja_noches").select("estado").eq("id", nocheId).maybeSingle();
+                  if (data?.estado !== "cerrada") return false;
+                  limpiarError();
+                }
+                await onCambio();
+                return true;
+              });
             }}
           >
             {METODOS_PAGO.map((m) => {

@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { nuevaClave } from "@/lib/clave";
 import { BotonPrincipal, Contador, Hoja } from "@/components/caja/hoja";
 import { MensajeError } from "@/components/caja/accion";
 import {
@@ -27,11 +28,13 @@ const ETIQUETA = "mb-1 block text-xs text-caja-secundario";
 // precio) y un concepto con precio libre. Cada renglón se guarda como
 // "N × producto" con su total.
 // ---------------------------------------------------------------------------
-export interface RenglonNuevo {
+interface RenglonCaptura {
   cantidad: number;
   producto: string;
   unitario: number; // centavos
 }
+// Con su clave de idempotencia: la misma en cada reintento de esta hoja.
+export type RenglonNuevo = RenglonCaptura & { clave: string };
 
 export function HojaConsumo({
   abierta,
@@ -39,6 +42,7 @@ export function HojaConsumo({
   productos,
   cuentas,
   ocupado,
+  sinConexion,
   error,
   onAgregar,
 }: {
@@ -47,6 +51,7 @@ export function HojaConsumo({
   productos: ProductoReciente[];
   cuentas: MesaCuenta[];
   ocupado: boolean;
+  sinConexion: boolean;
   error: string | null;
   onAgregar: (renglones: RenglonNuevo[], cuentaId: string) => void;
 }) {
@@ -62,14 +67,33 @@ export function HojaConsumo({
   const precioCent = pesosACentavos(precio);
   const libreValido = concepto.trim().length > 0 && montoValido(precioCent);
 
-  const renglones: RenglonNuevo[] = useMemo(() => {
-    const r: RenglonNuevo[] = productos
+  const renglones: RenglonCaptura[] = useMemo(() => {
+    const r: RenglonCaptura[] = productos
       .filter((p) => (cantidades[clave(p)] ?? 0) > 0)
       .map((p) => ({ cantidad: cantidades[clave(p)], producto: p.producto, unitario: p.unitario }));
     if (libreValido && precioCent !== null) r.push({ cantidad: cantidadLibre, producto: concepto.trim(), unitario: precioCent });
     return r;
   }, [productos, cantidades, libreValido, precioCent, cantidadLibre, concepto]);
   const total = renglones.reduce((s, r) => s + r.cantidad * r.unitario, 0);
+
+  // Una clave por renglón (cuenta + producto + precio) mientras la hoja siga
+  // abierta: si la respuesta se pierde y se vuelve a tocar, la base reconoce
+  // lo que ya había entrado y no lo duplica.
+  const claves = useRef(new Map<string, string>());
+  function enviar() {
+    onAgregar(
+      renglones.map((r) => {
+        const k = `${cuentaId}|${r.producto}|${r.unitario}`;
+        let c = claves.current.get(k);
+        if (!c) {
+          c = nuevaClave();
+          claves.current.set(k, c);
+        }
+        return { ...r, clave: c };
+      }),
+      cuentaId,
+    );
+  }
 
   function cerrar() {
     setCantidades({});
@@ -88,8 +112,8 @@ export function HojaConsumo({
       pie={
         <div className="flex flex-col gap-2">
           <MensajeError mensaje={error} />
-          <BotonPrincipal disabled={ocupado || renglones.length === 0 || !cuentaId} onClick={() => onAgregar(renglones, cuentaId)}>
-            {ocupado ? "Agregando..." : `Agregar a la mesa · ${formatearCentavos(total)}`}
+          <BotonPrincipal disabled={ocupado || sinConexion || renglones.length === 0 || !cuentaId} onClick={enviar}>
+            {sinConexion ? "Sin conexión" : ocupado ? "Agregando..." : `Agregar a la mesa · ${formatearCentavos(total)}`}
           </BotonPrincipal>
         </div>
       }
@@ -167,6 +191,7 @@ export function HojaCobro({
   onCerrar,
   saldo,
   ocupado,
+  sinConexion,
   error,
   onCobrar,
 }: {
@@ -174,14 +199,22 @@ export function HojaCobro({
   onCerrar: () => void;
   saldo: number;
   ocupado: boolean;
+  sinConexion: boolean;
   error: string | null;
-  onCobrar: (metodo: MetodoPago, centavos: number, referencia: string) => void;
+  // saldoVisto: el saldo con el que se armó el cobro. La base lo compara con
+  // el real y rechaza si otro staff ya cobró o agregó consumo.
+  onCobrar: (metodo: MetodoPago, centavos: number, referencia: string, clave: string, saldoVisto: number) => void;
 }) {
   const [metodo, setMetodo] = useState<MetodoPago>("efectivo");
   const [monto, setMonto] = useState(centavosATexto(saldo));
   const [referencia, setReferencia] = useState("");
+  // La misma clave en cada reintento de esta hoja: un cobro que sí entró
+  // (aunque se perdiera la respuesta) no se cobra dos veces.
+  const [clave] = useState(nuevaClave);
+  const [saldoBase, setSaldoBase] = useState(saldo);
   const cent = pesosACentavos(monto);
   const valido = montoValido(cent);
+  const saldoCambio = saldo !== saldoBase;
   return (
     <Hoja
       titulo="Cobrar"
@@ -190,8 +223,8 @@ export function HojaCobro({
       pie={
         <div className="flex flex-col gap-2">
           <MensajeError mensaje={error} />
-          <BotonPrincipal disabled={ocupado || !valido} onClick={() => cent !== null && onCobrar(metodo, cent, referencia)}>
-            {ocupado ? "Cobrando..." : `Cobrar ${valido && cent !== null ? formatearCentavos(cent) : ""}`}
+          <BotonPrincipal disabled={ocupado || sinConexion || !valido} onClick={() => cent !== null && onCobrar(metodo, cent, referencia, clave, saldoBase)}>
+            {sinConexion ? "Sin conexión" : ocupado ? "Cobrando..." : `Cobrar ${valido && cent !== null ? formatearCentavos(cent) : ""}`}
           </BotonPrincipal>
         </div>
       }
@@ -211,10 +244,30 @@ export function HojaCobro({
           ))}
         </div>
         <label>
-          <span className={ETIQUETA}>Monto ($) · saldo {formatearCentavos(saldo)}</span>
+          <span className={ETIQUETA}>Monto ($) · saldo {formatearCentavos(saldoBase)}</span>
           <input value={monto} onChange={(e) => setMonto(e.target.value)} inputMode="decimal" className={cn(CAMPO, "text-lg tabular-nums")} />
         </label>
-        {cent !== null && cent > saldo && <p className="text-xs text-caja-aviso">Es más que el saldo de la mesa.</p>}
+        {saldoCambio && (
+          <div className="flex flex-col gap-2 rounded-lg border border-caja-aviso/60 p-3 text-sm" role="status">
+            <p>
+              El saldo de la mesa ahora es <span className="font-semibold tabular-nums">{formatearCentavos(saldo)}</span>: se registró algo mientras
+              cobrabas.
+            </p>
+            {saldo > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSaldoBase(saldo);
+                  setMonto(centavosATexto(saldo));
+                }}
+                className="h-11 w-fit rounded-md border border-caja-control px-3"
+              >
+                Cobrar el saldo nuevo · {formatearCentavos(saldo)}
+              </button>
+            )}
+          </div>
+        )}
+        {!saldoCambio && cent !== null && cent > saldoBase && <p className="text-xs text-caja-aviso">Es más que el saldo de la mesa.</p>}
         {metodo === "tarjeta" && (
           <label>
             <span className={ETIQUETA}>Referencia (opcional)</span>
@@ -236,6 +289,7 @@ export function HojaRecibir({
   reservas,
   nombres,
   ocupado,
+  sinConexion,
   error,
   onRecibir,
 }: {
@@ -245,6 +299,7 @@ export function HojaRecibir({
   reservas: ReservaSentable[];
   nombres: Record<string, string>;
   ocupado: boolean;
+  sinConexion: boolean;
   error: string | null;
   onRecibir: (opcion: { reservaId: string } | { nombre: string; personas: number }) => void;
 }) {
@@ -262,10 +317,10 @@ export function HojaRecibir({
         <div className="flex flex-col gap-2">
           <MensajeError mensaje={error} />
           <BotonPrincipal
-            disabled={ocupado || !listo}
+            disabled={ocupado || sinConexion || !listo}
             onClick={() => onRecibir(modo === "reserva" && reservaId ? { reservaId } : { nombre: nombre.trim(), personas })}
           >
-            {ocupado ? "Sentando..." : "Sentar en la mesa"}
+            {sinConexion ? "Sin conexión" : ocupado ? "Sentando..." : "Sentar en la mesa"}
           </BotonPrincipal>
         </div>
       }
@@ -340,6 +395,7 @@ export function HojaMotivo({
   descripcion,
   boton,
   ocupado,
+  sinConexion,
   error,
   onConfirmar,
 }: {
@@ -349,6 +405,7 @@ export function HojaMotivo({
   descripcion: string;
   boton: string;
   ocupado: boolean;
+  sinConexion: boolean;
   error: string | null;
   onConfirmar: (motivo: string) => void;
 }) {
@@ -364,8 +421,8 @@ export function HojaMotivo({
       pie={
         <div className="flex flex-col gap-2">
           <MensajeError mensaje={error} />
-          <BotonPrincipal tono="aviso" disabled={ocupado || !motivoValido(motivo)} onClick={() => onConfirmar(motivo.trim())}>
-            {ocupado ? "Guardando..." : boton}
+          <BotonPrincipal tono="aviso" disabled={ocupado || sinConexion || !motivoValido(motivo)} onClick={() => onConfirmar(motivo.trim())}>
+            {sinConexion ? "Sin conexión" : ocupado ? "Guardando..." : boton}
           </BotonPrincipal>
         </div>
       }
@@ -391,6 +448,7 @@ export function HojaCuadrar({
   cobrado,
   cerrarAntes,
   ocupado,
+  sinConexion,
   error,
   onCuadrar,
 }: {
@@ -400,6 +458,7 @@ export function HojaCuadrar({
   cobrado: number;
   cerrarAntes: boolean;
   ocupado: boolean;
+  sinConexion: boolean;
   error: string | null;
   onCuadrar: (notas: string) => void;
 }) {
@@ -412,8 +471,8 @@ export function HojaCuadrar({
       pie={
         <div className="flex flex-col gap-2">
           <MensajeError mensaje={error} />
-          <BotonPrincipal disabled={ocupado} onClick={() => onCuadrar(notas)}>
-            {ocupado ? "Cuadrando..." : `Cuadrar mesa · ${formatearCentavos(consumo)}`}
+          <BotonPrincipal disabled={ocupado || sinConexion} onClick={() => onCuadrar(notas)}>
+            {sinConexion ? "Sin conexión" : ocupado ? "Cuadrando..." : `Cuadrar mesa · ${formatearCentavos(consumo)}`}
           </BotonPrincipal>
         </div>
       }

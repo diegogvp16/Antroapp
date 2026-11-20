@@ -40,6 +40,7 @@ export function DetalleMesa({
   permisos,
   esGerente,
   nocheCerrada,
+  sinConexion,
   onVolver,
   onCambio,
 }: {
@@ -48,6 +49,7 @@ export function DetalleMesa({
   permisos: PermisosCaja;
   esGerente: boolean;
   nocheCerrada: boolean;
+  sinConexion: boolean;
   onVolver: () => void;
   onCambio: () => Promise<void>;
 }) {
@@ -76,84 +78,164 @@ export function DetalleMesa({
     cerrarHoja();
   };
   const rpc = createClient();
+  // Mientras no hay conexión no se manda nada: el botón se desactiva y lo
+  // capturado se queda en la hoja.
+  const bloqueado = accion.ocupado || sinConexion;
 
-  async function recibir(op: { reservaId: string } | { nombre: string; personas: number }) {
-    let sesionId = abierta ? m.sesion?.id ?? null : null;
-    if (!sesionId) {
-      const r = await rpc.rpc("caja_abrir_mesa", { p_mesa_id: m.mesa.id });
-      if (r.error) {
-        await accion.ejecutar(async () => r);
-        return;
+  // Llama una función de caja con su clave de idempotencia (y, al cobrar, el
+  // saldo esperado). Si la base todavía no tiene la versión con esos
+  // parámetros (PGRST202: no se ejecutó nada), repite la llamada como antes.
+  async function rpcSeguro(nombre: string, args: Record<string, unknown>, extras: Record<string, unknown>) {
+    const r = await rpc.rpc(nombre, { ...args, ...extras });
+    if (r.error?.code === "PGRST202") return rpc.rpc(nombre, args);
+    return r;
+  }
+
+  // Estado real de la sesión en la base: para que repetir "Cerrar" o
+  // "Cuadrar" tras perder la respuesta termine bien en lugar de dar error.
+  async function estadoEnBase(sesionId: string): Promise<MesaSesion["estado"] | null> {
+    const { data } = await rpc.from("mesa_sesiones").select("estado").eq("id", sesionId).maybeSingle();
+    return (data?.estado as MesaSesion["estado"] | undefined) ?? null;
+  }
+
+  function recibir(op: { reservaId: string } | { nombre: string; personas: number }) {
+    return accion.correr(async (paso) => {
+      let sesionId = abierta ? m.sesion?.id ?? null : null;
+      if (!sesionId) {
+        const r = await paso(() => rpc.rpc("caja_abrir_mesa", { p_mesa_id: m.mesa.id }));
+        if (!r.ok) {
+          // Otro staff pudo abrirla primero: al recargar se ve la sesión
+          // abierta y el siguiente intento sienta ahí.
+          await onCambio();
+          return false;
+        }
+        sesionId = r.data as string;
       }
-      sesionId = r.data as string;
-    }
-    await accion.ejecutar(
-      () =>
+      const r = await paso(() =>
         rpc.rpc(
           "caja_sentar_cliente",
           "reservaId" in op
             ? { p_sesion_id: sesionId, p_reservation_id: op.reservaId }
             : { p_sesion_id: sesionId, p_cliente_nombre: op.nombre, p_personas: op.personas },
         ),
-      tras,
-    );
-  }
-
-  async function agregar(renglones: RenglonNuevo[], cuentaId: string) {
-    // Un cargo por renglón ("N × producto" con su total). Se detiene en el
-    // primer error y deja ver lo que sí entró.
-    for (const r of renglones) {
-      const ok = await accion.ejecutar(() =>
-        rpc.rpc("caja_registrar_consumo", {
-          p_cuenta_id: cuentaId,
-          p_monto_centavos: r.cantidad * r.unitario,
-          p_concepto: armarConcepto(r.cantidad, r.producto),
-        }),
       );
-      if (!ok) {
+      if (!r.ok) {
         await onCambio();
-        return;
+        return false;
       }
-    }
-    await tras();
+      await tras();
+      return true;
+    });
   }
 
-  async function cobrar(metodo: MetodoPago, centavos: number, referencia: string) {
+  function agregar(renglones: RenglonNuevo[], cuentaId: string) {
+    // Un cargo por renglón ("N × producto" con su total), cada uno con su
+    // clave: si se reintenta, lo que ya entró no se duplica. Se detiene en
+    // el primer error y deja ver lo que sí entró.
+    return accion.correr(async (paso) => {
+      for (const r of renglones) {
+        const res = await paso(() =>
+          rpcSeguro(
+            "caja_registrar_consumo",
+            { p_cuenta_id: cuentaId, p_monto_centavos: r.cantidad * r.unitario, p_concepto: armarConcepto(r.cantidad, r.producto) },
+            { p_clave: r.clave },
+          ),
+        );
+        if (!res.ok) {
+          await onCambio();
+          return false;
+        }
+      }
+      await tras();
+      return true;
+    });
+  }
+
+  function cobrar(metodo: MetodoPago, centavos: number, referencia: string, clave: string, saldoVisto: number) {
     if (!sesion) return;
-    await accion.ejecutar(
-      () => rpc.rpc("caja_registrar_pago", { p_sesion_id: sesion.id, p_cuenta_id: null, p_metodo: metodo, p_monto_centavos: centavos, p_referencia: referencia || null }),
-      tras,
-    );
+    return accion.correr(async (paso) => {
+      const r = await paso(() =>
+        rpcSeguro(
+          "caja_registrar_pago",
+          { p_sesion_id: sesion.id, p_cuenta_id: null, p_metodo: metodo, p_monto_centavos: centavos, p_referencia: referencia || null },
+          // El saldo que el staff tiene en pantalla: si otro ya cobró o
+          // agregó consumo, la base lo rechaza en lugar de sobrepagar.
+          { p_clave: clave, p_saldo_esperado: saldoVisto },
+        ),
+      );
+      if (!r.ok) {
+        await onCambio();
+        return false;
+      }
+      await tras();
+      return true;
+    });
   }
 
-  async function cerrarMesa() {
+  function cerrarMesa() {
     if (!sesion) return;
-    await accion.ejecutar(() => rpc.rpc("caja_cerrar_mesa", { p_sesion_id: sesion.id }), onCambio);
+    return accion.correr(async (paso) => {
+      const r = await paso(() => rpc.rpc("caja_cerrar_mesa", { p_sesion_id: sesion.id }));
+      if (!r.ok && (await estadoEnBase(sesion.id)) !== "cerrada") {
+        await onCambio();
+        return false;
+      }
+      accion.limpiarError();
+      await onCambio();
+      return true;
+    });
   }
 
-  async function cuadrar(notas: string) {
+  function cuadrar(notas: string) {
     if (!sesion) return;
-    if (sesion.estado === "abierta") {
-      const ok = await accion.ejecutar(() => rpc.rpc("caja_cerrar_mesa", { p_sesion_id: sesion.id }));
-      if (!ok) return;
-    }
-    await accion.ejecutar(() => rpc.rpc("caja_cuadrar_mesa", { p_sesion_id: sesion.id, p_notas: notas || null }), tras);
+    return accion.correr(async (paso) => {
+      // Se parte del estado real en la base, no del de la pantalla: un
+      // reintento después de perder la respuesta continúa donde se quedó.
+      let estado = (await estadoEnBase(sesion.id)) ?? sesion.estado;
+      if (estado === "abierta") {
+        const r = await paso(() => rpc.rpc("caja_cerrar_mesa", { p_sesion_id: sesion.id }));
+        estado = r.ok ? "cerrada" : ((await estadoEnBase(sesion.id)) ?? "abierta");
+        if (estado === "abierta") {
+          await onCambio();
+          return false;
+        }
+        accion.limpiarError();
+      }
+      if (estado === "cerrada") {
+        const r = await paso(() => rpc.rpc("caja_cuadrar_mesa", { p_sesion_id: sesion.id, p_notas: notas || null }));
+        if (!r.ok && (await estadoEnBase(sesion.id)) !== "cuadrada") {
+          await onCambio();
+          return false;
+        }
+      }
+      // "cuadrada": ya quedó (por este envío o por uno anterior). Se cuadra
+      // una sola vez: la base no deja otro cuadre ni otra comisión.
+      accion.limpiarError();
+      await tras();
+      return true;
+    });
   }
 
-  async function anular(motivo: string) {
+  function anular(motivo: string) {
     if (!anulacion) return;
-    await accion.ejecutar(
-      () =>
+    return accion.correr(async (paso) => {
+      const r = await paso(() =>
         anulacion.tipo === "consumo"
           ? rpc.rpc("caja_anular_consumo", { p_consumo_id: anulacion.fila.id, p_motivo: motivo })
           : rpc.rpc("caja_anular_pago", { p_pago_id: anulacion.fila.id, p_motivo: motivo }),
-      tras,
-    );
+      );
+      if (!r.ok) {
+        await onCambio();
+        return false;
+      }
+      await tras();
+      return true;
+    });
   }
 
-  async function reabrir(motivo: string) {
+  function reabrir(motivo: string) {
     if (!sesion) return;
-    await accion.ejecutar(() => rpc.rpc("caja_reabrir_mesa", { p_sesion_id: sesion.id, p_motivo: motivo }), tras);
+    return accion.ejecutar(() => rpc.rpc("caja_reabrir_mesa", { p_sesion_id: sesion.id, p_motivo: motivo }), tras);
   }
 
   // ---------- Botón principal según el paso ----------
@@ -368,8 +450,8 @@ export function DetalleMesa({
       <div className="sticky bottom-0 mt-auto bg-caja-fondo pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
         {hoja === null && <MensajeError mensaje={accion.error} />}
         {principal ? (
-          <BotonPrincipal tono={principal.tono} disabled={accion.ocupado} onClick={principal.accion}>
-            {accion.ocupado && hoja === null ? "Guardando..." : principal.texto}
+          <BotonPrincipal tono={principal.tono} disabled={bloqueado} onClick={principal.accion}>
+            {sinConexion ? "Sin conexión" : accion.ocupado && hoja === null ? "Guardando..." : principal.texto}
           </BotonPrincipal>
         ) : (
           nota && <p className="text-center text-sm text-caja-secundario">{nota}</p>
@@ -384,6 +466,7 @@ export function DetalleMesa({
           reservas={datos.reservasSentables}
           nombres={datos.nombres}
           ocupado={accion.ocupado}
+          sinConexion={sinConexion}
           error={accion.error}
           onRecibir={(op) => void recibir(op)}
         />
@@ -395,12 +478,21 @@ export function DetalleMesa({
           productos={productosDeLaNoche(datos.consumos)}
           cuentas={m.cuentas}
           ocupado={accion.ocupado}
+          sinConexion={sinConexion}
           error={accion.error}
           onAgregar={(r, cuenta) => void agregar(r, cuenta)}
         />
       )}
       {hoja === "cobro" && (
-        <HojaCobro abierta onCerrar={cerrarHoja} saldo={m.saldo} ocupado={accion.ocupado} error={accion.error} onCobrar={(mt, c, ref) => void cobrar(mt, c, ref)} />
+        <HojaCobro
+          abierta
+          onCerrar={cerrarHoja}
+          saldo={m.saldo}
+          ocupado={accion.ocupado}
+          sinConexion={sinConexion}
+          error={accion.error}
+          onCobrar={(mt, c, ref, clave, saldoVisto) => void cobrar(mt, c, ref, clave, saldoVisto)}
+        />
       )}
       {hoja === "cuadrar" && (
         <HojaCuadrar
@@ -410,6 +502,7 @@ export function DetalleMesa({
           cobrado={m.cobrado}
           cerrarAntes={m.estado === "abierta"}
           ocupado={accion.ocupado}
+          sinConexion={sinConexion}
           error={accion.error}
           onCuadrar={(n) => void cuadrar(n)}
         />
@@ -422,6 +515,7 @@ export function DetalleMesa({
           descripcion="La mesa vuelve a abierta para corregir cargos o cobros. Queda en la bitácora con tu nombre y el motivo."
           boton="Abrir otra vez"
           ocupado={accion.ocupado}
+          sinConexion={sinConexion}
           error={accion.error}
           onConfirmar={(mo) => void reabrir(mo)}
         />
@@ -441,6 +535,7 @@ export function DetalleMesa({
           }
           boton={`Anular ${formatearCentavos(anulacion.fila.monto_centavos)}`}
           ocupado={accion.ocupado}
+          sinConexion={sinConexion}
           error={accion.error}
           onConfirmar={(mo) => void anular(mo)}
         />

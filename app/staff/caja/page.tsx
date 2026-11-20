@@ -4,13 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, WifiOff } from "lucide-react";
 import { CuadreNoche } from "@/components/caja/cuadre-noche";
 import { MapaNoche } from "@/components/caja/mapa-noche";
 import { DetalleMesa } from "@/components/caja/detalle-mesa";
 import { etiquetaNoche } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
 import { cn } from "@/lib/utils";
+import { esErrorDeRed } from "@/lib/errores-base";
+import { useEnLinea } from "@/lib/use-en-linea";
 import {
   formatearCentavos,
   resumirMesa,
@@ -30,6 +32,13 @@ import {
 } from "@/lib/domain/caja";
 
 type Vista = "mesas" | "cuadre";
+
+// Cada cuánto se vuelve a leer la caja para ver lo que registran otros staff
+// (sin recargar la página). Con la conexión caída se reintenta más seguido.
+const CADA_MS = 10_000;
+const CADA_MS_SIN_RED = 4_000;
+const horaMinSeg = (d: Date) =>
+  d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 const COLUMNAS_SESION =
   "id, mesa_id, estado, abierta_por, abierta_en, cerrada_en, cuadrada_por, cuadrada_en";
@@ -170,6 +179,12 @@ export default function StaffCajaPage() {
   const [esGerente, setEsGerente] = useState(false);
   // Solo cuenta la respuesta de la última recarga (si se piden dos seguidas).
   const ultimaCarga = useRef(0);
+  const enVuelo = useRef(false);
+  const enLinea = useEnLinea();
+  // La última lectura falló por la red (wifi sin salida, señal mala).
+  const [falloRed, setFalloRed] = useState(false);
+  const [actualizado, setActualizado] = useState<Date | null>(null);
+  const sinConexion = !enLinea || falloRed;
 
   // Sesión: solo staff o gerente con antro.
   useEffect(() => {
@@ -225,28 +240,61 @@ export default function StaffCajaPage() {
     cargarSesion();
   }, [router]);
 
-  const recargar = useCallback(async () => {
-    if (!clubId) return;
-    const numero = ++ultimaCarga.current;
-    setRecargando(true);
-    try {
-      const resultado = await cargarCaja(clubId);
-      if (numero !== ultimaCarga.current) return;
-      setFecha(resultado.fecha);
-      setDatos(resultado.datos);
-      setErrorCarga(null);
-    } catch (err) {
-      console.error("Error cargando la caja:", err);
-      if (numero !== ultimaCarga.current) return;
-      setErrorCarga("No se pudo cargar la caja. Revisa tu conexión e intenta de nuevo.");
-    } finally {
-      if (numero === ultimaCarga.current) setRecargando(false);
-    }
-  }, [clubId]);
+  // silencioso: la revisión periódica no mueve el ícono de actualizar.
+  const cargar = useCallback(
+    async (silencioso: boolean) => {
+      if (!clubId) return;
+      const numero = ++ultimaCarga.current;
+      enVuelo.current = true;
+      if (!silencioso) setRecargando(true);
+      try {
+        const resultado = await cargarCaja(clubId);
+        if (numero !== ultimaCarga.current) return;
+        setFecha(resultado.fecha);
+        setDatos(resultado.datos);
+        setErrorCarga(null);
+        setFalloRed(false);
+        setActualizado(new Date());
+      } catch (err) {
+        if (numero !== ultimaCarga.current) return;
+        if (esErrorDeRed(err)) {
+          setFalloRed(true);
+        } else {
+          console.error("Error cargando la caja:", err);
+          setErrorCarga("Revisa tu conexión e intenta de nuevo.");
+        }
+      } finally {
+        if (numero === ultimaCarga.current) {
+          enVuelo.current = false;
+          setRecargando(false);
+        }
+      }
+    },
+    [clubId],
+  );
+  const recargar = useCallback(() => cargar(false), [cargar]);
 
   useEffect(() => {
     recargar();
   }, [recargar]);
+
+  // Revisión periódica mientras la pantalla está a la vista, y al volver la
+  // red o la pantalla. No pisa lo que el staff está capturando: las hojas
+  // guardan su propio estado y solo cambian los números de la base.
+  useEffect(() => {
+    if (!clubId) return;
+    const revisar = () => {
+      if (document.visibilityState === "visible" && !enVuelo.current) void cargar(true);
+    };
+    const id = window.setInterval(revisar, sinConexion ? CADA_MS_SIN_RED : CADA_MS);
+    window.addEventListener("online", revisar);
+    document.addEventListener("visibilitychange", revisar);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("online", revisar);
+      document.removeEventListener("visibilitychange", revisar);
+    };
+  }, [clubId, cargar, sinConexion]);
 
   const nocheCerrada = datos?.noche?.estado === "cerrada";
   // Una sola pasada por render de datos (no por tecla del buscador: la
@@ -302,7 +350,19 @@ export default function StaffCajaPage() {
           </header>
         )}
 
-        {errorCarga && (
+        {sinConexion && (
+          <div role="status" className="sticky top-0 z-30 flex items-start gap-2 rounded-lg border border-caja-aviso/60 bg-caja-superficie px-3 py-2 text-sm">
+            <WifiOff className="mt-0.5 size-4 shrink-0 text-caja-aviso" aria-hidden="true" />
+            <p>
+              <span className="font-medium">Sin conexión · reconectando…</span>
+              <span className="block text-xs text-caja-secundario">
+                {actualizado ? `Los montos son de las ${horaMinSeg(actualizado)} y pueden haber cambiado. ` : ""}No se guarda nada hasta que vuelva la señal; lo que capturaste no se pierde.
+              </span>
+            </p>
+          </div>
+        )}
+
+        {errorCarga && !(datos && sinConexion) && (
           <div className="flex flex-col gap-2 rounded-lg border border-caja-borde p-3">
             <p className="text-sm text-destructive" role="alert">No pudimos cargar la caja. {errorCarga}</p>
             <button type="button" onClick={recargar} className="h-11 w-fit rounded-md border border-caja-borde px-3 text-sm">Reintentar</button>
@@ -321,6 +381,7 @@ export default function StaffCajaPage() {
             permisos={permisos}
             esGerente={esGerente}
             nocheCerrada={nocheCerrada}
+            sinConexion={sinConexion}
             onVolver={() => setMesaId(null)}
             onCambio={recargar}
           />

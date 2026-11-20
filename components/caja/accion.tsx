@@ -1,48 +1,88 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { motivoValido, MIN_MOTIVO } from "@/lib/domain/caja";
-import { mensajeParaUsuario } from "@/lib/errores-base";
+import { esErrorDeRed, mensajeParaUsuario } from "@/lib/errores-base";
 
 // Resultado mínimo de una llamada a Supabase (rpc o select).
-type Resultado = { error: { message: string; code?: string } | null };
+type ErrorLlamada = { message: string; code?: string } | null;
+type Resultado<T = unknown> = { data?: T | null; error: ErrorLlamada };
 
-// Ejecuta una acción de caja contra la base y guarda su estado: ocupado
+// Un paso de un flujo: corre una llamada y, si falla, deja el mensaje para
+// la persona. Devuelve si salió bien, el dato de la base y el error.
+export type Paso = <T>(accion: () => PromiseLike<Resultado<T>>) => Promise<{ ok: boolean; data: T | null; error: ErrorLlamada }>;
+
+const SIN_RESPUESTA =
+  "No hubo respuesta por la señal. Tu captura sigue aquí: vuelve a intentar; si ya se había guardado, no se duplica.";
+
+// Ejecuta acciones de caja contra la base y guarda su estado: ocupado
 // mientras corre y el mensaje de error: el de las funciones de caja (en
-// español) tal cual; cualquier otro, genérico (lib/errores-base.ts). Devuelve true si salió bien.
+// español) tal cual; uno claro si falló la red; cualquier otro, genérico
+// (lib/errores-base.ts).
+//
+// Doble toque: el candado es un ref (síncrono), no solo el estado: un
+// segundo toque antes de que React vuelva a pintar el botón desactivado
+// no entra. Un flujo de varios pasos (cerrar y cuadrar, varios renglones)
+// conserva el candado de principio a fin.
 export function useAccion() {
   const [ocupado, setOcupado] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const enCurso = useRef(false);
 
-  const ejecutar = useCallback(
-    async (accion: () => PromiseLike<Resultado>, despues?: () => Promise<void> | void) => {
+  const paso: Paso = useCallback(async <T,>(accion: () => PromiseLike<Resultado<T>>) => {
+    try {
+      const r = await accion();
+      if (r.error) {
+        setError(esErrorDeRed(r.error) ? SIN_RESPUESTA : mensajeParaUsuario(r.error));
+        return { ok: false, data: null, error: r.error };
+      }
+      return { ok: true, data: r.data ?? null, error: null };
+    } catch (err) {
+      console.error("Error en acción de caja:", err);
+      setError(SIN_RESPUESTA);
+      return { ok: false, data: null, error: { message: "sin respuesta" } };
+    }
+  }, []);
+
+  // Corre un flujo completo con el candado puesto. Devuelve true si salió bien.
+  const correr = useCallback(
+    async (flujo: (p: Paso) => Promise<boolean>) => {
+      if (enCurso.current) return false;
+      enCurso.current = true;
       setOcupado(true);
       setError(null);
       try {
-        const { error: errorBase } = await accion();
-        if (errorBase) {
-          setError(mensajeParaUsuario(errorBase));
-          return false;
-        }
-        if (despues) await despues();
-        return true;
+        return await flujo(paso);
       } catch (err) {
         console.error("Error en acción de caja:", err);
-        setError("No se pudo completar. Revisa tu conexión e intenta de nuevo.");
+        setError(SIN_RESPUESTA);
         return false;
       } finally {
+        enCurso.current = false;
         setOcupado(false);
       }
     },
-    [],
+    [paso],
+  );
+
+  // Una sola llamada y, si salió bien, lo que siga (recargar, cerrar la hoja).
+  const ejecutar = useCallback(
+    (accion: () => PromiseLike<Resultado>, despues?: () => Promise<void> | void) =>
+      correr(async (p) => {
+        const r = await p(accion);
+        if (!r.ok) return false;
+        if (despues) await despues();
+        return true;
+      }),
+    [correr],
   );
 
   const limpiarError = useCallback(() => setError(null), []);
 
-  return { ocupado, error, ejecutar, limpiarError };
+  return { ocupado, error, ejecutar, correr, limpiarError };
 }
 
 export function MensajeError({ mensaje }: { mensaje: string | null }) {
