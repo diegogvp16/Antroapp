@@ -258,6 +258,8 @@ export default function StaffCajaPage() {
           if (uno[i].error) console.error(`Error leyendo permiso ${p}:`, uno[i].error);
           nuevos[p] = uno[i].data === true;
         });
+        // Sin permisos leídos la mesa se vería sin botones y sin explicación.
+        if (uno.some((x) => x.error)) setErrorCarga("No pudimos leer tus permisos de caja. Revisa tu conexión y vuelve a abrir la caja.");
       }
       setPermisos(nuevos);
       setClubId(club);

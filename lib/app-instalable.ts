@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 
 // Metadatos de una app de trabajo instalable (Staff, RP, Dueño): su manifest
 // (public/<clave>.webmanifest) y su icono y nombre en iPhone. El layout de la
-// sección los exporta; reemplazan a los del cliente (app/manifest.ts).
+// sección los exporta; reemplazan a los del cliente (public/manifest.webmanifest,
+// declarado en app/layout.tsx).
 export function metadataApp(clave: "staff" | "rp" | "dueno", nombre: string): Metadata {
   return {
     manifest: `/${clave}.webmanifest`,

@@ -138,10 +138,10 @@ export async function POST(request: Request) {
       });
 
     if (createUserError || !userData.user) {
-      return NextResponse.json(
-        { error: createUserError?.message ?? "No se pudo crear el usuario." },
-        { status: 400 },
-      );
+      // El texto de Supabase Auth viene en inglés y con detalles internos:
+      // se traduce lo conocido y lo demás va a un mensaje genérico.
+      console.error("create-staff: createUser", createUserError);
+      return NextResponse.json({ error: mensajeAltaCuenta(createUserError) }, { status: 400 });
     }
 
     const { error: profileError } = await supabaseAdmin
@@ -156,10 +156,8 @@ export async function POST(request: Request) {
     if (profileError) {
       // Si el perfil no se pudo crear, no dejamos la cuenta de auth huérfana.
       await supabaseAdmin.auth.admin.deleteUser(userData.user.id);
-      return NextResponse.json(
-        { error: profileError.message },
-        { status: 400 },
-      );
+      console.error("create-staff: perfil", profileError);
+      return NextResponse.json({ error: "No se pudo crear la cuenta. Intenta de nuevo." }, { status: 400 });
     }
 
     return NextResponse.json({
@@ -173,4 +171,20 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+}
+
+// Mensaje para quien da de alta la cuenta, sin textos internos de Supabase.
+function mensajeAltaCuenta(error: { code?: string; message?: string; status?: number } | null): string {
+  const codigo = error?.code ?? "";
+  const texto = (error?.message ?? "").toLowerCase();
+  if (codigo === "email_exists" || codigo === "user_already_exists" || texto.includes("already been registered")) {
+    return "Ya existe una cuenta con ese correo.";
+  }
+  if (codigo === "weak_password" || texto.includes("password")) {
+    return "La contraseña es muy corta o muy común. Usa una más larga.";
+  }
+  if (codigo === "email_address_invalid" || texto.includes("email")) {
+    return "Revisa el correo: no parece válido.";
+  }
+  return "No se pudo crear la cuenta. Intenta de nuevo.";
 }

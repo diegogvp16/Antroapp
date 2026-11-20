@@ -446,7 +446,7 @@ export function HojaMotivo({
         <p className="text-sm text-caja-secundario">{descripcion}</p>
         <label>
           <span className={ETIQUETA}>Motivo (obligatorio, mínimo {MIN_MOTIVO} letras)</span>
-          <input value={motivo} onChange={(e) => setMotivo(e.target.value)} maxLength={300} placeholder="Ej. capturado dos veces" className={CAMPO} />
+          <input data-autofocus value={motivo} onChange={(e) => setMotivo(e.target.value)} maxLength={300} placeholder="Ej. capturado dos veces" className={CAMPO} />
         </label>
       </div>
     </Hoja>

@@ -358,3 +358,21 @@ body:has(.theme-noche) {
 body:has(.theme-caja) {
   background-color: var(--caja-fondo);
 }
+
+/*
+ * Tamaño táctil en las pantallas operativas (staff, RP, dueño, admin): en el
+ * celular, ningún botón, campo ni select de shadcn mide menos de 44 px,
+ * aunque la pantalla use size="sm" o el alto por defecto (32 px). Un solo
+ * punto, en lugar de cambiar cada botón. En escritorio (puntero fino y
+ * ventana ancha) se respetan los tamaños compactos.
+ */
+@media (pointer: coarse), (max-width: 640px) {
+  .theme-control [data-slot="button"],
+  .theme-control [data-slot="input"],
+  .theme-control select {
+    min-height: 44px;
+  }
+  .theme-control [data-slot="button"][data-size^="icon"] {
+    min-width: 44px;
+  }
+}

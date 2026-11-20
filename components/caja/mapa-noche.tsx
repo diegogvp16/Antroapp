@@ -84,13 +84,17 @@ export function MapaNoche({
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
           placeholder="Buscar mesa, cliente o RP"
-          className="h-11 w-full rounded-lg border border-caja-control bg-caja-superficie pl-9 pr-3 text-sm text-caja-texto placeholder:text-caja-secundario outline-none focus-visible:border-caja-dorado"
+          className="h-11 w-full rounded-lg border border-caja-control bg-caja-superficie pl-9 pr-3 text-base text-caja-texto placeholder:text-caja-secundario outline-none focus-visible:border-caja-dorado"
         />
       </label>
 
       {visibles.length === 0 ? (
         <p className="py-6 text-center text-sm text-caja-secundario">
-          {busquedaDiferida ? "Ninguna mesa coincide con la búsqueda." : "No hay mesas en esta pestaña."}
+          {busquedaDiferida
+            ? "Ninguna mesa coincide con la búsqueda."
+            : mesas.length === 0
+              ? "Este antro no tiene mesas dadas de alta. El dueño las agrega desde su panel."
+              : "No hay mesas en esta pestaña."}
         </p>
       ) : (
         <ul className="grid grid-cols-2 gap-2">

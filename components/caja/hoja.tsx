@@ -26,12 +26,14 @@ export function Hoja({
 
   useEffect(() => {
     if (!abierta) return;
-    // Foco: entra a la hoja (primer campo o, si no hay, el panel), no se sale
-    // con Tab y regresa al elemento que la abrió al cerrar.
+    // Foco: entra a la hoja (al campo marcado con data-autofocus o, si no
+    // hay, al panel: en el celular enfocar un campo abre el teclado y tapa la
+    // mitad de la hoja, así que solo se hace donde hay que escribir sí o sí),
+    // no se sale con Tab y regresa al elemento que la abrió al cerrar.
     const previoFoco = document.activeElement as HTMLElement | null;
     const enfocables = () =>
       Array.from(panel.current?.querySelectorAll<HTMLElement>(ENFOCABLES) ?? []).filter((el) => !el.hasAttribute("disabled"));
-    const primerCampo = panel.current?.querySelector<HTMLElement>("input, textarea, select");
+    const primerCampo = panel.current?.querySelector<HTMLElement>("[data-autofocus]");
     (primerCampo ?? panel.current)?.focus();
 
     const alTeclado = (e: KeyboardEvent) => {

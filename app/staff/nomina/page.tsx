@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ReporteNomina } from "@/components/nomina/reporte-nomina";
+import { mensajeParaUsuario } from "@/lib/errores-base";
 
 type Estado =
   | { tipo: "cargando" }
@@ -50,7 +51,7 @@ export default function StaffNominaPage() {
       }
       const clubRes = await supabase.from("clubs").select("nombre").eq("id", clubId).maybeSingle();
       if (clubRes.error) {
-        setEstado({ tipo: "error", mensaje: clubRes.error.message });
+        setEstado({ tipo: "error", mensaje: mensajeParaUsuario(clubRes.error, "No pudimos cargar tu antro. Intenta de nuevo.") });
         return;
       }
       setEstado({

@@ -45,6 +45,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { AVISO_QR, enlaceCompartir, fechaLarga, mensajeReserva } from "@/lib/domain/compartir";
+import { mensajeParaUsuario } from "@/lib/errores-base";
 
 interface RpSession {
   id: string;
@@ -138,6 +139,10 @@ export default function RpPanelPage() {
   }));
   const [resumenes, setResumenes] = useState<Resumenes>(RESUMENES_VACIOS);
   const [loadingRendimiento, setLoadingRendimiento] = useState(true);
+  // Si falla, no se muestran ceros como si fueran reales.
+  const [errorRendimiento, setErrorRendimiento] = useState<string | null>(null);
+  // Falla al leer la cuenta (red): se avisa y se reintenta, sin cerrar sesión.
+  const [errorSesion, setErrorSesion] = useState<string | null>(null);
   const [pagoRpModo, setPagoRpModo] = useState<"reserva" | "dia">("reserva");
   const [pagosDiaSemana, setPagosDiaSemana] = useState<PagoDiaRow[]>([]);
 
@@ -148,6 +153,7 @@ export default function RpPanelPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reserva, setReserva] = useState<ReservaResumen | null>(null);
+  const [versionReservas, setVersionReservas] = useState(0);
   const [mostrarNueva, setMostrarNueva] = useState(false);
 
   const minDate = nocheOperativaMexico(); // noche en curso (corte 08:00)
@@ -172,8 +178,12 @@ export default function RpPanelPage() {
 
       // Este panel es solo para RPs: sin el check del rol, cualquier sesión
       // (cliente, gerente, dueño) podía abrirlo escribiendo la URL.
-      if (profileError || !profile || profile.role !== "rp") {
-        console.error("Error cargando perfil RP:", profileError);
+      if (profileError) {
+        setErrorSesion(mensajeParaUsuario(profileError, "No pudimos cargar tu cuenta. Revisa tu conexión e intenta de nuevo."));
+        setCheckingSession(false);
+        return;
+      }
+      if (!profile || profile.role !== "rp") {
         await supabase.auth.signOut();
         router.replace("/cliente/login");
         return;
@@ -213,6 +223,8 @@ export default function RpPanelPage() {
           setMisTurnos((turnosData ?? []) as TurnoRow[]);
         }
         setLoadingTurnos(false);
+        // El panel se muestra ya; el rendimiento llega después con su "Cargando…".
+        setCheckingSession(false);
 
         await fetchRendimiento(profile.id, profile.club_id, modoActual);
       }
@@ -226,6 +238,7 @@ export default function RpPanelPage() {
       modo: "reserva" | "dia",
     ) {
       setLoadingRendimiento(true);
+      setErrorRendimiento(null);
       try {
         const supabase = createClient();
         // Todo se filtra por la NOCHE (reservations.fecha / rp_pagos_dia.fecha),
@@ -300,6 +313,7 @@ export default function RpPanelPage() {
         });
       } catch (err) {
         console.error("Error cargando rendimiento del RP:", err);
+        setErrorRendimiento("No pudimos cargar lo que llevas ganado. Revisa tu conexión y vuelve a abrir el panel.");
       } finally {
         setLoadingRendimiento(false);
       }
@@ -366,6 +380,7 @@ export default function RpPanelPage() {
         throw insertError;
       }
 
+      setVersionReservas((v) => v + 1);
       setReserva({
         cliente_nombre: clienteNombre.trim(),
         telefono: clienteTelefono.trim(),
@@ -384,7 +399,20 @@ export default function RpPanelPage() {
   }
 
   if (checkingSession) {
-    return null;
+    return (
+      <div className="theme-caja flex flex-1 items-center justify-center px-4 py-10">
+        <p className="text-sm text-caja-secundario">Cargando tu panel…</p>
+      </div>
+    );
+  }
+  if (errorSesion) {
+    return (
+      <div className="theme-caja flex flex-1 flex-col items-center justify-center px-4 py-10">
+        <div className="w-full max-w-sm">
+          <ErrorConReintento mensaje={errorSesion} />
+        </div>
+      </div>
+    );
   }
 
   // Directo al chat del cliente (con el teléfono que capturó el RP).
@@ -449,6 +477,8 @@ export default function RpPanelPage() {
               <CardContent className="flex flex-col gap-3 px-6 pb-6">
                 {loadingRendimiento ? (
                   <p className="text-sm text-muted-foreground">Cargando...</p>
+                ) : errorRendimiento ? (
+                  <ErrorConReintento mensaje={errorRendimiento} />
                 ) : (
                   <dl className="grid grid-cols-2 gap-3">
                     {(
@@ -539,6 +569,8 @@ export default function RpPanelPage() {
             <CardContent className="flex flex-col gap-4 px-6 pb-6">
               {loadingRendimiento ? (
                 <p className="text-sm text-muted-foreground">Cargando...</p>
+              ) : errorRendimiento ? (
+                <ErrorConReintento mensaje={errorRendimiento} />
               ) : (
                 <>
                   {(
@@ -738,12 +770,25 @@ export default function RpPanelPage() {
               </Card>
             ) : null}
 
-            <ReservasRp clubNombre={clubNombre} />
+            {/* La key cambia al crear una reserva: la lista se vuelve a leer y ya la incluye. */}
+            <ReservasRp key={versionReservas} clubNombre={clubNombre} />
           </div>
         )}
       </main>
 
       <BottomNav active={activeTab} onChange={setActiveTab} />
+    </div>
+  );
+}
+
+// Error con un botón para volver a cargar el panel (44 px).
+function ErrorConReintento({ mensaje }: { mensaje: string }) {
+  return (
+    <div className="flex flex-col gap-3" role="alert">
+      <p className="text-sm text-destructive">{mensaje}</p>
+      <button type="button" onClick={() => window.location.reload()} className="h-11 w-fit rounded-md border border-border px-4 text-sm font-medium">
+        Reintentar
+      </button>
     </div>
   );
 }
