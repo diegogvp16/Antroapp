@@ -67,7 +67,10 @@ export function ReservasRp({ clubNombre }: { clubNombre: string | null }) {
   }, [cargar]);
 
   const abierta = reservas?.find((r) => r.reservation_id === abiertaId);
-  if (abierta) return <DetalleReservaRp r={abierta} clubNombre={clubNombre} onVolver={() => setAbiertaId(null)} />;
+  if (abierta) {
+    const sinCuotaAun = progreso.tiene_cuota && progreso.llevas < progreso.cuota;
+    return <DetalleReservaRp r={abierta} clubNombre={clubNombre} sinCuotaAun={sinCuotaAun} onVolver={() => setAbiertaId(null)} />;
+  }
 
   const conteo = reservas ? contarEstados(reservas) : null;
   const total = reservas?.length ?? 0;

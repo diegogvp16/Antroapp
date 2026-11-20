@@ -15,10 +15,13 @@ import {
 export function DetalleReservaRp({
   r,
   clubNombre,
+  sinCuotaAun,
   onVolver,
 }: {
   r: ReservaRpDetalle;
   clubNombre: string | null;
+  // El RP tiene regla con cuota y todavía no la alcanza esta semana.
+  sinCuotaAun: boolean;
   onVolver: () => void;
 }) {
   const wa = enlaceWhatsApp(
@@ -100,7 +103,9 @@ export function DetalleReservaRp({
           {r.comision_centavos !== null ? formatearCentavos(r.comision_centavos) : "—"}
         </p>
         <p className="text-xs text-caja-secundario">
-          {r.comision_centavos !== null
+          {r.comision_centavos === 0 && sinCuotaAun
+            ? "En $0 porque todavía no llegas a la cuota de la semana."
+            : r.comision_centavos !== null
             ? "Nace al cuadrar la mesa y la paga el antro en su nómina."
             : r.estado === "consumio"
               ? "Se calcula cuando el gerente cuadre la mesa."
@@ -108,7 +113,8 @@ export function DetalleReservaRp({
         </p>
       </section>
 
-      <div className="sticky bottom-0 mt-auto bg-caja-fondo pt-3 pb-3">
+      {/* Por encima de la barra de pestañas del panel (fija abajo). */}
+      <div className="sticky bottom-[calc(4.25rem+env(safe-area-inset-bottom))] mt-auto bg-caja-fondo pt-3 pb-3">
         {wa ? (
           <a
             href={wa}

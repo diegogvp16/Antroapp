@@ -94,8 +94,12 @@ export async function escribirCaja({ svc, clubId, fechaObjetivo, reservas, consu
     for (const p of plan) {
       const mesa = mesas[p.mesa % mesas.length].id;
       const sesion = randomUUID();
-      const abiertaEn = alHora(noche, 22, minuto);
-      minuto += 25;
+      // Orden real de la noche: llegan y se sientan (21:30–22:10), consumen
+      // (22:30 en adelante) y se cierra y cuadra de madrugada (03:00–04:00).
+      const abiertaEn = alHora(noche, 21, 30 + minuto);
+      const cerradaEn = alHora(noche, 27, minuto);
+      const cuadradaEn = alHora(noche, 27, 30 + minuto);
+      minuto += 3;
       ok(await svc.from("mesa_sesiones").insert({ id: sesion, club_id: clubId, noche_id: nocheId, mesa_id: mesa, estado: "abierta", abierta_por: staff, abierta_en: abiertaEn }), "sesión");
       tot.sesiones++;
       tot[p.estado === "abierta" ? "abiertas" : p.estado === "cerrada" ? "cerradas" : "cuadradas"]++;
@@ -144,11 +148,11 @@ export async function escribirCaja({ svc, clubId, fechaObjetivo, reservas, consu
       if (pagos.length) ok(await svc.from("caja_pagos").insert(pagos), "pagos");
 
       if (p.estado !== "abierta") {
-        ok(await svc.from("mesa_sesiones").update({ estado: "cerrada", cerrada_por: staff, cerrada_en: new Date().toISOString() }).eq("id", sesion), "cerrar");
+        ok(await svc.from("mesa_sesiones").update({ estado: "cerrada", cerrada_por: staff, cerrada_en: cerradaEn }).eq("id", sesion), "cerrar");
       }
       if (p.estado === "cuadrada") {
         ok(await svc.from("caja_cuadres").insert({ club_id: clubId, noche_id: nocheId, sesion_id: sesion, tipo: "mesa", registrado_centavos: regMesa, cobrado_efectivo_centavos: ef, cobrado_tarjeta_centavos: ta, cobrado_otro_centavos: 0, saldo_sin_cobrar_centavos: 0, hecho_por: gerente }), "cuadre mesa");
-        ok(await svc.from("mesa_sesiones").update({ estado: "cuadrada", cuadrada_por: gerente, cuadrada_en: new Date().toISOString() }).eq("id", sesion), "cuadrar");
+        ok(await svc.from("mesa_sesiones").update({ estado: "cuadrada", cuadrada_por: gerente, cuadrada_en: cuadradaEn }).eq("id", sesion), "cuadrar");
         for (const { cuenta, r, base } of cuentas) {
           ok(await svc.from("mesa_cuentas").update({ liquidada_en: new Date().toISOString() }).eq("id", cuenta), "liquidar");
           if (base > 0) ok(await svc.from("reservations").update({ consumo_monto: Math.round(base) / 100 }).eq("id", r.id), "consumo reserva");
