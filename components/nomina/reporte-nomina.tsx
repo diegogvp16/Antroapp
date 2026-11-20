@@ -1,5 +1,6 @@
 "use client";
 
+import { mensajeParaUsuario } from "@/lib/errores-base";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/components/ui/badge";
@@ -67,7 +68,7 @@ export function ReporteNomina({ clubId, clubNombre }: { clubId: string; clubNomb
       });
       if (numero !== ultimaCarga.current) return;
       if (errorBase) {
-        setError(errorBase.message);
+        setError(mensajeParaUsuario(errorBase, "No pudimos cargar la nómina. Intenta de nuevo."));
         setFilas(null);
         return;
       }

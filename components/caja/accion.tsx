@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { motivoValido, MIN_MOTIVO } from "@/lib/domain/caja";
+import { mensajeParaUsuario } from "@/lib/errores-base";
 
 // Resultado mínimo de una llamada a Supabase (rpc o select).
-type Resultado = { error: { message: string } | null };
+type Resultado = { error: { message: string; code?: string } | null };
 
 // Ejecuta una acción de caja contra la base y guarda su estado: ocupado
-// mientras corre y el mensaje de error de la base, tal cual (las funciones
-// de caja responden en español). Devuelve true si salió bien.
+// mientras corre y el mensaje de error: el de las funciones de caja (en
+// español) tal cual; cualquier otro, genérico (lib/errores-base.ts). Devuelve true si salió bien.
 export function useAccion() {
   const [ocupado, setOcupado] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +24,7 @@ export function useAccion() {
       try {
         const { error: errorBase } = await accion();
         if (errorBase) {
-          setError(errorBase.message);
+          setError(mensajeParaUsuario(errorBase));
           return false;
         }
         if (despues) await despues();

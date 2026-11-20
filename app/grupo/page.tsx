@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { mensajeParaUsuario } from "@/lib/errores-base";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { TarjetaAntro, TotalesDelGrupo } from "@/components/grupo/cifras";
@@ -99,7 +100,7 @@ export default function GrupoPage() {
       });
       if (numero !== ultimaCarga.current) return;
       if (errorBase) {
-        setError(errorBase.message);
+        setError(mensajeParaUsuario(errorBase, "No pudimos cargar el resumen del grupo. Intenta de nuevo."));
         return;
       }
       const crudas = (Array.isArray(data) ? data : []) as Record<string, unknown>[];

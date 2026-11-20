@@ -238,7 +238,7 @@ export default function StaffCajaPage() {
     } catch (err) {
       console.error("Error cargando la caja:", err);
       if (numero !== ultimaCarga.current) return;
-      setErrorCarga(err instanceof Error ? err.message : "Error desconocido");
+      setErrorCarga("No se pudo cargar la caja. Revisa tu conexión e intenta de nuevo.");
     } finally {
       if (numero === ultimaCarga.current) setRecargando(false);
     }

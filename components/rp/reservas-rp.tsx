@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { mensajeParaUsuario } from "@/lib/errores-base";
 import { cn } from "@/lib/utils";
 import { formatearCentavos } from "@/lib/domain/caja";
 import { etiquetaNoche, etiquetaRango, mesOperativo, semanaOperativa, type RangoNoches } from "@/lib/fechas";
@@ -53,7 +54,7 @@ export function ReservasRp({ clubNombre }: { clubNombre: string | null }) {
     ]);
     if (n !== ultima.current) return;
     if (r.error) {
-      setError(r.error.message);
+      setError(mensajeParaUsuario(r.error, "No pudimos cargar tus reservas. Intenta de nuevo."));
       setReservas([]);
     } else {
       setReservas((r.data ?? []) as ReservaRpDetalle[]);
