@@ -94,11 +94,6 @@ async function limpiar() {
   console.log(`\nLimpieza (restos): ${JSON.stringify(quedan[0])}`);
 }
 
-const contar = async (tabla, filtro) => {
-  let q = svc.from(tabla).select("id", { count: "exact", head: true });
-  for (const [k, v] of Object.entries(filtro)) q = q.eq(k, v);
-  return (await q).count;
-};
 
 try {
   // ======================= Escenario =======================
