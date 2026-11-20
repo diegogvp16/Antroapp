@@ -2,7 +2,11 @@
 // probarlas sin red.
 
 export const VENTANA_MINUTOS = 15;
-export const MAX_FALLOS_POR_CORREO = 5;
+// Bloqueo estricto por correo + IP: frena a quien adivina desde un equipo.
+export const MAX_FALLOS_POR_CORREO_E_IP = 5;
+// Bloqueo holgado por correo (de cualquier IP): con 5 bastaría que alguien
+// fallara a propósito para dejar fuera al dueño de la cuenta toda la noche.
+export const MAX_FALLOS_POR_CORREO = 30;
 export const MAX_FALLOS_POR_IP = 20;
 
 export interface Intento {

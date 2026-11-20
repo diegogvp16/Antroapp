@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { clienteServicio, hashTexto, ipDe } from "@/lib/supabase/servicio";
 import {
   MAX_FALLOS_POR_CORREO,
+  MAX_FALLOS_POR_CORREO_E_IP,
   MAX_FALLOS_POR_IP,
   VENTANA_MINUTOS,
   fallosDesdeUltimoExito,
@@ -13,7 +14,8 @@ import {
 
 // Login con límite de intentos. Los formularios de login (cliente, dueño y
 // admin) entran por aquí: la ruta revisa los fallos recientes de ese correo
-// y de esa IP, inicia la sesión con las cookies de servidor (que el cliente
+// desde esa IP (estricto), de ese correo desde cualquier IP (holgado) y de
+// esa IP, inicia la sesión con las cookies de servidor (que el cliente
 // del navegador ya lee) y registra el resultado. Nunca guarda la contraseña;
 // correo e IP se guardan como hash.
 //
@@ -46,7 +48,7 @@ export async function POST(request: Request) {
   const desde = new Date(Date.now() - VENTANA_MINUTOS * 60_000).toISOString();
 
   const [porCorreo, porIp] = await Promise.all([
-    admin.from("login_intentos").select("exito, creado_en").eq("email_hash", emailHash)
+    admin.from("login_intentos").select("exito, creado_en, ip_hash").eq("email_hash", emailHash)
       .gte("creado_en", desde).order("creado_en", { ascending: false }).limit(50),
     admin.from("login_intentos").select("exito, creado_en").eq("ip_hash", ipHash)
       .gte("creado_en", desde).order("creado_en", { ascending: false }).limit(100),
@@ -60,8 +62,12 @@ export async function POST(request: Request) {
     minutosDeBloqueo(fallosDesdeUltimoExito((porCorreo.data ?? []) as Intento[]), MAX_FALLOS_POR_CORREO),
     minutosDeBloqueo(((porIp.data ?? []) as Intento[]).filter((i) => !i.exito), MAX_FALLOS_POR_IP),
   );
-  if (bloqueo > 0) {
-    return NextResponse.json({ error: mensajeBloqueo(bloqueo), bloqueadoMinutos: bloqueo }, { status: 429 });
+  const fallosParCorreoIp = fallosDesdeUltimoExito(
+    ((porCorreo.data ?? []) as (Intento & { ip_hash: string })[]).filter((i) => i.ip_hash === ipHash),
+  );
+  const bloqueoTotal = Math.max(bloqueo, minutosDeBloqueo(fallosParCorreoIp, MAX_FALLOS_POR_CORREO_E_IP));
+  if (bloqueoTotal > 0) {
+    return NextResponse.json({ error: mensajeBloqueo(bloqueoTotal), bloqueadoMinutos: bloqueoTotal }, { status: 429 });
   }
 
   const supabase = await createClient();
@@ -73,6 +79,14 @@ export async function POST(request: Request) {
 
   if (!exito) {
     return NextResponse.json({ error: ERROR_GENERICO }, { status: 401 });
+  }
+
+  // Un RP dado de baja no entra, aunque su contraseña sea correcta. La
+  // pantalla también lo revisa; aquí no depende de ella.
+  const { data: perfil } = await admin.from("profiles").select("role, activo").eq("id", data.user.id).maybeSingle();
+  if (perfil?.role === "rp" && perfil.activo !== true) {
+    await supabase.auth.signOut();
+    return NextResponse.json({ error: "Tu cuenta ha sido desactivada, contacta al antro." }, { status: 403 });
   }
   return NextResponse.json({ ok: true, userId: data.user.id });
 }
