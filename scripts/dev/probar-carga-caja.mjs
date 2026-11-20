@@ -14,6 +14,7 @@
 import { createRequire } from "node:module";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { verificarEnvDev, conectarDevEscritura } from "../db/conexion.mjs";
@@ -159,6 +160,12 @@ try {
   const segundos = (performance.now() - t0) / 1000;
   medidas.datos = { mesas: MESAS, movimientos, segundos: Math.round(segundos), llamadas: latencias.length, p50_ms: pct(latencias, 50), p95_ms: pct(latencias, 95), max_ms: pct(latencias, 100) };
   console.log(`Datos: ${movimientos} movimientos en ${MESAS} mesas con 8 staff a la vez, ${Math.round(segundos)} s. Latencia por llamada p50 ${medidas.datos.p50_ms} ms, p95 ${medidas.datos.p95_ms} ms`);
+
+  // La noche de carga también debe cuadrar al centavo (scripts/verificar-cuadre.mjs).
+  const verif = spawnSync(process.execPath, [path.join(RAIZ, "scripts/verificar-cuadre.mjs"), `--club=${clubId}`], { encoding: "utf8" });
+  medidas.verificar_cuadre = verif.status === 0 ? "sin diferencias" : "CON DIFERENCIAS";
+  console.log("verificar-cuadre:", verif.stdout.trim().split(/\r?\n/).slice(-3).join(" | "));
+  if (verif.status !== 0) process.exitCode = 1;
 
   // ======================= Navegador =======================
   for (const perfil of [
