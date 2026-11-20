@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BottomNav, type RpTab } from "@/components/bottom-nav";
 import { ReservasRp } from "@/components/rp/reservas-rp";
+import { CuotaDeLaSemana } from "@/components/rp/tarjeta-cuota";
 import {
   describirTurno,
   esTurnoFijo,
@@ -134,9 +135,6 @@ export default function RpPanelPage() {
     mes: mesOperativo(),
   }));
   const [resumenes, setResumenes] = useState<Resumenes>(RESUMENES_VACIOS);
-  const [comisionDesbloqueoReservas, setComisionDesbloqueoReservas] = useState<
-    number | null
-  >(null);
   const [loadingRendimiento, setLoadingRendimiento] = useState(true);
   const [pagoRpModo, setPagoRpModo] = useState<"reserva" | "dia">("reserva");
   const [pagosDiaSemana, setPagosDiaSemana] = useState<PagoDiaRow[]>([]);
@@ -186,7 +184,7 @@ export default function RpPanelPage() {
       if (profile.club_id) {
         const { data: club, error: clubError } = await supabase
           .from("clubs")
-          .select("nombre, comision_desbloqueo_reservas, pago_rp_modo")
+          .select("nombre, pago_rp_modo")
           .eq("id", profile.club_id)
           .maybeSingle();
 
@@ -194,7 +192,6 @@ export default function RpPanelPage() {
           console.error("Error cargando antro del RP:", clubError);
         } else if (club) {
           setClubNombre(club.nombre);
-          setComisionDesbloqueoReservas(club.comision_desbloqueo_reservas);
           setPagoRpModo(club.pago_rp_modo);
           modoActual = club.pago_rp_modo;
         }
@@ -214,20 +211,6 @@ export default function RpPanelPage() {
           setMisTurnos((turnosData ?? []) as TurnoRow[]);
         }
         setLoadingTurnos(false);
-
-        if (modoActual === "reserva") {
-          const { data: override, error: overrideError } = await supabase
-            .from("rp_comision_overrides")
-            .select("comision_desbloqueo_reservas")
-            .eq("rp_id", profile.id)
-            .maybeSingle();
-
-          if (overrideError) {
-            console.error("Error cargando comisión personalizada:", overrideError);
-          } else if (override) {
-            setComisionDesbloqueoReservas(override.comision_desbloqueo_reservas);
-          }
-        }
 
         await fetchRendimiento(profile.id, profile.club_id, modoActual);
       }
@@ -582,20 +565,7 @@ export default function RpPanelPage() {
                     </div>
                   ))}
 
-                  {pagoRpModo === "reserva" &&
-                    comisionDesbloqueoReservas !== null &&
-                    comisionDesbloqueoReservas > 0 && (
-                      <div className="flex flex-col gap-1 border-t border-border pt-3">
-                        <p className="text-sm font-medium">
-                          Desbloqueo de comisión semanal
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          {resumenes.semana.entraron >= comisionDesbloqueoReservas
-                            ? `Llevas ${resumenes.semana.entraron} de ${comisionDesbloqueoReservas} reservas con entrada esta semana. Comisión desbloqueada.`
-                            : `Llevas ${resumenes.semana.entraron} de ${comisionDesbloqueoReservas} reservas con entrada; te faltan ${comisionDesbloqueoReservas - resumenes.semana.entraron} para desbloquear comisión.`}
-                        </p>
-                      </div>
-                    )}
+                  {pagoRpModo === "reserva" && <CuotaDeLaSemana />}
 
                   {pagoRpModo === "dia" && pagosDiaSemana.length > 0 && (
                     <div className="flex flex-col gap-1 border-t border-border pt-3">
