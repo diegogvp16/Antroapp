@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Label } from "@/components/ui/label";
 import { SELECT_CLASSES } from "@/components/caja/accion";
 import { ReporteNomina } from "@/components/nomina/reporte-nomina";
+import { TemaReportesContenedor } from "@/components/tema-reportes";
 
 interface AntroDueno {
   id: string;
@@ -69,7 +70,7 @@ export default function DuenoNominaPage() {
   const antro = antros.find((a) => a.id === clubId) ?? null;
 
   return (
-    <div className="flex flex-1 flex-col items-center px-4 py-6 sm:px-6 sm:py-10">
+    <TemaReportesContenedor className="flex flex-1 flex-col items-center px-4 py-6 sm:px-6 sm:py-10">
       <div className="flex w-full max-w-2xl min-w-0 flex-col gap-5">
         <Link
           href="/dueno/panel"
@@ -121,6 +122,6 @@ export default function DuenoNominaPage() {
           <ReporteNomina key={antro.id} clubId={antro.id} clubNombre={antro.nombre} />
         )}
       </div>
-    </div>
+    </TemaReportesContenedor>
   );
 }

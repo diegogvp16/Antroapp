@@ -18,6 +18,7 @@ import {
   type ResumenAntro,
 } from "@/lib/domain/grupo";
 import type { Profile } from "@/types";
+import { TemaReportesContenedor } from "@/components/tema-reportes";
 
 type Rol = Profile["role"];
 type RolPermitido = "dueno" | "gerente" | "admin";
@@ -122,15 +123,15 @@ export default function GrupoPage() {
 
   if (sesion.estado === "cargando") {
     return (
-      <div className="flex flex-1 flex-col items-center px-4 py-6 sm:px-6 sm:py-10">
+      <TemaReportesContenedor className="flex flex-1 flex-col items-center px-4 py-6 sm:px-6 sm:py-10">
         <p className="w-full max-w-2xl text-sm text-muted-foreground">Cargando...</p>
-      </div>
+      </TemaReportesContenedor>
     );
   }
 
   if (sesion.estado === "sin_acceso") {
     return (
-      <div className="flex flex-1 flex-col items-center px-4 py-6 sm:px-6 sm:py-10">
+      <TemaReportesContenedor className="flex flex-1 flex-col items-center px-4 py-6 sm:px-6 sm:py-10">
         <Card className="w-full max-w-2xl">
           <CardContent className="flex flex-col gap-3">
             <p className="text-sm">Esta vista es para dueños y gerentes.</p>
@@ -142,7 +143,7 @@ export default function GrupoPage() {
             </Link>
           </CardContent>
         </Card>
-      </div>
+      </TemaReportesContenedor>
     );
   }
 
@@ -152,7 +153,7 @@ export default function GrupoPage() {
   const variasCiudades = ciudades.length > 1;
 
   return (
-    <div className="flex flex-1 flex-col items-center px-4 py-6 sm:px-6 sm:py-10">
+    <TemaReportesContenedor className="flex flex-1 flex-col items-center px-4 py-6 sm:px-6 sm:py-10">
       <div className="flex w-full max-w-2xl min-w-0 flex-col gap-5">
         <Link
           href={VOLVER[sesion.rol]}
@@ -244,6 +245,6 @@ export default function GrupoPage() {
           </>
         )}
       </div>
-    </div>
+    </TemaReportesContenedor>
   );
 }
