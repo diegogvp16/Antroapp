@@ -22,6 +22,9 @@
 --      pantalla. Con la mesa bloqueada (for update), si el saldo real ya es
 --      otro, el cobro se rechaza con un mensaje claro y la app se actualiza.
 --
+--   3. Firma de la noche (sección 5): la caja revisa cada 10 s si algo
+--      cambió con una consulta mínima, y solo entonces vuelve a leer todo.
+--
 -- Compatibilidad: los parámetros nuevos tienen default null. Quien llame
 -- como antes (código de desarrollo, pruebas existentes) sigue funcionando
 -- igual, sin la protección nueva.
@@ -195,3 +198,46 @@ revoke all on function public.caja_registrar_consumo(uuid, bigint, text, uuid) f
 grant execute on function public.caja_registrar_consumo(uuid, bigint, text, uuid) to authenticated;
 revoke all on function public.caja_registrar_pago(uuid, uuid, text, bigint, text, uuid, bigint) from public, anon;
 grant execute on function public.caja_registrar_pago(uuid, uuid, text, bigint, text, uuid, bigint) to authenticated;
+
+
+-- ----------------------------------------------------------------------------
+-- 5. Firma de la noche: un texto corto que cambia cuando cambia algo de la
+--    caja (consumos, cobros, anulaciones, mesas, cuentas, cuadres, entradas
+--    por la puerta). La pantalla de caja la pide cada 10 s y solo vuelve a
+--    leer todo si cambió: con mala señal son ~0.5 KB en lugar de ~75 KB.
+--    SECURITY INVOKER: corre con los permisos de quien llama (RLS), así que
+--    solo resume lo que esa persona ya puede ver. No devuelve datos.
+-- ----------------------------------------------------------------------------
+create function public.caja_firma_noche(p_club_id uuid)
+returns text
+language sql
+stable
+security invoker
+set search_path = ''
+as $$
+  with f as (
+    select public.club_fecha_operacion(p_club_id) as fecha
+  ), n as (
+    select id, estado from public.caja_noches
+    where club_id = p_club_id and fecha_operacion = (select fecha from f)
+  )
+  select md5(concat_ws('|',
+    (select fecha::text from f),
+    (select id::text || estado from n),
+    (select count(*) || ':' || count(*) filter (where anulado) || ':' || coalesce(max(registrado_en)::text, '') || ':' || coalesce(max(anulado_en)::text, '')
+       from public.caja_consumos where noche_id = (select id from n)),
+    (select count(*) || ':' || count(*) filter (where anulado) || ':' || coalesce(max(registrado_en)::text, '') || ':' || coalesce(max(anulado_en)::text, '')
+       from public.caja_pagos where noche_id = (select id from n)),
+    (select coalesce(string_agg(id::text || estado, ',' order by id), '')
+       from public.mesa_sesiones where noche_id = (select id from n)),
+    (select count(*) || ':' || coalesce(max(c.creada_en)::text, '')
+       from public.mesa_cuentas c join public.mesa_sesiones s on s.id = c.sesion_id where s.noche_id = (select id from n)),
+    (select count(*)::text from public.caja_cuadres where noche_id = (select id from n)),
+    (select count(*) || ':' || coalesce(max(entrada_en)::text, '')
+       from public.reservations
+       where club_id = p_club_id and fecha = (select fecha from f) and (status = 'usada' or puerta_estado = 'entro')),
+    (select count(*)::text from public.club_tables where club_id = p_club_id)
+  ));
+$$;
+revoke all on function public.caja_firma_noche(uuid) from public, anon;
+grant execute on function public.caja_firma_noche(uuid) to authenticated;

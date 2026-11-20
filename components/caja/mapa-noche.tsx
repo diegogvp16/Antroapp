@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -47,7 +47,13 @@ export function MapaNoche({
     () => Object.fromEntries(PESTANAS_MAPA.map((p) => [p.id, mesas.filter((m) => enPestana(m, p.id)).length])) as Record<PestanaMapa, number>,
     [mesas],
   );
-  const visibles = mesas.filter((m) => enPestana(m, pestana) && coincideBusqueda(m, busqueda));
+  // La lista se filtra con el valor diferido: el campo responde a cada tecla
+  // aunque el teléfono tarde en volver a pintar 50 mesas.
+  const busquedaDiferida = useDeferredValue(busqueda);
+  const visibles = useMemo(
+    () => mesas.filter((m) => enPestana(m, pestana) && coincideBusqueda(m, busquedaDiferida)),
+    [mesas, pestana, busquedaDiferida],
+  );
 
   return (
     <div className="flex flex-col gap-3">
@@ -84,7 +90,7 @@ export function MapaNoche({
 
       {visibles.length === 0 ? (
         <p className="py-6 text-center text-sm text-caja-secundario">
-          {busqueda ? "Ninguna mesa coincide con la búsqueda." : "No hay mesas en esta pestaña."}
+          {busquedaDiferida ? "Ninguna mesa coincide con la búsqueda." : "No hay mesas en esta pestaña."}
         </p>
       ) : (
         <ul className="grid grid-cols-2 gap-2">

@@ -1,10 +1,12 @@
 -- ============================================================================
 -- Rollback de sql/2026-11-21-caja-idempotencia.sql
 -- Deja caja_registrar_consumo y caja_registrar_pago exactamente como en
--- sql/2026-11-20-caja-por-mesa.sql y quita las columnas clave_cliente.
+-- sql/2026-11-20-caja-por-mesa.sql, quita las columnas clave_cliente y la
+-- función caja_firma_noche.
 -- Va ANTES del rollback de caja-por-mesa (orden inverso del pase).
 -- ============================================================================
 
+drop function public.caja_firma_noche(uuid);
 drop function public.caja_registrar_consumo(uuid, bigint, text, uuid);
 drop function public.caja_registrar_pago(uuid, uuid, text, bigint, text, uuid, bigint);
 

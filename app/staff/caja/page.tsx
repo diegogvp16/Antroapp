@@ -74,6 +74,17 @@ async function todas<T>(armar: () => ConsultaPaginada, que: string): Promise<T[]
   }
 }
 
+// Firma de la noche: cambia cuando cambia algo de la caja. Nula si la base
+// aún no tiene la función (entonces cada revisión lee todo, como antes).
+async function leerFirma(clubId: string): Promise<string | null> {
+  const r = await createClient().rpc("caja_firma_noche", { p_club_id: clubId });
+  if (r.error) {
+    if (r.error.code === "PGRST202") return null;
+    throw new Error(`Firma: ${r.error.message}`);
+  }
+  return typeof r.data === "string" ? r.data : null;
+}
+
 // Lee todo lo de la noche operativa en curso del club.
 async function cargarCaja(clubId: string): Promise<{ fecha: string; datos: DatosCaja }> {
   const supabase = createClient();
@@ -106,7 +117,7 @@ async function cargarCaja(clubId: string): Promise<{ fecha: string; datos: Datos
   const reservas = filas<ReservaSentable>(reservasRes, "Reservas");
 
   let sesiones: MesaSesion[] = [];
-  const cuentas: MesaCuenta[] = [];
+  let cuentas: MesaCuenta[] = [];
   let consumos: CajaConsumo[] = [];
   let pagos: CajaPago[] = [];
   let cuadres: CajaCuadre[] = [];
@@ -114,20 +125,30 @@ async function cargarCaja(clubId: string): Promise<{ fecha: string; datos: Datos
   if (noche) {
     const nocheId = noche.id;
     // Orden con desempate por id: estable entre páginas.
-    [sesiones, consumos, pagos, cuadres] = await Promise.all([
+    // Las cuentas se filtran por la noche de su sesión (join en la base),
+    // en el mismo viaje que lo demás.
+    let cuentasConSesion: (MesaCuenta & { mesa_sesiones?: unknown })[];
+    [sesiones, consumos, pagos, cuadres, cuentasConSesion] = await Promise.all([
       todas<MesaSesion>(() => supabase.from("mesa_sesiones").select(COLUMNAS_SESION).eq("noche_id", nocheId).order("abierta_en").order("id"), "Sesiones"),
       todas<CajaConsumo>(() => supabase.from("caja_consumos").select(COLUMNAS_CONSUMO).eq("noche_id", nocheId).order("registrado_en").order("id"), "Consumos"),
       todas<CajaPago>(() => supabase.from("caja_pagos").select(COLUMNAS_PAGO).eq("noche_id", nocheId).order("registrado_en").order("id"), "Pagos"),
       todas<CajaCuadre>(() => supabase.from("caja_cuadres").select(COLUMNAS_CUADRE).eq("noche_id", nocheId).order("id"), "Cuadres"),
+      todas<MesaCuenta & { mesa_sesiones?: unknown }>(
+        () =>
+          supabase
+            .from("mesa_cuentas")
+            .select(`${COLUMNAS_CUENTA}, mesa_sesiones!inner(noche_id)`)
+            .eq("mesa_sesiones.noche_id", nocheId)
+            .order("creada_en")
+            .order("id"),
+        "Cuentas",
+      ),
     ]);
-
-    // Cuentas por lotes de sesiones (la lista de ids va en la URL).
-    for (let i = 0; i < sesiones.length; i += 150) {
-      const ids = sesiones.slice(i, i + 150).map((x) => x.id);
-      cuentas.push(
-        ...(await todas<MesaCuenta>(() => supabase.from("mesa_cuentas").select(COLUMNAS_CUENTA).in("sesion_id", ids).order("creada_en").order("id"), "Cuentas")),
-      );
-    }
+    cuentas = cuentasConSesion.map((c) => {
+      const copia = { ...c };
+      delete copia.mesa_sesiones;
+      return copia;
+    });
   }
 
   const sentadas = new Set(cuentas.map((c) => c.reservation_id).filter(Boolean));
@@ -180,10 +201,14 @@ export default function StaffCajaPage() {
   // Solo cuenta la respuesta de la última recarga (si se piden dos seguidas).
   const ultimaCarga = useRef(0);
   const enVuelo = useRef(false);
+  // Firma de la noche de la última lectura completa (caja_firma_noche).
+  const ultimaFirma = useRef<string | null>(null);
   const enLinea = useEnLinea();
   // La última lectura falló por la red (wifi sin salida, señal mala).
   const [falloRed, setFalloRed] = useState(false);
-  const [actualizado, setActualizado] = useState<Date | null>(null);
+  // Hora de la última lectura confirmada. Ref, no estado: cada revisión sin
+  // cambios no vuelve a pintar las 50 mesas; el aviso la lee al aparecer.
+  const actualizado = useRef<Date | null>(null);
   const sinConexion = !enLinea || falloRed;
 
   // Sesión: solo staff o gerente con antro.
@@ -248,13 +273,25 @@ export default function StaffCajaPage() {
       enVuelo.current = true;
       if (!silencioso) setRecargando(true);
       try {
+        // La firma se pide antes de leer: si algo cambia mientras se lee, la
+        // siguiente revisión lo nota y vuelve a leer.
+        const firma = await leerFirma(clubId);
+        if (silencioso && firma !== null && firma === ultimaFirma.current) {
+          // Nada cambió: no se baja la noche otra vez.
+          if (numero === ultimaCarga.current) {
+            setFalloRed(false);
+            actualizado.current = new Date();
+          }
+          return;
+        }
         const resultado = await cargarCaja(clubId);
+        ultimaFirma.current = firma;
         if (numero !== ultimaCarga.current) return;
         setFecha(resultado.fecha);
         setDatos(resultado.datos);
         setErrorCarga(null);
         setFalloRed(false);
-        setActualizado(new Date());
+        actualizado.current = new Date();
       } catch (err) {
         if (numero !== ultimaCarga.current) return;
         if (esErrorDeRed(err)) {
@@ -356,7 +393,7 @@ export default function StaffCajaPage() {
             <p>
               <span className="font-medium">Sin conexión · reconectando…</span>
               <span className="block text-xs text-caja-secundario">
-                {actualizado ? `Los montos son de las ${horaMinSeg(actualizado)} y pueden haber cambiado. ` : ""}No se guarda nada hasta que vuelva la señal; lo que capturaste no se pierde.
+                {actualizado.current ? `Los montos son de las ${horaMinSeg(actualizado.current)} y pueden haber cambiado. ` : ""}No se guarda nada hasta que vuelva la señal; lo que capturaste no se pierde.
               </span>
             </p>
           </div>
