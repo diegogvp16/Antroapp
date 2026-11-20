@@ -4,6 +4,8 @@ import { useState } from "react";
 import { ArrowLeft, ChevronDown, Lock, MoreHorizontal } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { FASE2_ACTIVA } from "@/lib/fase2";
+import { propinas } from "@/lib/domain/inventario";
 import { BotonPrincipal } from "@/components/caja/hoja";
 import { MensajeError, useAccion } from "@/components/caja/accion";
 import { HojaCobro, HojaConsumo, HojaCuadrar, HojaMotivo, HojaRecibir, type RenglonNuevo } from "@/components/caja/hojas-mesa";
@@ -64,6 +66,8 @@ export function DetalleMesa({
   const consumos = sesion ? datos.consumos.filter((c) => c.sesion_id === sesion.id) : [];
   const pagos = sesion ? datos.pagos.filter((p) => p.sesion_id === sesion.id) : [];
   const vigentes = consumos.filter((c) => !c.anulado);
+  // Fase 2: propinas del grupo actual (aparte del cobro y del saldo).
+  const propinasMesa = FASE2_ACTIVA ? propinas(pagos).total : 0;
   const anulados = consumos.filter((c) => c.anulado);
   const abierta = m.estado === "abierta" && !nocheCerrada;
   const puedeRecibir = (m.estado === "libre" || m.estado === "cuadrada") && permisos.abrir_mesa && !nocheCerrada;
@@ -135,11 +139,14 @@ export function DetalleMesa({
     return accion.correr(async (paso) => {
       for (const r of renglones) {
         const res = await paso(() =>
-          rpcSeguro(
-            "caja_registrar_consumo",
-            { p_cuenta_id: cuentaId, p_monto_centavos: r.cantidad * r.unitario, p_concepto: armarConcepto(r.cantidad, r.producto) },
-            { p_clave: r.clave },
-          ),
+          r.producto_id
+            ? // Fase 2: del catálogo. Precio y concepto los pone la base y descuenta existencias.
+              rpc.rpc("caja_registrar_consumo_producto", { p_cuenta_id: cuentaId, p_producto_id: r.producto_id, p_cantidad: r.cantidad, p_clave: r.clave })
+            : rpcSeguro(
+                "caja_registrar_consumo",
+                { p_cuenta_id: cuentaId, p_monto_centavos: r.cantidad * r.unitario, p_concepto: armarConcepto(r.cantidad, r.producto) },
+                { p_clave: r.clave },
+              ),
         );
         if (!res.ok) {
           await onCambio();
@@ -151,7 +158,7 @@ export function DetalleMesa({
     });
   }
 
-  function cobrar(metodo: MetodoPago, centavos: number, referencia: string, clave: string, saldoVisto: number) {
+  function cobrar(metodo: MetodoPago, centavos: number, referencia: string, clave: string, saldoVisto: number, propina: number) {
     if (!sesion) return;
     return accion.correr(async (paso) => {
       const r = await paso(() =>
@@ -160,7 +167,8 @@ export function DetalleMesa({
           { p_sesion_id: sesion.id, p_cuenta_id: null, p_metodo: metodo, p_monto_centavos: centavos, p_referencia: referencia || null },
           // El saldo que el staff tiene en pantalla: si otro ya cobró o
           // agregó consumo, la base lo rechaza en lugar de sobrepagar.
-          { p_clave: clave, p_saldo_esperado: saldoVisto },
+          // La propina solo se manda con la fase 2 (sin ella la base puede no tener el parámetro).
+          { p_clave: clave, p_saldo_esperado: saldoVisto, ...(FASE2_ACTIVA ? { p_propina_centavos: propina } : {}) },
         ),
       );
       if (!r.ok) {
@@ -324,6 +332,12 @@ export function DetalleMesa({
       {sesion && (
         <p className="mt-1 text-sm text-caja-secundario tabular-nums">
           Consumo <span className="text-caja-texto">{formatearCentavos(m.consumo)}</span> · Cobrado <span className="text-caja-texto">{formatearCentavos(m.cobrado)}</span>
+          {FASE2_ACTIVA && propinasMesa > 0 && (
+            <>
+              {" "}
+              · Propinas <span className="text-caja-texto">{formatearCentavos(propinasMesa)}</span>
+            </>
+          )}
         </p>
       )}
 
@@ -431,6 +445,7 @@ export function DetalleMesa({
                               <span className={cn(p.anulado && "line-through")}>
                                 {horaCorta(p.registrado_en)}
                                 {p.referencia ? ` · ${p.referencia}` : ""}
+                                {FASE2_ACTIVA && (p.propina_centavos ?? 0) > 0 ? ` · propina ${formatearCentavos(p.propina_centavos ?? 0)}` : ""}
                                 {p.anulado ? ` — ${p.motivo_anulacion}` : ""}
                               </span>
                               <span className={cn("tabular-nums", p.anulado && "line-through")}>{formatearCentavos(p.monto_centavos)}</span>
@@ -476,6 +491,7 @@ export function DetalleMesa({
           abierta
           onCerrar={cerrarHoja}
           productos={productosDeLaNoche(datos.consumos)}
+          catalogo={datos.productos}
           cuentas={m.cuentas}
           ocupado={accion.ocupado}
           sinConexion={sinConexion}
@@ -491,7 +507,7 @@ export function DetalleMesa({
           ocupado={accion.ocupado}
           sinConexion={sinConexion}
           error={accion.error}
-          onCobrar={(mt, c, ref, clave, saldoVisto) => void cobrar(mt, c, ref, clave, saldoVisto)}
+          onCobrar={(mt, c, ref, clave, saldoVisto, propina) => void cobrar(mt, c, ref, clave, saldoVisto, propina)}
         />
       )}
       {hoja === "cuadrar" && (
@@ -500,6 +516,7 @@ export function DetalleMesa({
           onCerrar={cerrarHoja}
           consumo={m.consumo}
           cobrado={m.cobrado}
+          propinas={propinasMesa}
           cerrarAntes={m.estado === "abierta"}
           ocupado={accion.ocupado}
           sinConexion={sinConexion}

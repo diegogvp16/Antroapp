@@ -4,6 +4,8 @@ import { useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { nuevaClave } from "@/lib/clave";
+import { FASE2_ACTIVA } from "@/lib/fase2";
+import { bajoStock, categorias, filtrarCatalogo, textoExistencias } from "@/lib/domain/inventario";
 import { BotonPrincipal, Contador, Hoja } from "@/components/caja/hoja";
 import { MensajeError } from "@/components/caja/accion";
 import {
@@ -15,6 +17,7 @@ import {
   MIN_MOTIVO,
   type MesaCuenta,
   type MetodoPago,
+  type Producto,
   type ProductoReciente,
   type ReservaSentable,
 } from "@/lib/domain/caja";
@@ -32,14 +35,28 @@ interface RenglonCaptura {
   cantidad: number;
   producto: string;
   unitario: number; // centavos
+  // Fase 2: si viene del catálogo, la base pone precio y concepto y descuenta existencias.
+  producto_id?: string;
 }
 // Con su clave de idempotencia: la misma en cada reintento de esta hoja.
 export type RenglonNuevo = RenglonCaptura & { clave: string };
+
+// Lo que se puede agregar con −/+: un producto del catálogo (fase 2) o algo
+// ya vendido esta noche (sin catálogo).
+interface Opcion {
+  clave: string;
+  nombre: string;
+  unitario: number;
+  productoId?: string;
+  existencias?: number;
+  bajo?: boolean;
+}
 
 export function HojaConsumo({
   abierta,
   onCerrar,
   productos,
+  catalogo = [],
   cuentas,
   ocupado,
   sinConexion,
@@ -49,31 +66,51 @@ export function HojaConsumo({
   abierta: boolean;
   onCerrar: () => void;
   productos: ProductoReciente[];
+  // Fase 2: catálogo del antro. Vacío (o bandera apagada) = como antes.
+  catalogo?: Producto[];
   cuentas: MesaCuenta[];
   ocupado: boolean;
   sinConexion: boolean;
   error: string | null;
   onAgregar: (renglones: RenglonNuevo[], cuentaId: string) => void;
 }) {
+  const conCatalogo = FASE2_ACTIVA && catalogo.length > 0;
   const [busqueda, setBusqueda] = useState("");
+  const [categoria, setCategoria] = useState<string | null>(null);
   const [cantidades, setCantidades] = useState<Record<string, number>>({});
   const [concepto, setConcepto] = useState("");
   const [precio, setPrecio] = useState("");
   const [cantidadLibre, setCantidadLibre] = useState(1);
   const [cuentaId, setCuentaId] = useState<string>(cuentas[0]?.id ?? "");
+  const [verLibre, setVerLibre] = useState(!conCatalogo);
 
-  const clave = (p: ProductoReciente) => `${p.producto}|${p.unitario}`;
-  const filtrados = productos.filter((p) => p.producto.toLowerCase().includes(busqueda.trim().toLowerCase()));
+  // Todas las opciones (para armar los renglones) y las visibles (filtro).
+  const opciones: Opcion[] = useMemo(
+    () =>
+      conCatalogo
+        ? catalogo
+            .filter((p) => p.activo)
+            .map((p) => ({ clave: `p:${p.id}`, nombre: p.nombre, unitario: p.precio_centavos, productoId: p.id, existencias: p.existencias, bajo: bajoStock(p) }))
+        : productos.map((p) => ({ clave: `${p.producto}|${p.unitario}`, nombre: p.producto, unitario: p.unitario })),
+    [conCatalogo, catalogo, productos],
+  );
+  const visibles: Opcion[] = useMemo(() => {
+    if (!conCatalogo) return opciones.filter((o) => o.nombre.toLowerCase().includes(busqueda.trim().toLowerCase()));
+    const ids = new Set(filtrarCatalogo(catalogo, categoria, busqueda).map((p) => `p:${p.id}`));
+    return opciones.filter((o) => ids.has(o.clave)).sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+  }, [conCatalogo, opciones, catalogo, categoria, busqueda]);
+  const listaCategorias = useMemo(() => (conCatalogo ? categorias(catalogo.filter((p) => p.activo)) : []), [conCatalogo, catalogo]);
+
   const precioCent = pesosACentavos(precio);
   const libreValido = concepto.trim().length > 0 && montoValido(precioCent);
 
   const renglones: RenglonCaptura[] = useMemo(() => {
-    const r: RenglonCaptura[] = productos
-      .filter((p) => (cantidades[clave(p)] ?? 0) > 0)
-      .map((p) => ({ cantidad: cantidades[clave(p)], producto: p.producto, unitario: p.unitario }));
+    const r: RenglonCaptura[] = opciones
+      .filter((o) => (cantidades[o.clave] ?? 0) > 0)
+      .map((o) => ({ cantidad: cantidades[o.clave], producto: o.nombre, unitario: o.unitario, producto_id: o.productoId }));
     if (libreValido && precioCent !== null) r.push({ cantidad: cantidadLibre, producto: concepto.trim(), unitario: precioCent });
     return r;
-  }, [productos, cantidades, libreValido, precioCent, cantidadLibre, concepto]);
+  }, [opciones, cantidades, libreValido, precioCent, cantidadLibre, concepto]);
   const total = renglones.reduce((s, r) => s + r.cantidad * r.unitario, 0);
 
   // Una clave por renglón (cuenta + producto + precio) mientras la hoja siga
@@ -83,7 +120,7 @@ export function HojaConsumo({
   function enviar() {
     onAgregar(
       renglones.map((r) => {
-        const k = `${cuentaId}|${r.producto}|${r.unitario}`;
+        const k = `${cuentaId}|${r.producto_id ?? r.producto}|${r.unitario}`;
         let c = claves.current.get(k);
         if (!c) {
           c = nuevaClave();
@@ -101,6 +138,7 @@ export function HojaConsumo({
     setPrecio("");
     setCantidadLibre(1);
     setBusqueda("");
+    setCategoria(null);
     onCerrar();
   }
 
@@ -140,44 +178,88 @@ export function HojaConsumo({
           </div>
         )}
 
-        {productos.length > 0 && (
+        {conCatalogo && (
+          <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1" role="group" aria-label="Categorías">
+            {[null, ...listaCategorias].map((c) => (
+              <button
+                key={c ?? "todas"}
+                type="button"
+                onClick={() => setCategoria(c)}
+                aria-pressed={categoria === c}
+                className={cn(
+                  "h-11 shrink-0 rounded-lg border px-3 text-sm",
+                  categoria === c ? "border-caja-dorado text-caja-texto" : "border-caja-control text-caja-secundario",
+                )}
+              >
+                {c ?? "Todo"}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {opciones.length > 0 && (
           <div className="flex flex-col gap-2">
             <label className="relative block">
               <span className="sr-only">Buscar producto</span>
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-caja-secundario" />
-              <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar en lo vendido esta noche" className={cn(CAMPO, "pl-9")} />
+              <input
+                type="search"
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder={conCatalogo ? "Buscar en el catálogo" : "Buscar en lo vendido esta noche"}
+                className={cn(CAMPO, "pl-9")}
+              />
             </label>
             <ul className="flex flex-col divide-y divide-caja-borde">
-              {filtrados.map((p) => (
-                <li key={clave(p)} className="flex items-center justify-between gap-3 py-1.5">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm">{p.producto}</span>
-                    <span className="text-xs tabular-nums text-caja-secundario">{formatearCentavos(p.unitario)}</span>
-                  </span>
-                  <Contador
-                    etiqueta={p.producto}
-                    valor={cantidades[clave(p)] ?? 0}
-                    onCambio={(n) => setCantidades((prev) => ({ ...prev, [clave(p)]: n }))}
-                  />
+              {visibles.map((o) => {
+                const n = cantidades[o.clave] ?? 0;
+                const excede = o.existencias !== undefined && n > Math.max(0, o.existencias);
+                return (
+                  <li key={o.clave} className="flex items-center justify-between gap-3 py-1.5">
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm">{o.nombre}</span>
+                      <span className="text-xs tabular-nums text-caja-secundario">
+                        {formatearCentavos(o.unitario)}
+                        {o.existencias !== undefined && (
+                          <span className={cn(o.bajo || excede ? "text-caja-aviso" : undefined)}>
+                            {" · "}
+                            {textoExistencias({ existencias: o.existencias })}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                    <Contador etiqueta={o.nombre} valor={n} onCambio={(v) => setCantidades((prev) => ({ ...prev, [o.clave]: v }))} />
+                  </li>
+                );
+              })}
+              {visibles.length === 0 && (
+                <li className="py-2 text-sm text-caja-secundario">
+                  {conCatalogo ? "Nada en el catálogo con ese nombre." : "Nada vendido con ese nombre esta noche."}
                 </li>
-              ))}
-              {filtrados.length === 0 && <li className="py-2 text-sm text-caja-secundario">Nada vendido con ese nombre esta noche.</li>}
+              )}
             </ul>
           </div>
         )}
 
-        <div className="flex flex-col gap-2">
-          <span className="text-sm font-medium">{productos.length > 0 ? "Otro concepto" : "Concepto y precio"}</span>
-          <input value={concepto} onChange={(e) => setConcepto(e.target.value)} placeholder="Ej. Botella de tequila" maxLength={100} aria-label="Concepto" className={CAMPO} />
-          <div className="flex items-end gap-3">
-            <label className="flex-1">
-              <span className={ETIQUETA}>Precio unitario ($)</span>
-              <input value={precio} onChange={(e) => setPrecio(e.target.value)} inputMode="decimal" placeholder="0.00" className={cn(CAMPO, "tabular-nums")} />
-            </label>
-            <Contador etiqueta="Cantidad" minimo={1} valor={cantidadLibre} onCambio={setCantidadLibre} />
+        {conCatalogo && !verLibre ? (
+          <button type="button" onClick={() => setVerLibre(true)} className="h-11 w-fit text-sm text-caja-secundario underline underline-offset-2">
+            Otro concepto (fuera del catálogo)
+          </button>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium">{opciones.length > 0 ? "Otro concepto" : "Concepto y precio"}</span>
+            {conCatalogo && <span className="text-xs text-caja-secundario">No descuenta inventario.</span>}
+            <input value={concepto} onChange={(e) => setConcepto(e.target.value)} placeholder="Ej. Botella de tequila" maxLength={100} aria-label="Concepto" className={CAMPO} />
+            <div className="flex items-end gap-3">
+              <label className="flex-1">
+                <span className={ETIQUETA}>Precio unitario ($)</span>
+                <input value={precio} onChange={(e) => setPrecio(e.target.value)} inputMode="decimal" placeholder="0.00" className={cn(CAMPO, "tabular-nums")} />
+              </label>
+              <Contador etiqueta="Cantidad" minimo={1} valor={cantidadLibre} onCambio={setCantidadLibre} />
+            </div>
+            {precio && !montoValido(precioCent) && <p className="text-xs text-destructive">Precio no válido (ej. 1250.50).</p>}
           </div>
-          {precio && !montoValido(precioCent) && <p className="text-xs text-destructive">Precio no válido (ej. 1250.50).</p>}
-        </div>
+        )}
       </div>
     </Hoja>
   );
@@ -203,7 +285,8 @@ export function HojaCobro({
   error: string | null;
   // saldoVisto: el saldo con el que se armó el cobro. La base lo compara con
   // el real y rechaza si otro staff ya cobró o agregó consumo.
-  onCobrar: (metodo: MetodoPago, centavos: number, referencia: string, clave: string, saldoVisto: number) => void;
+  // propina: fase 2 (0 sin la bandera); va aparte del monto.
+  onCobrar: (metodo: MetodoPago, centavos: number, referencia: string, clave: string, saldoVisto: number, propina: number) => void;
 }) {
   const [metodo, setMetodo] = useState<MetodoPago>("efectivo");
   const [monto, setMonto] = useState(centavosATexto(saldo));
@@ -212,6 +295,9 @@ export function HojaCobro({
   // (aunque se perdiera la respuesta) no se cobra dos veces.
   const [clave] = useState(nuevaClave);
   const [saldoBase, setSaldoBase] = useState(saldo);
+  const [propina, setPropina] = useState("");
+  const propinaCent = propina.trim() === "" ? 0 : pesosACentavos(propina);
+  const propinaValida = propinaCent !== null && propinaCent >= 0;
   const cent = pesosACentavos(monto);
   const valido = montoValido(cent);
   const saldoCambio = saldo !== saldoBase;
@@ -228,8 +314,8 @@ export function HojaCobro({
             <BotonPrincipal onClick={onCerrar}>Listo</BotonPrincipal>
           ) : (
             <BotonPrincipal
-              disabled={ocupado || sinConexion || !valido || saldoCambio}
-              onClick={() => cent !== null && onCobrar(metodo, cent, referencia, clave, saldoBase)}
+              disabled={ocupado || sinConexion || !valido || saldoCambio || !propinaValida}
+              onClick={() => cent !== null && onCobrar(metodo, cent, referencia, clave, saldoBase, FASE2_ACTIVA ? (propinaCent ?? 0) : 0)}
             >
               {sinConexion ? "Sin conexión" : ocupado ? "Cobrando..." : `Cobrar ${valido && cent !== null ? formatearCentavos(cent) : ""}`}
             </BotonPrincipal>
@@ -283,6 +369,13 @@ export function HojaCobro({
           </div>
         )}
         {!saldoCambio && cent !== null && cent > saldoBase && <p className="text-xs text-caja-aviso">Es más que el saldo de la mesa.</p>}
+        {FASE2_ACTIVA && (
+          <label>
+            <span className={ETIQUETA}>Propina ($, opcional) · va aparte: no cambia el saldo ni la comisión</span>
+            <input value={propina} onChange={(e) => setPropina(e.target.value)} inputMode="decimal" placeholder="0.00" className={cn(CAMPO, "tabular-nums")} />
+            {!propinaValida && <span className="mt-1 block text-xs text-destructive">Propina no válida (ej. 150).</span>}
+          </label>
+        )}
         {metodo === "tarjeta" && (
           <label>
             <span className={ETIQUETA}>Referencia (opcional)</span>
@@ -461,6 +554,7 @@ export function HojaCuadrar({
   onCerrar,
   consumo,
   cobrado,
+  propinas = 0,
   cerrarAntes,
   ocupado,
   sinConexion,
@@ -471,6 +565,7 @@ export function HojaCuadrar({
   onCerrar: () => void;
   consumo: number;
   cobrado: number;
+  propinas?: number;
   cerrarAntes: boolean;
   ocupado: boolean;
   sinConexion: boolean;
@@ -495,6 +590,12 @@ export function HojaCuadrar({
       <div className="flex flex-col gap-3 text-sm">
         <div className="flex justify-between"><span className="text-caja-secundario">Consumo</span><span className="tabular-nums">{formatearCentavos(consumo)}</span></div>
         <div className="flex justify-between"><span className="text-caja-secundario">Cobrado</span><span className="tabular-nums">{formatearCentavos(cobrado)}</span></div>
+        {propinas > 0 && (
+          <div className="flex justify-between">
+            <span className="text-caja-secundario">Propinas (aparte, no son de la comisión)</span>
+            <span className="tabular-nums">{formatearCentavos(propinas)}</span>
+          </div>
+        )}
         <p className="text-xs text-caja-secundario">
           {cerrarAntes ? "Se cierra la mesa y se cuadra. " : ""}Al cuadrar nacen las comisiones de los RPs y la mesa queda definitiva; ya no se puede reabrir.
         </p>

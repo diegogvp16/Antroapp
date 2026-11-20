@@ -26,6 +26,8 @@ import {
   type MetodoPago,
   type TotalesPorMetodo,
 } from "@/lib/domain/caja";
+import { FASE2_ACTIVA } from "@/lib/fase2";
+import { propinas } from "@/lib/domain/inventario";
 
 // Cuadre general de la noche: totales registrados y cobrados por método,
 // mesas pendientes de cuadrar, conteo físico y cierre. Los totales que se
@@ -73,6 +75,7 @@ function CuadreEnVivo({
   const { ocupado, error, correr, limpiarError } = useAccion();
 
   const totales = resumen(datos.consumos, datos.pagos);
+  const propinasNoche = propinas(datos.pagos);
   const pendientes = datos.sesiones.filter((s) => s.estado !== "cuadrada");
   const numeroMesa = (mesaId: string) =>
     datos.mesas.find((m) => m.id === mesaId)?.numero ?? "?";
@@ -114,6 +117,22 @@ function CuadreEnVivo({
           />
         </CardContent>
       </Card>
+
+      {/* Fase 2: propinas de la noche. Van aparte: no entran al conteo de caja ni a la comisión. */}
+      {FASE2_ACTIVA && propinasNoche.total > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Propinas de la noche</CardTitle>
+            <CardDescription>Se entregan aparte: no van en el conteo de caja de abajo ni en las comisiones.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-1 text-sm">
+            {METODOS_PAGO.filter((m) => propinasNoche.porMetodo[m] > 0).map((m) => (
+              <FilaMonto key={m} etiqueta={`En ${METODO_LABEL[m].toLowerCase()}`} valor={formatearCentavos(propinasNoche.porMetodo[m])} />
+            ))}
+            <FilaMonto etiqueta="Total de propinas" valor={formatearCentavos(propinasNoche.total)} fuerte />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

@@ -26,6 +26,7 @@ import {
 } from "@/lib/turnos";
 import { nocheOperativaMexico, semanaMexico } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
+import { FASE2_ACTIVA } from "@/lib/fase2";
 import { esErrorDeRed, mensajeParaUsuario, MENSAJE_SIN_CONEXION, type ErrorBase } from "@/lib/errores-base";
 import type { Club, ClubTable, Profile, Reservation } from "@/types";
 
@@ -1271,6 +1272,16 @@ export default function StaffPanelPage() {
             >
               Resumen de mi antro
             </Button>
+            {FASE2_ACTIVA && (
+              <Button
+                render={<Link href="/staff/catalogo" />}
+                nativeButton={false}
+                variant="outline"
+                className="col-span-2 w-full"
+              >
+                Catálogo e inventario
+              </Button>
+            )}
           </div>
         )}
 

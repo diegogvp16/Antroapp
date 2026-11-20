@@ -13,6 +13,7 @@ import { ordenarMesas } from "@/lib/mesas";
 import { cn } from "@/lib/utils";
 import { esErrorDeRed } from "@/lib/errores-base";
 import { useEnLinea } from "@/lib/use-en-linea";
+import { FASE2_ACTIVA } from "@/lib/fase2";
 import {
   formatearCentavos,
   resumirMesa,
@@ -28,6 +29,7 @@ import {
   type MesaCuenta,
   type MesaSesion,
   type PermisosCaja,
+  type Producto,
   type ReservaSentable,
 } from "@/lib/domain/caja";
 
@@ -47,7 +49,10 @@ const COLUMNAS_CUENTA =
 const COLUMNAS_CONSUMO =
   "id, sesion_id, cuenta_id, monto_centavos, concepto, registrado_por, registrado_en, anulado, anulado_por, anulado_en, motivo_anulacion";
 const COLUMNAS_PAGO =
-  "id, sesion_id, cuenta_id, metodo, monto_centavos, referencia, registrado_por, registrado_en, anulado, anulado_por, anulado_en, motivo_anulacion";
+  "id, sesion_id, cuenta_id, metodo, monto_centavos, referencia, registrado_por, registrado_en, anulado, anulado_por, anulado_en, motivo_anulacion" +
+  // Fase 2: la propina solo se lee con la bandera (sin ella la base puede no tenerla).
+  (FASE2_ACTIVA ? ", propina_centavos" : "");
+const COLUMNAS_PRODUCTO = "id, nombre, categoria, precio_centavos, existencias, existencias_minimas, activo";
 const COLUMNAS_CUADRE =
   "id, sesion_id, tipo, registrado_centavos, cobrado_efectivo_centavos, cobrado_tarjeta_centavos, cobrado_otro_centavos, saldo_sin_cobrar_centavos, contado_efectivo_centavos, contado_tarjeta_centavos, contado_otro_centavos, diferencia_centavos, notas, hecho_por, hecho_en";
 
@@ -151,6 +156,11 @@ async function cargarCaja(clubId: string): Promise<{ fecha: string; datos: Datos
     });
   }
 
+  // Fase 2: catálogo activo del antro (para la hoja de consumo).
+  const productos = FASE2_ACTIVA
+    ? filas<Producto>(await supabase.from("productos").select(COLUMNAS_PRODUCTO).eq("club_id", clubId).eq("activo", true).order("nombre"), "Productos")
+    : [];
+
   const sentadas = new Set(cuentas.map((c) => c.reservation_id).filter(Boolean));
   const reservasSentables = reservas.filter((r) => !sentadas.has(r.id));
 
@@ -182,7 +192,7 @@ async function cargarCaja(clubId: string): Promise<{ fecha: string; datos: Datos
 
   return {
     fecha,
-    datos: { noche, mesas, sesiones, cuentas, consumos, pagos, cuadres, reservasSentables, nombres },
+    datos: { noche, mesas, sesiones, cuentas, consumos, pagos, cuadres, reservasSentables, nombres, productos },
   };
 }
 
