@@ -222,10 +222,18 @@ export function HojaCobro({
       onCerrar={onCerrar}
       pie={
         <div className="flex flex-col gap-2">
-          <MensajeError mensaje={error} />
-          <BotonPrincipal disabled={ocupado || sinConexion || !valido} onClick={() => cent !== null && onCobrar(metodo, cent, referencia, clave, saldoBase)}>
-            {sinConexion ? "Sin conexión" : ocupado ? "Cobrando..." : `Cobrar ${valido && cent !== null ? formatearCentavos(cent) : ""}`}
-          </BotonPrincipal>
+          {/* Si el saldo cambió, el aviso de arriba explica qué pasó. */}
+          {!saldoCambio && <MensajeError mensaje={error} />}
+          {saldoCambio && saldo <= 0 ? (
+            <BotonPrincipal onClick={onCerrar}>Listo</BotonPrincipal>
+          ) : (
+            <BotonPrincipal
+              disabled={ocupado || sinConexion || !valido || saldoCambio}
+              onClick={() => cent !== null && onCobrar(metodo, cent, referencia, clave, saldoBase)}
+            >
+              {sinConexion ? "Sin conexión" : ocupado ? "Cobrando..." : `Cobrar ${valido && cent !== null ? formatearCentavos(cent) : ""}`}
+            </BotonPrincipal>
+          )}
         </div>
       }
     >
@@ -249,10 +257,17 @@ export function HojaCobro({
         </label>
         {saldoCambio && (
           <div className="flex flex-col gap-2 rounded-lg border border-caja-aviso/60 p-3 text-sm" role="status">
-            <p>
-              El saldo de la mesa ahora es <span className="font-semibold tabular-nums">{formatearCentavos(saldo)}</span>: se registró algo mientras
-              cobrabas.
-            </p>
+            {saldo <= 0 ? (
+              <p>
+                <span className="font-semibold">La mesa ya quedó pagada.</span> Se registró un cobro mientras cobrabas (puede ser el tuyo, si
+                se perdió la respuesta). No hace falta cobrar otra vez.
+              </p>
+            ) : (
+              <p>
+                El saldo de la mesa ahora es <span className="font-semibold tabular-nums">{formatearCentavos(saldo)}</span>: se registró un
+                cobro o consumo mientras cobrabas (puede ser el tuyo, si se perdió la respuesta). Revisa los cobros antes de volver a cobrar.
+              </p>
+            )}
             {saldo > 0 && (
               <button
                 type="button"
