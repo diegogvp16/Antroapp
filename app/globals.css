@@ -26,6 +26,7 @@
   --color-caja-ok: var(--caja-ok);
   --color-caja-aviso: var(--caja-aviso);
   --color-caja-rojo: var(--caja-rojo);
+  --color-caja-control: var(--caja-control);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -321,6 +322,8 @@ body:has(.theme-noche) {
   --caja-ok: #8fd1a4;
   --caja-aviso: #e3be6a;
   --caja-rojo: #c97b6b;
+  /* Borde de campos y botones de opción: 3:1 sobre las superficies (WCAG 1.4.11). */
+  --caja-control: #6b6358;
 }
 
 .theme-caja {
@@ -340,10 +343,11 @@ body:has(.theme-noche) {
   --accent-foreground: var(--caja-texto);
   --destructive: #e58a7a;
   --border: var(--caja-borde);
-  --input: #34302a;
+  --input: var(--caja-control);
   --ring: var(--caja-dorado);
   --status-ok: var(--caja-ok);
   --status-warn: var(--caja-aviso);
+  --status-err: var(--caja-rojo);
   --radius: 0.5rem;
   background-color: var(--caja-fondo);
   color: var(--caja-texto);

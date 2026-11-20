@@ -89,7 +89,7 @@ export function ReservasRp({ clubNombre }: { clubNombre: string | null }) {
             role="tab"
             aria-selected={periodo === p.id}
             onClick={() => setPeriodo(p.id)}
-            className={cn("h-11 rounded-md text-sm text-caja-secundario", periodo === p.id && "bg-caja-superficie text-caja-texto")}
+            className={cn("h-11 rounded-md text-sm text-caja-secundario", periodo === p.id && "bg-caja-superficie font-medium text-caja-texto ring-1 ring-caja-dorado/60")}
           >
             {p.etiqueta}
           </button>
@@ -134,7 +134,7 @@ export function ReservasRp({ clubNombre }: { clubNombre: string | null }) {
             onClick={() => setFiltro(f.id)}
             className={cn(
               "flex h-11 min-w-0 items-center justify-center rounded-md px-1 text-center text-xs leading-tight text-caja-secundario",
-              filtro === f.id && "bg-caja-superficie text-caja-texto",
+              filtro === f.id && "bg-caja-superficie font-medium text-caja-texto ring-1 ring-caja-dorado/60",
             )}
           >
             {f.etiqueta}

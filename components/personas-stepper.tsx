@@ -34,6 +34,7 @@ export function PersonasStepper({
           type="button"
           variant="outline"
           size="icon"
+          className="size-11"
           aria-label="Quitar una persona"
           disabled={value <= min}
           onClick={() => onChange(Math.max(min, value - 1))}
@@ -50,6 +51,7 @@ export function PersonasStepper({
           type="button"
           variant="outline"
           size="icon"
+          className="size-11"
           aria-label="Agregar una persona"
           disabled={value >= max}
           onClick={() => onChange(Math.min(max, value + 1))}

@@ -483,7 +483,7 @@ export default function RpPanelPage() {
             <Button
               type="button"
               variant="outline"
-              className="w-full"
+              className="h-11 w-full"
               onClick={handleLogout}
             >
               Cerrar sesión
@@ -683,7 +683,7 @@ export default function RpPanelPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="w-full"
+                    className="h-11 w-full"
                     onClick={resetForm}
                   >
                     Crear otra reserva
@@ -704,6 +704,7 @@ export default function RpPanelPage() {
                       <Label htmlFor="cliente_nombre">Nombre del cliente</Label>
                       <Input
                         id="cliente_nombre"
+                        className="h-11"
                         value={clienteNombre}
                         onChange={(e) => setClienteNombre(e.target.value)}
                         required
@@ -713,6 +714,7 @@ export default function RpPanelPage() {
                       <Label htmlFor="cliente_telefono">Teléfono</Label>
                       <Input
                         id="cliente_telefono"
+                        className="h-11"
                         type="tel"
                         value={clienteTelefono}
                         onChange={(e) => setClienteTelefono(e.target.value)}
@@ -723,6 +725,7 @@ export default function RpPanelPage() {
                       <Label htmlFor="fecha">Fecha</Label>
                       <Input
                         id="fecha"
+                        className="h-11"
                         type="date"
                         min={minDate}
                         value={fecha}

@@ -19,7 +19,7 @@ import {
 } from "@/lib/domain/caja";
 
 const CAMPO =
-  "h-11 w-full rounded-lg border border-caja-borde bg-caja-fondo px-3 text-base text-caja-texto placeholder:text-caja-secundario outline-none focus-visible:border-caja-dorado";
+  "h-11 w-full rounded-lg border border-caja-control bg-caja-fondo px-3 text-base text-caja-texto placeholder:text-caja-secundario outline-none focus-visible:border-caja-dorado";
 const ETIQUETA = "mb-1 block text-xs text-caja-secundario";
 
 // ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ export function HojaConsumo({
                   onClick={() => setCuentaId(c.id)}
                   className={cn(
                     "h-11 rounded-lg border px-3 text-sm",
-                    cuentaId === c.id ? "border-caja-dorado text-caja-texto" : "border-caja-borde text-caja-secundario",
+                    cuentaId === c.id ? "border-caja-dorado text-caja-texto" : "border-caja-control text-caja-secundario",
                   )}
                 >
                   {c.cliente_nombre}
@@ -204,7 +204,7 @@ export function HojaCobro({
               type="button"
               onClick={() => setMetodo(m)}
               aria-pressed={metodo === m}
-              className={cn("h-12 rounded-lg border text-base", metodo === m ? "border-caja-dorado text-caja-texto" : "border-caja-borde text-caja-secundario")}
+              className={cn("h-12 rounded-lg border text-base", metodo === m ? "border-caja-dorado text-caja-texto" : "border-caja-control text-caja-secundario")}
             >
               {m === "efectivo" ? "Efectivo" : "Tarjeta"}
             </button>
@@ -283,7 +283,7 @@ export function HojaRecibir({
               type="button"
               onClick={() => setModo(m)}
               aria-pressed={modo === m}
-              className={cn("h-11 rounded-lg border text-sm", modo === m ? "border-caja-dorado text-caja-texto" : "border-caja-borde text-caja-secundario")}
+              className={cn("h-11 rounded-lg border text-sm", modo === m ? "border-caja-dorado text-caja-texto" : "border-caja-control text-caja-secundario")}
             >
               {t}
             </button>

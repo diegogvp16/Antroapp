@@ -301,7 +301,7 @@ export function DetalleMesa({
             )}
             {anulados.length > 0 && (
               <div className="mt-1">
-                <button type="button" onClick={() => setVerAnulados((v) => !v)} className="flex h-9 items-center gap-1 text-xs text-caja-secundario">
+                <button type="button" onClick={() => setVerAnulados((v) => !v)} className="flex h-11 items-center gap-1 text-xs text-caja-secundario">
                   <ChevronDown className={cn("size-3.5 transition-transform", verAnulados && "rotate-180")} />
                   {anulados.length === 1 ? "1 cargo anulado" : `${anulados.length} cargos anulados`}
                 </button>
@@ -344,7 +344,7 @@ export function DetalleMesa({
                               type="button"
                               disabled={p.anulado || !(abierta && permisos.anular)}
                               onClick={() => setAnulacion({ tipo: "pago", fila: p })}
-                              className="flex min-h-10 w-full items-center justify-between px-3 text-left disabled:cursor-default"
+                              className="flex min-h-11 w-full items-center justify-between px-3 text-left disabled:cursor-default"
                             >
                               <span className={cn(p.anulado && "line-through")}>
                                 {horaCorta(p.registrado_en)}

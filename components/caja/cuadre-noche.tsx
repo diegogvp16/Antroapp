@@ -177,6 +177,7 @@ function CuadreEnVivo({
                     value={conteo[m]}
                     onChange={(e) => setConteo((prev) => ({ ...prev, [m]: e.target.value }))}
                     aria-invalid={invalido}
+                    className="h-11"
                   />
                   {invalido ? (
                     <p className="text-xs text-muted-foreground">Monto no válido (ej. 1250.50).</p>
@@ -212,6 +213,7 @@ function CuadreEnVivo({
                 maxLength={500}
                 value={notas}
                 onChange={(e) => setNotas(e.target.value)}
+                className="h-11"
               />
             </div>
 
@@ -230,6 +232,7 @@ function CuadreEnVivo({
             <Button
               type="submit"
               size="lg"
+              className="h-12 text-base"
               disabled={!conteoCompleto || pendientes.length > 0 || ocupado}
             >
               {ocupado ? "Cerrando..." : "Cerrar la noche"}

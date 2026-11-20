@@ -18,9 +18,12 @@ import {
 const CUADRO: Record<EstadoTarjeta, string> = {
   abierta: "border-caja-dorado/45 bg-caja-dorado/[0.07]",
   por_cuadrar: "border-caja-aviso/60 bg-caja-aviso/[0.08]",
-  cuadrada: "border-caja-borde bg-caja-superficie opacity-60",
+  cuadrada: "border-caja-borde bg-caja-superficie",
   libre: "border-dashed border-caja-borde bg-transparent",
 };
+
+// El estado también en texto (no solo por color), para lectores de pantalla.
+const ESTADO_TEXTO: Record<EstadoTarjeta, string> = { abierta: "abierta", por_cuadrar: "por cuadrar", cuadrada: "cuadrada", libre: "libre" };
 
 function lineaInferior(m: ResumenMesa): { izquierda: string; derecha: string; tono: string } {
   const grupos = m.grupos > 1 ? `${m.grupos} grupos` : "";
@@ -58,7 +61,7 @@ export function MapaNoche({
             onClick={() => setPestana(p.id)}
             className={cn(
               "flex h-11 min-w-0 flex-col items-center justify-center rounded-md text-xs leading-tight text-caja-secundario",
-              pestana === p.id && "bg-caja-superficie text-caja-texto",
+              pestana === p.id && "bg-caja-superficie font-medium text-caja-texto ring-1 ring-caja-dorado/60",
             )}
           >
             <span className="truncate">{p.etiqueta}</span>
@@ -75,7 +78,7 @@ export function MapaNoche({
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
           placeholder="Buscar mesa, cliente o RP"
-          className="h-11 w-full rounded-lg border border-caja-borde bg-caja-superficie pl-9 pr-3 text-sm text-caja-texto placeholder:text-caja-secundario outline-none focus-visible:border-caja-dorado"
+          className="h-11 w-full rounded-lg border border-caja-control bg-caja-superficie pl-9 pr-3 text-sm text-caja-texto placeholder:text-caja-secundario outline-none focus-visible:border-caja-dorado"
         />
       </label>
 
@@ -99,10 +102,10 @@ export function MapaNoche({
                     "flex min-h-[92px] w-full flex-col gap-1 rounded-lg border px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-caja-dorado",
                     CUADRO[m.estado],
                   )}
-                  aria-label={`${nombreMesa(m.mesa.numero)}, ${principal}`}
+                  aria-label={`${nombreMesa(m.mesa.numero)}, ${principal}, ${ESTADO_TEXTO[m.estado]}${m.estado === "libre" ? "" : `, ${formatearCentavos(m.estado === "cuadrada" ? m.consumoNoche : m.consumo)}`}`}
                 >
                   <span className="text-xs text-caja-secundario">{nombreMesa(m.mesa.numero)}</span>
-                  <span className={cn("flex min-w-0 text-[15px] font-medium leading-snug", m.estado === "libre" && "text-caja-secundario")}>
+                  <span className={cn("flex min-w-0 text-[15px] font-medium leading-snug", (m.estado === "libre" || m.estado === "cuadrada") && "text-caja-secundario")}>
                     <span className="truncate">{nombre}</span>
                     {extra && <span className="shrink-0 text-caja-secundario">{extra}</span>}
                   </span>

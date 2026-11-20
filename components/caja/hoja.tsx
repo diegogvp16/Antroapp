@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
+
+const ENFOCABLES = "button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])";
 
 // Hoja inferior de la caja: se abre sobre la mesa, con su contenido
 // desplazable y una acción fija abajo (pie). Cierra con la X, tocando fuera
@@ -19,10 +21,31 @@ export function Hoja({
   children: ReactNode;
   pie?: ReactNode;
 }) {
+  const panel = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!abierta) return;
+    // Foco: entra a la hoja (primer campo o, si no hay, el panel), no se sale
+    // con Tab y regresa al elemento que la abrió al cerrar.
+    const previoFoco = document.activeElement as HTMLElement | null;
+    const enfocables = () =>
+      Array.from(panel.current?.querySelectorAll<HTMLElement>(ENFOCABLES) ?? []).filter((el) => !el.hasAttribute("disabled"));
+    const primerCampo = panel.current?.querySelector<HTMLElement>("input, textarea, select");
+    (primerCampo ?? panel.current)?.focus();
+
     const alTeclado = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCerrar();
+      if (e.key !== "Tab") return;
+      const lista = enfocables();
+      if (lista.length === 0) return;
+      const primero = lista[0], ultimo = lista[lista.length - 1];
+      if (e.shiftKey && document.activeElement === primero) {
+        e.preventDefault();
+        ultimo.focus();
+      } else if (!e.shiftKey && document.activeElement === ultimo) {
+        e.preventDefault();
+        primero.focus();
+      }
     };
     window.addEventListener("keydown", alTeclado);
     const previo = document.body.style.overflow;
@@ -30,14 +53,15 @@ export function Hoja({
     return () => {
       window.removeEventListener("keydown", alTeclado);
       document.body.style.overflow = previo;
+      previoFoco?.focus?.();
     };
   }, [abierta, onCerrar]);
 
   if (!abierta) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center" role="dialog" aria-modal="true" aria-label={titulo}>
-      <button type="button" aria-label="Cerrar" className="absolute inset-0 bg-black/60" onClick={onCerrar} />
-      <div className="relative flex max-h-[88dvh] w-full max-w-md flex-col rounded-t-xl border border-caja-borde bg-caja-superficie">
+      <button type="button" aria-hidden="true" tabIndex={-1} className="absolute inset-0 bg-black/60" onClick={onCerrar} />
+      <div ref={panel} tabIndex={-1} className="relative flex max-h-[88dvh] w-full max-w-md flex-col rounded-t-xl border border-caja-borde bg-caja-superficie outline-none">
         <div className="flex items-center justify-between gap-3 border-b border-caja-borde px-4 py-2">
           <h2 className="text-base font-semibold">{titulo}</h2>
           <button
@@ -104,7 +128,7 @@ export function Contador({
         onClick={() => onCambio(Math.max(minimo, valor - 1))}
         disabled={valor <= minimo}
         aria-label={`Quitar uno: ${etiqueta}`}
-        className="flex size-11 items-center justify-center rounded-md border border-caja-borde text-lg disabled:opacity-30"
+        className="flex size-11 items-center justify-center rounded-md border border-caja-control text-lg disabled:opacity-30"
       >
         −
       </button>
@@ -113,7 +137,7 @@ export function Contador({
         type="button"
         onClick={() => onCambio(Math.min(99, valor + 1))}
         aria-label={`Agregar uno: ${etiqueta}`}
-        className="flex size-11 items-center justify-center rounded-md border border-caja-borde text-lg"
+        className="flex size-11 items-center justify-center rounded-md border border-caja-control text-lg"
       >
         +
       </button>
