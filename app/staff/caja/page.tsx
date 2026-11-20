@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -48,6 +48,23 @@ function filas<T>(r: { data: unknown; error: { message: string } | null }, que: 
   return (r.data ?? []) as T[];
 }
 
+// PostgREST entrega como máximo 1000 filas por consulta: una noche con más
+// consumos o pagos perdería en silencio los últimos (y el saldo saldría más
+// bajo). Se lee por páginas hasta traer todo.
+const PAGINA = 1000;
+type ConsultaPaginada = {
+  range: (desde: number, hasta: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+};
+async function todas<T>(armar: () => ConsultaPaginada, que: string): Promise<T[]> {
+  const total: T[] = [];
+  for (let desde = 0; ; desde += PAGINA) {
+    const r = await armar().range(desde, desde + PAGINA - 1);
+    const lote = filas<T>(r, que);
+    total.push(...lote);
+    if (lote.length < PAGINA) return total;
+  }
+}
+
 // Lee todo lo de la noche operativa en curso del club.
 async function cargarCaja(clubId: string): Promise<{ fecha: string; datos: DatosCaja }> {
   const supabase = createClient();
@@ -80,45 +97,27 @@ async function cargarCaja(clubId: string): Promise<{ fecha: string; datos: Datos
   const reservas = filas<ReservaSentable>(reservasRes, "Reservas");
 
   let sesiones: MesaSesion[] = [];
-  let cuentas: MesaCuenta[] = [];
+  const cuentas: MesaCuenta[] = [];
   let consumos: CajaConsumo[] = [];
   let pagos: CajaPago[] = [];
   let cuadres: CajaCuadre[] = [];
 
   if (noche) {
-    const [sesionesRes, consumosRes, pagosRes, cuadresRes] = await Promise.all([
-      supabase
-        .from("mesa_sesiones")
-        .select(COLUMNAS_SESION)
-        .eq("noche_id", noche.id)
-        .order("abierta_en", { ascending: true }),
-      supabase
-        .from("caja_consumos")
-        .select(COLUMNAS_CONSUMO)
-        .eq("noche_id", noche.id)
-        .order("registrado_en", { ascending: true }),
-      supabase
-        .from("caja_pagos")
-        .select(COLUMNAS_PAGO)
-        .eq("noche_id", noche.id)
-        .order("registrado_en", { ascending: true }),
-      supabase.from("caja_cuadres").select(COLUMNAS_CUADRE).eq("noche_id", noche.id),
+    const nocheId = noche.id;
+    // Orden con desempate por id: estable entre páginas.
+    [sesiones, consumos, pagos, cuadres] = await Promise.all([
+      todas<MesaSesion>(() => supabase.from("mesa_sesiones").select(COLUMNAS_SESION).eq("noche_id", nocheId).order("abierta_en").order("id"), "Sesiones"),
+      todas<CajaConsumo>(() => supabase.from("caja_consumos").select(COLUMNAS_CONSUMO).eq("noche_id", nocheId).order("registrado_en").order("id"), "Consumos"),
+      todas<CajaPago>(() => supabase.from("caja_pagos").select(COLUMNAS_PAGO).eq("noche_id", nocheId).order("registrado_en").order("id"), "Pagos"),
+      todas<CajaCuadre>(() => supabase.from("caja_cuadres").select(COLUMNAS_CUADRE).eq("noche_id", nocheId).order("id"), "Cuadres"),
     ]);
-    sesiones = filas<MesaSesion>(sesionesRes, "Sesiones");
-    consumos = filas<CajaConsumo>(consumosRes, "Consumos");
-    pagos = filas<CajaPago>(pagosRes, "Pagos");
-    cuadres = filas<CajaCuadre>(cuadresRes, "Cuadres");
 
-    if (sesiones.length > 0) {
-      const cuentasRes = await supabase
-        .from("mesa_cuentas")
-        .select(COLUMNAS_CUENTA)
-        .in(
-          "sesion_id",
-          sesiones.map((s) => s.id),
-        )
-        .order("creada_en", { ascending: true });
-      cuentas = filas<MesaCuenta>(cuentasRes, "Cuentas");
+    // Cuentas por lotes de sesiones (la lista de ids va en la URL).
+    for (let i = 0; i < sesiones.length; i += 150) {
+      const ids = sesiones.slice(i, i + 150).map((x) => x.id);
+      cuentas.push(
+        ...(await todas<MesaCuenta>(() => supabase.from("mesa_cuentas").select(COLUMNAS_CUENTA).in("sesion_id", ids).order("creada_en").order("id"), "Cuentas")),
+      );
     }
   }
 
@@ -200,19 +199,26 @@ export default function StaffCajaPage() {
       const club = perfil.club_id as string;
       setEsGerente(perfil.role === "gerente");
 
-      const [clubRes, ...permisosRes] = await Promise.all([
+      // Todos los permisos en una llamada (caja_mis_permisos). Si la base aún
+      // no tiene esa función, se piden uno por uno como antes.
+      const [clubRes, todos] = await Promise.all([
         supabase.from("clubs").select("nombre").eq("id", club).maybeSingle(),
-        ...PERMISOS_CAJA.map((p) =>
-          supabase.rpc("caja_tiene_permiso", { p_club_id: club, p_permiso: p }),
-        ),
+        supabase.rpc("caja_mis_permisos", { p_club_id: club }),
       ]);
       if (clubRes.data) setClubNombre(clubRes.data.nombre as string);
       const nuevos: PermisosCaja = { ...SIN_PERMISOS };
-      PERMISOS_CAJA.forEach((p, i) => {
-        const r = permisosRes[i];
-        if (r.error) console.error(`Error leyendo permiso ${p}:`, r.error);
-        nuevos[p] = r.data === true;
-      });
+      if (!todos.error && todos.data && typeof todos.data === "object") {
+        const mapa = todos.data as Record<string, unknown>;
+        for (const p of PERMISOS_CAJA) nuevos[p] = mapa[p] === true;
+      } else {
+        const uno = await Promise.all(
+          PERMISOS_CAJA.map((p) => supabase.rpc("caja_tiene_permiso", { p_club_id: club, p_permiso: p })),
+        );
+        PERMISOS_CAJA.forEach((p, i) => {
+          if (uno[i].error) console.error(`Error leyendo permiso ${p}:`, uno[i].error);
+          nuevos[p] = uno[i].data === true;
+        });
+      }
       setPermisos(nuevos);
       setClubId(club);
     }
@@ -243,7 +249,9 @@ export default function StaffCajaPage() {
   }, [recargar]);
 
   const nocheCerrada = datos?.noche?.estado === "cerrada";
-  const resumenes = datos ? datos.mesas.map((m) => resumirMesa(m, datos)) : [];
+  // Una sola pasada por render de datos (no por tecla del buscador: la
+  // búsqueda vive dentro del mapa).
+  const resumenes = useMemo(() => (datos ? datos.mesas.map((m) => resumirMesa(m, datos)) : []), [datos]);
   const actual = mesaId ? resumenes.find((r) => r.mesa.id === mesaId) : undefined;
   const totales = datos ? totalesNoche(datos) : null;
 
