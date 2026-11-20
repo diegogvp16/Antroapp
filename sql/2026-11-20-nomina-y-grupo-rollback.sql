@@ -137,6 +137,9 @@ begin
   if auth.uid() is null or public.current_role_name() is distinct from 'rp' or v_club is null then
     raise exception 'Solo para RPs';
   end if;
+  if exists (select 1 from public.profiles p where p.id = auth.uid() and p.activo is false) then
+    raise exception 'Tu cuenta está desactivada';
+  end if;
   return query
     select * from public.nomina_semana_datos(v_club, public.nomina_lunes_iso(p_anio, p_semana), auth.uid());
 end;

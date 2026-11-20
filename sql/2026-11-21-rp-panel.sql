@@ -72,6 +72,9 @@ begin
   if v_rp is null or public.current_role_name() is distinct from 'rp' or v_club is null then
     raise exception 'Solo para RPs';
   end if;
+  if exists (select 1 from public.profiles p where p.id = v_rp and p.activo is false) then
+    raise exception 'Tu cuenta está desactivada';
+  end if;
   if p_desde is null or p_hasta is null or p_hasta < p_desde or p_hasta - p_desde > 62 then
     raise exception 'Rango de fechas inválido (máximo 62 días)';
   end if;
@@ -158,6 +161,9 @@ begin
   if v_rp is null or public.current_role_name() is distinct from 'rp' or v_club is null then
     raise exception 'Solo para RPs';
   end if;
+  if exists (select 1 from public.profiles p where p.id = v_rp and p.activo is false) then
+    raise exception 'Tu cuenta está desactivada';
+  end if;
   select c.pago_rp_modo into v_modo from public.clubs c where c.id = v_club;
   -- Regla del RP si tiene una propia; si no, la del antro (igual que la caja).
   select o.comision_tipo, o.comision_monto, o.comision_desbloqueo_reservas
@@ -203,3 +209,33 @@ revoke all on function public.rp_mis_reservas(date, date) from public, anon;
 grant execute on function public.rp_mis_reservas(date, date) to authenticated;
 revoke all on function public.rp_progreso_cuota() from public, anon;
 grant execute on function public.rp_progreso_cuota() to authenticated;
+
+
+-- 5. RP dado de baja: no lee reservas ni comisiones aunque conserve una
+-- sesión abierta (el login ya lo rechaza, pero un token emitido antes de la
+-- baja sigue vivo hasta una hora y se renueva). Restrictivas: se aplican con
+-- AND sobre las permisivas. La consulta al perfil va en una función
+-- security definer para no evaluar las políticas de profiles desde aquí.
+create or replace function public.soy_rp_dado_de_baja()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.profiles p
+    where p.id = auth.uid() and p.role = 'rp' and p.activo is false);
+$$;
+revoke all on function public.soy_rp_dado_de_baja() from public, anon;
+grant execute on function public.soy_rp_dado_de_baja() to authenticated;
+
+drop policy if exists reservations_rp_dado_de_baja on public.reservations;
+create policy reservations_rp_dado_de_baja on public.reservations
+  as restrictive for select to authenticated
+  using (not (select public.soy_rp_dado_de_baja()));
+
+drop policy if exists commissions_rp_dado_de_baja on public.commissions;
+create policy commissions_rp_dado_de_baja on public.commissions
+  as restrictive for select to authenticated
+  using (not (select public.soy_rp_dado_de_baja()));

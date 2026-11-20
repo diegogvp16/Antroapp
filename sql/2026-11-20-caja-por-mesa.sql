@@ -193,6 +193,8 @@ create table public.caja_consumos (
 );
 create index caja_consumos_cuenta on public.caja_consumos (cuenta_id);
 create index caja_consumos_sesion on public.caja_consumos (sesion_id);
+-- La caja lee los consumos y pagos de la noche completa (noche_id).
+create index caja_consumos_noche on public.caja_consumos (noche_id);
 
 create table public.caja_pagos (
   id                uuid primary key default gen_random_uuid(),
@@ -212,6 +214,7 @@ create table public.caja_pagos (
   check (not anulado or (anulado_por is not null and motivo_anulacion is not null))
 );
 create index caja_pagos_sesion on public.caja_pagos (sesion_id);
+create index caja_pagos_noche on public.caja_pagos (noche_id);
 
 create table public.caja_cuadres (
   id                          uuid primary key default gen_random_uuid(),
@@ -385,7 +388,8 @@ begin
   if public.club_es_dueno(p_club_id) or public.club_es_dueno_grupo(p_club_id) then
     return true;
   end if;
-  return v_rol in ('staff', 'gerente') and public.current_club_id() = p_club_id;
+  return v_rol in ('staff', 'gerente') and public.current_club_id() = p_club_id
+    and not exists (select 1 from public.profiles p where p.id = auth.uid() and p.activo is false);
 end;
 $$;
 
@@ -510,6 +514,7 @@ begin
   end loop;
 end;
 $$;
+revoke all on sequence public.caja_eventos_id_seq from public, anon, authenticated;
 grant usage, select on sequence public.caja_eventos_id_seq to service_role;
 
 
@@ -1833,6 +1838,9 @@ declare
 begin
   if auth.uid() is null or public.current_role_name() is distinct from 'rp' or v_club is null then
     raise exception 'Solo para RPs';
+  end if;
+  if exists (select 1 from public.profiles p where p.id = auth.uid() and p.activo is false) then
+    raise exception 'Tu cuenta está desactivada';
   end if;
   return query
     select * from public.nomina_semana_datos(v_club, public.nomina_lunes_iso(p_anio, p_semana), auth.uid());

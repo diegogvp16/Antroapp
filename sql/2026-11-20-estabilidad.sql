@@ -170,6 +170,7 @@ create index login_intentos_ip on public.login_intentos (ip_hash, creado_en desc
 alter table public.login_intentos enable row level security;
 revoke all on public.login_intentos from public, anon, authenticated;
 grant all on public.login_intentos to service_role;
+revoke all on sequence public.login_intentos_id_seq from public, anon, authenticated;
 grant usage, select on sequence public.login_intentos_id_seq to service_role;
 
 
@@ -192,6 +193,7 @@ alter table public.app_errores enable row level security;
 revoke all on public.app_errores from public, anon, authenticated;
 grant select on public.app_errores to authenticated;
 grant all on public.app_errores to service_role;
+revoke all on sequence public.app_errores_id_seq from public, anon, authenticated;
 grant usage, select on sequence public.app_errores_id_seq to service_role;
 create policy app_errores_select_admin on public.app_errores
   for select to authenticated

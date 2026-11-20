@@ -8,6 +8,8 @@
 //   2. El mismo correo desde otra IP sigue entrando (nadie deja fuera al
 //      dueño de la cuenta fallando a propósito).
 //   3. Un RP con activo = false recibe 403 aunque la contraseña sea buena.
+//   4. Un RP que ya tenía sesión cuando lo dan de baja deja de leer sus
+//      reservas y comisiones, y las funciones de su panel lo rechazan.
 // y al final borra las cuentas y sus intentos de login.
 
 import { createRequire } from "node:module";
@@ -48,6 +50,7 @@ async function login(email, password, ip) {
 }
 
 const ids = [];
+const reservas = [];
 try {
   for (const [rol, email] of Object.entries(correos)) {
     const { data, error } = await svc.auth.admin.createUser({ email, password: PASS, email_confirm: true });
@@ -74,12 +77,37 @@ try {
   const otraIp = await login(correos.cliente, PASS, ipB);
   revisar(otraIp.status === 200, "mismo correo desde otra IP → sigue entrando (200)");
 
+  // 4. Sesión abierta antes de la baja.
+  const rpId = ids[1];
+  await svc.from("profiles").update({ activo: true }).eq("id", rpId);
+  const reserva = { id: randomUUID(), cliente_nombre: "Prueba login", cliente_telefono: "0000000779", club_id: CLUB_DEMO_DEV,
+    source: "rp", rp_id: rpId, fecha: new Date().toISOString().slice(0, 10), personas: 2, status: "confirmada", qr_code: "antro-" + randomUUID() };
+  const ins = await svc.from("reservations").insert(reserva);
+  if (ins.error) throw new Error("reserva: " + ins.error.message);
+  reservas.push(reserva.id);
+  const sesion = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
+  const entra = await sesion.auth.signInWithPassword({ email: correos.rp, password: PASS });
+  revisar(!entra.error, "RP activo abre sesión directo con Supabase");
+  const antes = await sesion.from("reservations").select("id").eq("id", reserva.id);
+  revisar((antes.data ?? []).length === 1, "RP activo ve su reserva");
+  await svc.from("profiles").update({ activo: false }).eq("id", rpId);
+  const despues = await sesion.from("reservations").select("id").eq("id", reserva.id);
+  revisar(!despues.error && (despues.data ?? []).length === 0, "RP dado de baja con sesión vieja: 0 reservas");
+  const com = await sesion.from("commissions").select("id").eq("rp_id", rpId);
+  revisar(!com.error && (com.data ?? []).length === 0, "RP dado de baja con sesión vieja: 0 comisiones");
+  const hoy = new Date().toISOString().slice(0, 10);
+  const fn = await sesion.rpc("rp_mis_reservas", { p_desde: hoy, p_hasta: hoy });
+  revisar(fn.error?.message === "Tu cuenta está desactivada", "rp_mis_reservas rechaza al RP dado de baja");
+  const cuota = await sesion.rpc("rp_progreso_cuota");
+  revisar(cuota.error?.message === "Tu cuenta está desactivada", "rp_progreso_cuota rechaza al RP dado de baja");
+
   const rp = await login(correos.rp, PASS, ipB);
   revisar(rp.status === 403 && /desactivada/.test(rp.cuerpo.error ?? ""), "RP inactivo con contraseña buena → 403");
 } catch (e) {
   fallan++;
   console.log("FALLA  " + e.message);
 } finally {
+  if (reservas.length) await svc.from("reservations").delete().in("id", reservas);
   for (const id of ids) {
     await svc.from("profiles").delete().eq("id", id);
     await svc.auth.admin.deleteUser(id);
