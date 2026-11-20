@@ -63,6 +63,10 @@ for (const u of previos) await svc.auth.admin.deleteUser(u.id);
 
 // ---------- Usuarios ----------
 const PASS = "Dev-" + randomBytes(12).toString("base64url");
+// La contraseña nueva se guarda ANTES de crear usuarios: si la siembra falla
+// a la mitad, el archivo ya coincide con las cuentas recreadas.
+mkdirSync(path.join(RAIZ, "backups"), { recursive: true });
+writeFileSync(path.join(RAIZ, "backups/dev-credenciales.json"), JSON.stringify({ nota: "Usuarios FICTICIOS de antroapp-dev (siembra en curso).", password: PASS }, null, 2));
 const usuarios = {};
 async function usuario(clave, role, nombre, club_id = null) {
   const email = `dev_${clave}@example.com`;

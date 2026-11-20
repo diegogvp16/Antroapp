@@ -129,7 +129,7 @@ export async function escribirCaja({ svc, clubId, fechaObjetivo, reservas, consu
       if (objetivo && p.estado === "abierta" && !anuladoHecho) {
         anuladoHecho = true;
         const walk = randomUUID();
-        ok(await svc.from("mesa_cuentas").insert({ id: walk, club_id: clubId, sesion_id: sesion, origen: "walk_in", cliente_nombre: "Walk-in en barra", personas: 2, creada_por: staff }), "walk-in");
+        ok(await svc.from("mesa_cuentas").insert({ id: walk, club_id: clubId, sesion_id: sesion, origen: "walk_in", cliente_nombre: "Walk-in en barra", personas: 2, creada_por: staff, creada_en: alHora(noche, 23, 15) }), "walk-in");
         ok(await svc.from("caja_consumos").insert({ club_id: clubId, noche_id: nocheId, sesion_id: sesion, mesa_id: mesa, cuenta_id: walk, monto_centavos: 85000, concepto: "1 × Botella de tequila", registrado_por: staff }), "consumo walk-in");
         regMesa += 85000;
         const [an] = ok(await svc.from("caja_consumos").insert({ club_id: clubId, noche_id: nocheId, sesion_id: sesion, mesa_id: mesa, cuenta_id: cuentas[0].cuenta, reservation_id: cuentas[0].r.id, rp_id: cuentas[0].r.rp_id, monto_centavos: 95000, concepto: "1 × Botella de whisky 18 años", registrado_por: staff }).select("id"), "consumo a anular");
