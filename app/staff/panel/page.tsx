@@ -1294,8 +1294,10 @@ export default function StaffPanelPage() {
           </Card>
           <Card size="sm">
             <CardContent className="flex flex-col gap-1 px-4">
+              {/* Solo cuenta a quien el staff marcó "se retiró sin consumir";
+                  el consumo real de cada mesa está en la caja. */}
               <span className="text-xs text-muted-foreground">
-                Sin consumo
+                Se fueron sin consumir
               </span>
               <span className="text-2xl font-bold">{totalSinConsumo}</span>
             </CardContent>

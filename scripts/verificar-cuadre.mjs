@@ -12,7 +12,9 @@
 //   4. Nómina semanal (nomina_semana_datos) = suma de comisiones de los
 //      cuadres de esa semana, por RP; entradas = reservas con entrada.
 //   5. /grupo (grupo_resumen) = caja y nómina: consumo, cuentas con consumo,
-//      ticket promedio, reservas, entradas y comisiones, por antro y semana.
+//      ticket promedio, reservas, entradas y comisiones, por antro y semana;
+//      y, si existen, conversión (por venir, consumieron, consumo con reserva)
+//      y rendimiento por RP (grupo_rendimiento_rp) = conteos directos y nómina.
 //   6. Panel del RP (rp_mis_reservas) = caja: consumo y comisión por reserva.
 //
 //   node scripts/verificar-cuadre.mjs [--club=<uuid>] [--desde=AAAA-MM-DD] [--hasta=AAAA-MM-DD]
@@ -30,7 +32,7 @@ const HASTA = arg("hasta") ?? "2100-01-01";
 
 const diferencias = [];
 let revisiones = 0;
-const cobertura = { mesas_cuadradas: 0, noches_cerradas: 0, cuentas_liquidadas: 0, comisiones_revisadas: 0, semanas: 0, grupo: 0, rps_panel: 0, reservas_panel: 0 };
+const cobertura = { mesas_cuadradas: 0, noches_cerradas: 0, cuentas_liquidadas: 0, comisiones_revisadas: 0, semanas: 0, grupo: 0, rendimiento_rp: 0, rps_panel: 0, reservas_panel: 0 };
 function comparar(donde, que, a, b) {
   revisiones++;
   if (Number(a) !== Number(b)) diferencias.push(`${donde} · ${que}: ${a} ≠ ${b} (dif ${Number(a) - Number(b)})`);
@@ -218,6 +220,52 @@ try {
         comparar(donde, "/grupo reservas", g.reservas, res.n);
         comparar(donde, "/grupo entraron", g.entraron, res.entraron);
         comparar(donde, "/grupo comisiones vs nómina (comisión + días)", g.comisiones_centavos, totalNomina);
+        // Columnas de conversión (sql/2026-11-21-grupo-conversion.sql), si existen.
+        if ("reservas_con_consumo" in g) {
+          const [conv] = await db.q(
+            `select count(*) filter (where r.fecha > public.club_fecha_operacion(r.club_id))::int as por_venir,
+                    count(*) filter (where exists (select 1 from public.mesa_cuentas mc join public.caja_consumos k on k.cuenta_id = mc.id
+                                                   where mc.reservation_id = r.id and not k.anulado))::int as con_consumo
+             from public.reservations r where r.club_id = $1 and r.fecha between $2::date and $2::date + 6`,
+            [s.club_id, s.lunes],
+          );
+          const [conRes] = await db.q(
+            `select coalesce(sum(k.monto_centavos), 0)::bigint as cent
+             from public.caja_consumos k join public.mesa_cuentas mc on mc.id = k.cuenta_id join public.caja_noches nn on nn.id = k.noche_id
+             where not k.anulado and mc.reservation_id is not null and nn.club_id = $1 and nn.fecha_operacion between $2::date and $2::date + 6`,
+            [s.club_id, s.lunes],
+          );
+          comparar(donde, "/grupo reservas por venir", g.reservas_por_venir, conv.por_venir);
+          comparar(donde, "/grupo reservas que consumieron", g.reservas_con_consumo, conv.con_consumo);
+          comparar(donde, "/grupo consumo con reserva", g.consumo_con_reserva_centavos, conRes.cent);
+          // Rendimiento por RP: suma de RPs = cifras del antro (solo reservas de RP).
+          const rend = await db.q(`select * from public.grupo_rendimiento_rp($1, $2::date, $2::date + 6)`, [s.club_id, s.lunes]);
+          cobertura.rendimiento_rp += rend.length;
+          const [rp] = await db.q(
+            `select count(*)::int as n,
+                    count(*) filter (where r.puerta_estado = 'entro' or (r.puerta_estado is null and r.status = 'usada'))::int as entraron,
+                    count(*) filter (where exists (select 1 from public.mesa_cuentas mc join public.caja_consumos k on k.cuenta_id = mc.id
+                                                   where mc.reservation_id = r.id and not k.anulado))::int as consumieron,
+                    coalesce((select sum(k.monto_centavos) from public.caja_consumos k join public.mesa_cuentas mc on mc.id = k.cuenta_id
+                              join public.reservations r2 on r2.id = mc.reservation_id
+                              where not k.anulado and r2.club_id = $1 and r2.source = 'rp' and r2.rp_id is not null
+                                and r2.fecha between $2::date and $2::date + 6), 0)::bigint as consumo
+             from public.reservations r
+             where r.club_id = $1 and r.source = 'rp' and r.rp_id is not null and r.fecha between $2::date and $2::date + 6`,
+            [s.club_id, s.lunes],
+          );
+          const suma = (k) => rend.reduce((a, x) => a + Number(x[k]), 0);
+          comparar(donde, "rendimiento RP: reservas", suma("reservas"), rp.n);
+          comparar(donde, "rendimiento RP: entraron", suma("entraron"), rp.entraron);
+          comparar(donde, "rendimiento RP: consumieron", suma("consumieron"), rp.consumieron);
+          comparar(donde, "rendimiento RP: consumo", suma("consumo_centavos"), rp.consumo);
+          comparar(donde, "rendimiento RP: comisiones = /grupo", suma("comisiones_centavos"), g.comisiones_centavos);
+          for (const x of rend) {
+            const n = porRp.get(x.rp_id);
+            if (n) comparar(`${donde} RP ${x.rp_nombre}`, "rendimiento vs nómina (total)", x.comisiones_centavos, n.total_centavos);
+            comparar(`${donde} RP ${x.rp_nombre}`, "ticket = consumo / consumieron", x.ticket_centavos, Number(x.consumieron) ? Math.round(Number(x.consumo_centavos) / Number(x.consumieron)) : 0);
+          }
+        }
       }
     }
   }

@@ -189,7 +189,11 @@ export default function GrupoPage() {
         />
 
         <p className="text-xs text-muted-foreground">
-          Solo lectura. Consumo de la caja (sin anulados), comisiones y pagos por día sin
+          Solo lectura. <span className="font-medium text-foreground">Consumo en caja</span>: todo lo
+          registrado en las mesas, con y sin reserva, sin anulados.{" "}
+          <span className="font-medium text-foreground">Entrada y conversión</span>: sobre las
+          reservas que ya podían llegar (las de noches que no empiezan van aparte, como &quot;por
+          venir&quot;); conversión = reservas cuya cuenta tuvo consumo. Comisiones y pagos por día, sin
           anulados. Cada antro cuenta sus noches en su propia hora.
         </p>
 
@@ -233,7 +237,7 @@ export default function GrupoPage() {
                   </h2>
                 )}
                 {grupo.antros.map((antro) => (
-                  <TarjetaAntro key={antro.club_id} antro={antro} />
+                  <TarjetaAntro key={antro.club_id} antro={antro} rango={rango} rendimientoAbierto={unSoloAntro} />
                 ))}
               </section>
             ))}

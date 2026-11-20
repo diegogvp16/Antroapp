@@ -94,7 +94,9 @@ export function TarjetaRpNomina({
 
         <dl className="grid grid-cols-3 gap-2 text-center">
           <Conteo etiqueta="Entraron" valor={fila.reservas_entraron} />
-          <Conteo etiqueta="Comisiones" valor={fila.comisiones} />
+          {/* Una por reserva que consumió y ya se cuadró, aunque sea de $0
+              porque aún no llegaba a la cuota. */}
+          <Conteo etiqueta="Consumieron" valor={fila.comisiones} />
           <Conteo etiqueta="Días" valor={fila.dias_asistidos} />
         </dl>
 

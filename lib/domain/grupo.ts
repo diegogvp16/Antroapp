@@ -24,11 +24,19 @@ export interface ResumenAntro {
   ticket_promedio_centavos: number;
   comisiones_centavos: number;
   noches_cerradas: number;
+  // sql/2026-11-21-grupo-conversion.sql. null si la base aún no las tiene.
+  reservas_por_venir: number | null;
+  reservas_con_consumo: number | null;
+  consumo_con_reserva_centavos: number | null;
 }
 
 function numero(valor: unknown): number {
   const n = typeof valor === "number" ? valor : Number(valor ?? 0);
   return Number.isFinite(n) ? n : 0;
+}
+
+function numeroONulo(valor: unknown): number | null {
+  return valor === undefined || valor === null ? null : numero(valor);
 }
 
 function textoONulo(valor: unknown): string | null {
@@ -51,6 +59,9 @@ export function normalizarResumen(fila: Record<string, unknown>): ResumenAntro {
     ticket_promedio_centavos: numero(fila.ticket_promedio_centavos),
     comisiones_centavos: numero(fila.comisiones_centavos),
     noches_cerradas: numero(fila.noches_cerradas),
+    reservas_por_venir: numeroONulo(fila.reservas_por_venir),
+    reservas_con_consumo: numeroONulo(fila.reservas_con_consumo),
+    consumo_con_reserva_centavos: numeroONulo(fila.consumo_con_reserva_centavos),
   };
 }
 
@@ -69,10 +80,24 @@ export interface TotalesGrupo {
   ticket_promedio_centavos: number;
   comisiones_centavos: number;
   noches_cerradas: number;
+  reservas_por_venir: number | null;
+  reservas_con_consumo: number | null;
+  consumo_con_reserva_centavos: number | null;
 }
 
 export function ticketPromedio(consumoCentavos: number, cuentas: number): number {
   return cuentas > 0 ? Math.round(consumoCentavos / cuentas) : 0;
+}
+
+// Suma una columna que puede faltar: si falta en alguna fila, el total es null.
+function sumaONulo(filas: ResumenAntro[], clave: "reservas_por_venir" | "reservas_con_consumo" | "consumo_con_reserva_centavos"): number | null {
+  let total = 0;
+  for (const f of filas) {
+    const v = f[clave];
+    if (v === null) return null;
+    total += v;
+  }
+  return total;
 }
 
 export function totalesGrupo(filas: ResumenAntro[]): TotalesGrupo {
@@ -98,6 +123,9 @@ export function totalesGrupo(filas: ResumenAntro[]): TotalesGrupo {
     ...t,
     antros: filas.length,
     ticket_promedio_centavos: ticketPromedio(t.consumo_centavos, t.cuentas_con_consumo),
+    reservas_por_venir: sumaONulo(filas, "reservas_por_venir"),
+    reservas_con_consumo: sumaONulo(filas, "reservas_con_consumo"),
+    consumo_con_reserva_centavos: sumaONulo(filas, "consumo_con_reserva_centavos"),
   };
 }
 
@@ -109,6 +137,50 @@ export function totalesGrupo(filas: ResumenAntro[]): TotalesGrupo {
 export function porcentajeEntrada(entraron: number, reservas: number): number | null {
   if (reservas <= 0) return null;
   return Math.round((entraron / reservas) * 100);
+}
+
+// Reservas que ya podían llegar: sin las de noches que todavía no empiezan
+// (no se cuentan como "no llegó" ni bajan la conversión).
+export function reservasOcurridas(reservas: number, porVenir: number | null): number {
+  return Math.max(0, reservas - (porVenir ?? 0));
+}
+
+// Conversión: reservas que consumieron / reservas que ya podían llegar.
+export function conversion(consumieron: number | null, reservas: number, porVenir: number | null): number | null {
+  if (consumieron === null) return null;
+  return porcentajeEntrada(consumieron, reservasOcurridas(reservas, porVenir));
+}
+
+// ---------------------------------------------------------------------------
+// Rendimiento por RP (grupo_rendimiento_rp).
+// ---------------------------------------------------------------------------
+
+export interface RendimientoRp {
+  rp_id: string;
+  rp_nombre: string;
+  rp_activo: boolean;
+  reservas: number;
+  por_venir: number;
+  entraron: number;
+  consumieron: number;
+  consumo_centavos: number;
+  ticket_centavos: number;
+  comisiones_centavos: number;
+}
+
+export function normalizarRendimiento(fila: Record<string, unknown>): RendimientoRp {
+  return {
+    rp_id: String(fila.rp_id ?? ""),
+    rp_nombre: typeof fila.rp_nombre === "string" && fila.rp_nombre.trim() ? fila.rp_nombre : "RP sin nombre",
+    rp_activo: fila.rp_activo !== false,
+    reservas: numero(fila.reservas),
+    por_venir: numero(fila.por_venir),
+    entraron: numero(fila.entraron),
+    consumieron: numero(fila.consumieron),
+    consumo_centavos: numero(fila.consumo_centavos),
+    ticket_centavos: numero(fila.ticket_centavos),
+    comisiones_centavos: numero(fila.comisiones_centavos),
+  };
 }
 
 export function textoPorcentaje(pct: number | null): string {
