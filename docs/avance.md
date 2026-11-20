@@ -16,8 +16,11 @@
 - **Usuarios de prueba de dev**: `dev_admin`, `dev_dueno`, `dev_gerente`,
   `dev_staff`, `dev_rp`, `dev_cliente` (todos `@example.com`). La contraseña
   está en `backups/dev-credenciales.json` (solo en tu computadora).
-- Antro de prueba: **Club Demo Dev** (publicado, 12 mesas, reservas de hoy).
-- Para volver a dejar dev limpio: `node scripts/dev/sembrar-dev.mjs`.
+- Antro de prueba: **Club Demo Dev** (publicado, 12 mesas, reservas de hoy;
+  50 mesas con `node scripts/dev/mesas-extra.mjs`).
+- Para volver a dejar dev limpio y con la noche demo, en este orden:
+  `node scripts/dev/sembrar-dev.mjs`, `node scripts/demo-datos.mjs --env=.env.dev --si`
+  y (opcional) `node scripts/dev/mesas-extra.mjs`.
 
 ---
 
@@ -188,8 +191,9 @@ lo visible está en el bloque 3.
    a Supabase directo.
 3. **Probar en la vista previa** lo listado en cada bloque (usuarios `dev_*`,
    contraseña en `backups/dev-credenciales.json`).
-4. **Cuando quieras el pase**: pídelo explícitamente. El orden exacto está
-   en CLAUDE.md, sección 9. La mañana del 25 corre
+4. **Cuando quieras el pase**: pídelo explícitamente. El paso a paso, con
+   diagnósticos, verificación y rollback de cada paso, está en
+   `docs/pase-produccion.md`. La mañana del 25 corre
    `node scripts/demo-datos.mjs --fecha=2026-11-25 --si` (no antes).
 
 ---
@@ -245,3 +249,36 @@ Corrido el 20/11/2026 con solo SELECT (no se creó el índice):
 - **Opción A** (la del índice: cliente, antro, noche): **0 duplicados**. El
   índice de `sql/2026-11-20-estabilidad.sql` se puede crear sin conflictos.
 - Opción B (informativa: teléfono, antro, noche): 0.
+
+---
+
+## Trabajo de la noche del 19/11/2026
+
+Detalle completo en `docs/reporte-noche.md`. Resumen de lo que se puede
+probar:
+
+### Qué usuario usar en cada pantalla nueva
+
+Contraseña: `backups/dev-credenciales.json` (campo `password`). Antes de
+probar otro día: `sembrar-dev`, `demo-datos --env=.env.dev --si` y
+`mesas-extra` (la noche demo es la noche en curso).
+
+| Pantalla | Usuario | Qué ver |
+|---|---|---|
+| `/rp/panel` → Reservas | `demo_mariana@example.com` | Tema oscuro; periodo (Esta semana / Anterior / Mes), barra de colores, filtros. Estados: Consumió, Llegó sin consumo, No llegó, Por llegar. Tarjeta "Cuota alcanzada". Detalle con línea de tiempo, comisión y "Escribirle". |
+| `/rp/panel` → Reservas | `demo_diego@example.com` | Igual, con cuota **no** alcanzada ("3 de 10 reservas que consumen"). |
+| `/rp/panel` → Nómina | `demo_mariana` / `demo_diego` | La misma tarjeta de cuota (antes contaba "entraron"). |
+| `/staff/caja` | `dev_staff@example.com` | Mapa con 50 mesas (pestañas Todas / Abiertas / Por cuadrar / Libres, búsqueda); Mesa 1 con 3 grupos y Mesa 2 con 2. El staff no ve "Cuadrar". |
+| `/staff/caja` | `dev_gerente@example.com` | Cuadrar, anular con motivo, reabrir una mesa cerrada, "Cuadre de la noche". |
+| Login (cualquiera) | — | 5 contraseñas malas desde el mismo equipo bloquean ese correo **en ese equipo** 15 min; desde otro sigue entrando. Un RP dado de baja recibe "Tu cuenta ha sido desactivada". |
+
+### Pruebas (todas contra antroapp-dev)
+
+| Prueba | Resultado |
+|---|---|
+| `node scripts/dev/probar-caja.mjs` | 167/167 |
+| `node scripts/probar-clubs-visibilidad.mjs --env=.env.dev` | 68/68 |
+| `node scripts/dev/probar-login.mjs` (nueva) | 15/15 |
+| `node scripts/dev/probar-rp-panel.mjs` (Playwright) | 40/40 |
+| `node scripts/dev/recorrido-roles.mjs` (nueva, 6 roles a 390 px) | 32/32 |
+| `npx tsc --noEmit`, `npx eslint .`, `npx next build` | sin errores |

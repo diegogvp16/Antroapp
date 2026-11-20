@@ -85,8 +85,23 @@ Notas importantes:
   (un usuario por rol `dev_<rol>@example.com`, "Club Demo Dev" publicado,
   un borrador con dueño y uno sin dueño). Contraseña en
   `backups/dev-credenciales.json`.
-- **Pruebas contra dev**: `node scripts/probar-clubs-visibilidad.mjs
-  --env=.env.dev` (58/58 el 19/11/2026).
+- **Datos demo en dev**: después de `sembrar-dev`, `node scripts/demo-datos.mjs
+  --env=.env.dev --si` arma la noche en curso con caja (mesas con 2 y 3
+  grupos, RPs en los 4 estados, reservas de mañana, una RP con la cuota
+  alcanzada y otro sin alcanzarla) y `node scripts/dev/mesas-extra.mjs`
+  sube Club Demo Dev a 50 mesas. Los tres se niegan a correr contra prod.
+- **Pruebas contra dev** (19/11/2026, todas en verde):
+  - `node scripts/probar-clubs-visibilidad.mjs --env=.env.dev` (68/68)
+  - `node scripts/dev/probar-caja.mjs` (167/167)
+  - `node scripts/dev/probar-login.mjs` (15/15, con `servidor-dev`)
+  - `node scripts/dev/probar-rp-panel.mjs` (40/40, Playwright)
+  - `node scripts/dev/recorrido-roles.mjs` (32/32, 6 roles a 390 px)
+
+  Playwright no es dependencia del proyecto: los scripts lo toman de
+  `PLAYWRIGHT_DESDE=<carpeta con node_modules/playwright>`.
+- **Flujo de ramas**: se trabaja en `desarrollo` con commits pequeños; cada
+  push a `desarrollo` genera un Preview (llaves de dev). A `master` solo por
+  merge en el pase (`docs/pase-produccion.md`).
 - **SQL nuevo**: primero en dev (con sus pruebas por rol), y solo después en
   producción por el SQL Editor, con su rollback listo.
 - Rutas de servidor (usan la *service role key*, y antes verifican quién
@@ -293,6 +308,37 @@ Decidido con el socio. **Nada de esto está implementado como cobro real todaví
   (`rp_attendance`), por escaneo de su QR o marca manual del staff. Tener turno
   asignado no basta.
 
+### Caja por mesa y panel del RP (en `desarrollo`; en producción después del pase)
+- **Grupos por mesa**: una mesa de la noche es una `mesa_sesiones`; cada
+  cliente (reserva o walk-in) es una `mesa_cuentas` con su RP. Una mesa
+  puede tener varios grupos en la noche: cuando se cuadra, el siguiente
+  grupo abre una sesión nueva. Lo cuadrado queda bloqueado ("no se
+  modifica").
+- **Nada se borra en caja**: consumos y pagos se anulan con motivo; una mesa
+  cerrada se reabre con motivo; una mesa cuadrada no se reabre. Lo cuidan
+  los triggers `caja_sin_borrar` y `caja_insert_coherente`, no solo RLS.
+- **Permisos de caja** (`caja_tiene_permiso`, o los 8 de una vez con
+  `caja_mis_permisos`): el staff abre mesas, registra consumo, cobra y
+  cierra; anular, reabrir, cuadrar y cerrar la noche son del gerente/dueño
+  salvo que se le den en `caja_permisos`. Un staff o RP dado de baja
+  (`profiles.activo = false`) no ve la caja ni su nómina.
+- **Comisión**: nace **al cuadrar la mesa**, una vez por cuenta, con el
+  consumo de esa cuenta (`caja_liquidar_cuenta`). El desbloqueo semanal es
+  una cuota: con `D`, la D-ésima reserva que consume ya paga. Diseño de
+  reglas por antro: `docs/reglas-comision.md`.
+- **Estados de reserva para el RP** (`rp_mis_reservas`, que solo devuelve
+  las del RP que llama): Consumió (consumo > 0, cuenta para comisión) ·
+  Llegó, sin consumo · No llegó (la noche ya cerró sin entrada) · Por llegar
+  (la noche sigue abierta). Qué ve el RP lo decide un solo punto,
+  `rp_nivel_visibilidad(club)` (hoy fijo en "estado + monto"). La tarjeta de
+  cuota sale de `rp_progreso_cuota()`, que responde "sin cuota" si no aplica.
+- **Errores en pantalla**: solo se muestran tal cual los avisos de las
+  funciones (`raise exception`, código P0001); el resto pasa por
+  `mensajeParaUsuario` (`lib/errores-base.ts`) y sale genérico.
+- **Login** (`/api/auth/login`): bloqueo de 15 min tras 5 fallos del mismo
+  correo desde la misma IP, 30 del correo desde cualquier IP o 20 de la
+  IP; un RP dado de baja recibe 403.
+
 ---
 
 ## 6. Modelo de datos
@@ -390,7 +436,8 @@ Ordenada por gravedad. Verificado contra producción el 11/11/2026.
 
 ### 🟡 Medios
 
-4. **Auto-deploy de Vercel sin conectar** (ver sección 2). Deploy manual con
+4. ~~**Auto-deploy de Vercel sin conectar**~~ Resuelto: conectado el
+   19/11/2026 (ver sección 2). Texto anterior: deploy manual con
    `npx vercel --prod --scope antroapp` mientras tanto.
 5. **`/dueno/signup` no es transaccional**: crea el perfil y luego el club en
    dos pasos. Si falla el segundo, queda un dueño sin antro que ve "Antro no
@@ -591,24 +638,26 @@ Dragones). Evitar explícitamente el look genérico morado-degradado.
 
 ### Hecho en `desarrollo` y antroapp-dev, FALTA el pase a producción (bloque 6)
 
-Todo probado en dev (`scripts/dev/probar-caja.mjs` 167/167,
-`probar-clubs-visibilidad --env=.env.dev` 68/68, recorridos con Playwright).
-El pase lo pide Diego de forma explícita. Orden, cada paso con su rollback
-(probados: dejan el esquema idéntico al de producción):
+Todo probado en dev (ver "Pruebas contra dev" en la sección 2). El pase lo
+pide Diego de forma explícita. **El paso a paso completo**, con
+diagnósticos de solo lectura, verificación, rollback de cada paso y
+problemas comunes, está en **`docs/pase-produccion.md`**. Resumen del orden
+(la cadena de rollbacks en orden inverso deja el esquema idéntico al de
+producción, probado el 19/11/2026):
 
-1. Respaldo del día (ver `docs/respaldos.md`).
+1. Respaldo del día (ver `docs/respaldos.md`) y diagnósticos (duplicados).
 2. `sql/2026-11-20-cover.sql`
-3. `sql/2026-11-20-caja-por-mesa.sql` (caja, puerta, grupo, candados de
-   reservas y perfiles, reservas desde la noche operativa)
-4. `sql/2026-11-20-estabilidad.sql` (1 reserva por noche, funciones
-   registrar_* sin confiar en el navegador, intentos de login, errores).
-   Antes, el diagnóstico de duplicados de
-   `sql/2026-11-borrador-una-reserva-por-dia.sql`.
+3. `sql/2026-11-20-caja-por-mesa.sql`
+4. `sql/2026-11-20-estabilidad.sql`, **seguido del merge** (paso 7) el mismo
+   día: el código nuevo necesita `login_intentos` y el viejo pierde
+   comisiones con las funciones nuevas.
 5. `sql/2026-11-20-nomina-y-grupo.sql`
-6. Merge de `desarrollo` a `master` (publica el código nuevo).
-7. **Después** del código nuevo: `sql/2026-11-20-caja-candado-puerta.sql`
+6. `sql/2026-11-21-rp-panel.sql` y `sql/2026-11-21-caja-permisos.sql`
+7. Merge de `desarrollo` a `master` (publica el código nuevo).
+8. **Después** del código nuevo: `sql/2026-11-20-caja-candado-puerta.sql`
    (rompe el "Confirmar entrada" viejo si se aplica antes).
-8. Recorrido de los 6 roles en producción.
+9. Recorrido de los 6 roles en producción.
+10. El 25/11 después de las 08:00: `node scripts/demo-datos.mjs --fecha=2026-11-25 --si`.
 
 Con eso quedan resueltos los pendientes 1, 4, 5 (caja; falta alta masiva de
 RPs), 6 y el error del panel de staff después de medianoche. El 2 (bono de
@@ -695,3 +744,14 @@ Por prioridad:
 - **Un INSERT que "pasa" no significa que guardó lo que mandaste**:
   `clubs_candado_insert` corrige los valores en silencio. Para probar un
   candado, leer después lo que quedó guardado.
+- **`npx next build` pisa la carpeta `.next` del servidor de desarrollo**:
+  después del build, `servidor-dev` responde 500. Pararlo, borrar `.next` y
+  levantarlo de nuevo.
+- **Importar `scripts/dev/sembrar-dev.mjs` lo ejecuta** (no tiene guard de
+  "solo si es el script principal"): volver a sembrar dev a media prueba.
+  Copiar las constantes que hagan falta, no importarlas.
+- **Una prueba de caja con Playwright cambia los datos de dev** (cuadra
+  mesas, abre grupos): para repetirla, regenerar antes la noche demo.
+- **Contar "entraron" no es lo mismo que contar "consumieron"**: la cuota
+  del RP sale siempre de `rp_progreso_cuota()` (base), nunca de un conteo
+  armado en el navegador.
