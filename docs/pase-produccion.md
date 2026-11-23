@@ -48,6 +48,7 @@
 | 5 | `sql/2026-11-20-estabilidad.sql` | REVERSIBLE | 2 min |
 | 6 | `sql/2026-11-20-nomina-y-grupo.sql` | REVERSIBLE | 2 min |
 | 7 | `sql/2026-11-21-rp-panel.sql` y `sql/2026-11-21-caja-permisos.sql` | REVERSIBLE | 2 min |
+| 7b | **Solo si `noche2` ya se integró a `desarrollo`**: `sql/2026-11-21-caja-idempotencia.sql` y `sql/2026-11-21-grupo-conversion.sql` | REVERSIBLE | 2 min |
 | 8 | Merge `desarrollo` → `master` (auto-deploy) | REVERSIBLE (redeploy anterior) | 10 min |
 | 9 | `sql/2026-11-20-caja-candado-puerta.sql` | REVERSIBLE | 2 min |
 | 10 | Recorrido de los 6 roles en producción | — | 30 min |
@@ -209,6 +210,39 @@ Los dos son idempotentes.
 - **Rollback**: primero `drop function if exists public.caja_mis_permisos(uuid);`
   y después `sql/2026-11-21-rp-panel-rollback.sql`.
 
+## 7b. Caja en condiciones reales — `sql/2026-11-21-caja-idempotencia.sql`
+
+**Solo si el trabajo de la rama `noche2` ya se integró a `desarrollo`** (con
+autorización de Diego). Si no, se omite: el código de `desarrollo` no lo usa.
+
+Agrega la clave de idempotencia de consumos y cobros, el saldo esperado al
+cobrar y `caja_firma_noche` (detalle en `docs/caja-condiciones-reales.md`).
+Los parámetros nuevos tienen default: el código anterior sigue igual. Y si el
+código nuevo llegara sin este SQL, la caja sigue funcionando sin la
+protección (llama como antes).
+
+- **Verificar**:
+  ```sql
+  select count(*) from information_schema.columns
+  where table_schema = 'public' and column_name = 'clave_cliente'
+    and table_name in ('caja_consumos', 'caja_pagos');                    -- 2
+  select oid::regprocedure from pg_proc where proname in
+    ('caja_registrar_consumo', 'caja_registrar_pago', 'caja_firma_noche');  -- 3, con p_clave
+  ```
+- **Rollback**: `sql/2026-11-21-caja-idempotencia-rollback.sql` (va antes del
+  rollback del paso 7 en la cadena inversa). Probado en dev: deja el esquema
+  idéntico.
+
+Junto con él, `sql/2026-11-21-grupo-conversion.sql`: `grupo_resumen` con
+conversión, reservas por venir y consumo con reserva, y
+`grupo_rendimiento_rp` (detalle en `docs/numeros-dashboards.md`). Si falta,
+`/grupo` sigue funcionando sin esas cifras.
+
+- **Verificar**: `select proname from pg_proc where proname = 'grupo_rendimiento_rp';` (1).
+- **Rollback**: `sql/2026-11-21-grupo-conversion-rollback.sql` (esquema idéntico, probado en dev).
+
+La rama `fase2` (inventario y propinas, `sql/fase2/`) **no** forma parte del pase.
+
 ## 8. Merge a `master` (publica el código)
 
 ```bash
@@ -302,5 +336,10 @@ node scripts/probar-clubs-visibilidad.mjs --env=.env.dev       # 68/68
 node scripts/dev/probar-login.mjs                              # 15/15 (con servidor-dev)
 PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/probar-rp-panel.mjs    # 40/40
 PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/recorrido-roles.mjs    # 32/32
+# Rama noche2 (con sql/2026-11-21-caja-idempotencia.sql en dev):
+node scripts/dev/probar-caja-concurrencia.mjs                  # 29/29
+PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/probar-caja-multi.mjs  # 17/17 (con servidor-dev)
+PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/probar-carga-caja.mjs  # medidas (mejor contra servidor-prod-dev)
+node scripts/verificar-cuadre.mjs                              # sin diferencias
 npx tsc --noEmit && npx eslint . && npx next build
 ```

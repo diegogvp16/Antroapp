@@ -20,7 +20,7 @@ interface RpListItem {
 }
 
 const SELECT_CLASSES =
-  "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30";
+  "h-11 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30";
 
 interface ReglasPagoRPProps {
   club: Club;
@@ -564,6 +564,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
                 <Input
                   id="comision_monto"
                   type="number"
+                  inputMode="decimal"
                   min={0}
                   max={comisionTipo === "porcentaje" ? 100 : undefined}
                   value={comisionMonto}
@@ -578,6 +579,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
                 <Input
                   id="comision_desbloqueo"
                   type="number"
+                  inputMode="numeric"
                   min={0}
                   value={comisionDesbloqueo}
                   onChange={(e) => setComisionDesbloqueo(e.target.value)}
@@ -625,6 +627,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
                   <Input
                     id="tarifa_posicion"
                     type="number"
+                    inputMode="numeric"
                     min={1}
                     value={tarifaPosicion}
                     onChange={(e) => setTarifaPosicion(e.target.value)}
@@ -636,6 +639,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
                   <Input
                     id="tarifa_monto"
                     type="number"
+                    inputMode="decimal"
                     min={0}
                     value={tarifaMonto}
                     onChange={(e) => setTarifaMonto(e.target.value)}
@@ -771,6 +775,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
                   <Input
                     id="rp_tarifa_posicion"
                     type="number"
+                    inputMode="numeric"
                     min={1}
                     value={rpTarifaPosicion}
                     onChange={(e) => setRpTarifaPosicion(e.target.value)}
@@ -782,6 +787,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
                   <Input
                     id="rp_tarifa_monto"
                     type="number"
+                    inputMode="decimal"
                     min={0}
                     value={rpTarifaMonto}
                     onChange={(e) => setRpTarifaMonto(e.target.value)}
@@ -861,6 +867,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
                 <Input
                   id="rp_comision_monto"
                   type="number"
+                  inputMode="decimal"
                   min={0}
                   max={rpComisionTipo === "porcentaje" ? 100 : undefined}
                   value={rpComisionMonto}
@@ -875,6 +882,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
                 <Input
                   id="rp_comision_desbloqueo"
                   type="number"
+                  inputMode="numeric"
                   min={0}
                   value={rpComisionDesbloqueo}
                   onChange={(e) => setRpComisionDesbloqueo(e.target.value)}

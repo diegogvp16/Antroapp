@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -47,7 +47,13 @@ export function MapaNoche({
     () => Object.fromEntries(PESTANAS_MAPA.map((p) => [p.id, mesas.filter((m) => enPestana(m, p.id)).length])) as Record<PestanaMapa, number>,
     [mesas],
   );
-  const visibles = mesas.filter((m) => enPestana(m, pestana) && coincideBusqueda(m, busqueda));
+  // La lista se filtra con el valor diferido: el campo responde a cada tecla
+  // aunque el teléfono tarde en volver a pintar 50 mesas.
+  const busquedaDiferida = useDeferredValue(busqueda);
+  const visibles = useMemo(
+    () => mesas.filter((m) => enPestana(m, pestana) && coincideBusqueda(m, busquedaDiferida)),
+    [mesas, pestana, busquedaDiferida],
+  );
 
   return (
     <div className="flex flex-col gap-3">
@@ -78,13 +84,17 @@ export function MapaNoche({
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
           placeholder="Buscar mesa, cliente o RP"
-          className="h-11 w-full rounded-lg border border-caja-control bg-caja-superficie pl-9 pr-3 text-sm text-caja-texto placeholder:text-caja-secundario outline-none focus-visible:border-caja-dorado"
+          className="h-11 w-full rounded-lg border border-caja-control bg-caja-superficie pl-9 pr-3 text-base text-caja-texto placeholder:text-caja-secundario outline-none focus-visible:border-caja-dorado"
         />
       </label>
 
       {visibles.length === 0 ? (
         <p className="py-6 text-center text-sm text-caja-secundario">
-          {busqueda ? "Ninguna mesa coincide con la búsqueda." : "No hay mesas en esta pestaña."}
+          {busquedaDiferida
+            ? "Ninguna mesa coincide con la búsqueda."
+            : mesas.length === 0
+              ? "Este antro no tiene mesas dadas de alta. El dueño las agrega desde su panel."
+              : "No hay mesas en esta pestaña."}
         </p>
       ) : (
         <ul className="grid grid-cols-2 gap-2">

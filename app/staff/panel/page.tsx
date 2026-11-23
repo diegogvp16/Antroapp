@@ -26,6 +26,7 @@ import {
 } from "@/lib/turnos";
 import { nocheOperativaMexico, semanaMexico } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
+import { esErrorDeRed, mensajeParaUsuario, MENSAJE_SIN_CONEXION, type ErrorBase } from "@/lib/errores-base";
 import type { Club, ClubTable, Profile, Reservation } from "@/types";
 
 type RPListItem = Pick<Profile, "id" | "nombre" | "activo">;
@@ -61,16 +62,18 @@ function leerFichaPuerta(data: unknown): FichaPuerta | null {
   };
 }
 
-// Los errores de la base vienen en español (raise exception): se muestran
-// tal cual. PostgrestError no es instancia de Error, por eso se revisa el
-// campo `message` directamente.
+// Errores de la base: solo los avisos de las funciones (raise exception,
+// P0001, en español) se muestran tal cual; lo demás (permisos, JWT, red)
+// sale en un mensaje claro sin nombres internos (lib/errores-base.ts).
+// PostgrestError no es instancia de Error: se reconoce por su campo code.
 function mensajeDeError(err: unknown, porDefecto: string): string {
-  if (typeof err === "object" && err !== null && "message" in err) {
-    const { message } = err as { message: unknown };
-    if (typeof message === "string" && message.trim()) return message;
-  }
+  if (typeof err === "object" && err !== null && "code" in err) return mensajeParaUsuario(err as ErrorBase, porDefecto);
+  if (esErrorDeRed(err)) return MENSAJE_SIN_CONEXION;
+  console.error("Error en el panel:", err);
   return porDefecto;
 }
+
+const AVISO_PAGO_DIA = "Asistencia guardada, pero no se generó el pago del día. Avisa al gerente para que lo revise.";
 
 function textoPersonas(n: number): string {
   return `${n} ${n === 1 ? "persona" : "personas"}`;
@@ -112,7 +115,7 @@ type AttendanceScanState =
   | { status: "wrong-club" }
   | { status: "no-turno"; rp: { id: string; nombre: string } }
   | { status: "already-marked"; rp: { id: string; nombre: string }; scannedAt: string }
-  | { status: "success"; nombre: string; scannedAt: string }
+  | { status: "success"; nombre: string; scannedAt: string; avisoPago: string | null }
   | { status: "lookup-error" };
 
 const STATUS_LABEL: Record<Reservation["status"], string> = {
@@ -181,6 +184,8 @@ export default function StaffPanelPage() {
   const [rpSubmitting, setRpSubmitting] = useState(false);
   const [rpError, setRpError] = useState<string | null>(null);
   const [togglingRpId, setTogglingRpId] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<Record<string, string>>({});
+  const [quitarTurnoError, setQuitarTurnoError] = useState<{ id: string; mensaje: string } | null>(null);
 
   const [rpSchedules, setRpSchedules] = useState<Record<string, ScheduleRow[]>>(
     {},
@@ -414,9 +419,10 @@ export default function StaffPanelPage() {
         .eq("id", scheduleId);
 
       if (error) throw error;
+      setQuitarTurnoError(null);
       await fetchRpSchedules(clubId);
     } catch (err) {
-      console.error("Error quitando turno:", err);
+      setQuitarTurnoError({ id: scheduleId, mensaje: mensajeDeError(err, "No pudimos quitar el turno. Intenta de nuevo.") });
     } finally {
       setRemovingScheduleId(null);
     }
@@ -448,8 +454,8 @@ export default function StaffPanelPage() {
 
       if (error) throw error;
 
-      if (club?.pago_rp_modo === "dia") {
-        await createPagoDiaParaAsistencia(attendanceRow.id, rpId, clubId, fecha);
+      if (club?.pago_rp_modo === "dia" && !(await createPagoDiaParaAsistencia(attendanceRow.id, rpId, clubId, fecha))) {
+        setManualError((prev) => ({ ...prev, [rpId]: AVISO_PAGO_DIA }));
       }
 
       await fetchAsistenciaHoy(clubId);
@@ -522,8 +528,10 @@ export default function StaffPanelPage() {
       await fetchMisRPs(clubId);
     } catch (err) {
       console.error("Error creando RP:", err);
+      // Los textos del servidor ya vienen en español (create-staff); si falló
+      // la red, el de "sin conexión".
       setRpError(
-        err instanceof Error ? err.message : "No pudimos crear la cuenta.",
+        esErrorDeRed(err) ? MENSAJE_SIN_CONEXION : err instanceof Error ? err.message : "No pudimos crear la cuenta.",
       );
     } finally {
       setRpSubmitting(false);
@@ -541,9 +549,13 @@ export default function StaffPanelPage() {
         .eq("id", rp.id);
 
       if (error) throw error;
+      setToggleError((prev) => ({ ...prev, [rp.id]: "" }));
       await fetchMisRPs(clubId);
     } catch (err) {
-      console.error("Error actualizando estado del RP:", err);
+      setToggleError((prev) => ({
+        ...prev,
+        [rp.id]: mensajeDeError(err, rp.activo ? "No pudimos dar de baja al RP. Intenta de nuevo." : "No pudimos reactivar al RP. Intenta de nuevo."),
+      }));
     } finally {
       setTogglingRpId(null);
     }
@@ -570,7 +582,7 @@ export default function StaffPanelPage() {
       );
 
       if (escanearError) {
-        setScanState({ status: "error", message: escanearError.message });
+        setScanState({ status: "error", message: mensajeDeError(escanearError, "No pudimos leer el código. Intenta de nuevo.") });
         return;
       }
 
@@ -621,7 +633,7 @@ export default function StaffPanelPage() {
       );
 
       if (confirmarError) {
-        setScanState({ status: "ready", ficha, error: confirmarError.message });
+        setScanState({ status: "ready", ficha, error: mensajeDeError(confirmarError, "No pudimos confirmar la entrada. Intenta de nuevo.") });
         return;
       }
 
@@ -654,7 +666,7 @@ export default function StaffPanelPage() {
     rpId: string,
     targetClubId: string,
     fecha: string,
-  ) {
+  ): Promise<boolean> {
     try {
       const supabase = createClient();
       const { inicio, fin } = semanaMexico();
@@ -669,10 +681,12 @@ export default function StaffPanelPage() {
       });
 
       if (error) throw error;
+      return true;
     } catch (err) {
-      // No bloqueamos la UI de asistencia por esto: la asistencia ya se
-      // guardó exitosamente, el pago por día es un efecto secundario.
+      // La asistencia ya quedó; el pago del día no. Quien llama avisa en
+      // pantalla para que el gerente lo revise (no se pierde en silencio).
       console.error("Error creando pago por día:", err);
+      return false;
     }
   }
 
@@ -701,16 +715,10 @@ export default function StaffPanelPage() {
 
       if (error) throw error;
 
-      if (club?.pago_rp_modo === "dia") {
-        await createPagoDiaParaAsistencia(
-          attendanceRow.id,
-          rp.id,
-          clubId,
-          fecha,
-        );
-      }
+      const pagoOk =
+        club?.pago_rp_modo !== "dia" || (await createPagoDiaParaAsistencia(attendanceRow.id, rp.id, clubId, fecha));
 
-      setAttendanceScanState({ status: "success", nombre: rp.nombre, scannedAt: nowIso });
+      setAttendanceScanState({ status: "success", nombre: rp.nombre, scannedAt: nowIso, avisoPago: pagoOk ? null : AVISO_PAGO_DIA });
       await fetchAsistenciaHoy(clubId);
     } catch (err) {
       console.error("Error registrando asistencia:", err);
@@ -944,7 +952,7 @@ export default function StaffPanelPage() {
   }, [attendanceScannerOpen]);
 
   if (checkingSession) {
-    return null;
+    return <p className="p-6 text-sm text-muted-foreground">Cargando…</p>;
   }
 
   const totalReservas = reservas.length;
@@ -1158,6 +1166,11 @@ export default function StaffPanelPage() {
                     ¡Asistencia registrada! {attendanceScanState.nombre} —{" "}
                     {formatHora(attendanceScanState.scannedAt)}
                   </p>
+                  {attendanceScanState.avisoPago && (
+                    <p className="text-sm text-status-warn" role="alert">
+                      {attendanceScanState.avisoPago}
+                    </p>
+                  )}
                   <Button type="button" onClick={resumeAttendanceScanning}>
                     Escanear siguiente
                   </Button>
@@ -1294,8 +1307,10 @@ export default function StaffPanelPage() {
           </Card>
           <Card size="sm">
             <CardContent className="flex flex-col gap-1 px-4">
+              {/* Solo cuenta a quien el staff marcó "se retiró sin consumir";
+                  el consumo real de cada mesa está en la caja. */}
               <span className="text-xs text-muted-foreground">
-                Sin consumo
+                Se fueron sin consumir
               </span>
               <span className="text-2xl font-bold">{totalSinConsumo}</span>
             </CardContent>
@@ -1319,6 +1334,11 @@ export default function StaffPanelPage() {
                 <Input
                   id="rp_email"
                   type="email"
+                  // Es la cuenta de OTRA persona: que el navegador no ponga
+                  // el correo ni la contraseña de quien está creando el RP.
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   value={rpEmail}
                   onChange={(e) => setRpEmail(e.target.value)}
                 />
@@ -1328,6 +1348,7 @@ export default function StaffPanelPage() {
                 <Input
                   id="rp_password"
                   type="password"
+                  autoComplete="new-password"
                   value={rpPassword}
                   onChange={(e) => setRpPassword(e.target.value)}
                 />
@@ -1377,7 +1398,7 @@ export default function StaffPanelPage() {
                     <Button
                       type="button"
                       variant="outline"
-                      size="sm"
+                      className="h-11"
                       onClick={() => handleToggleRPActivo(rp)}
                       disabled={togglingRpId === rp.id}
                     >
@@ -1388,6 +1409,11 @@ export default function StaffPanelPage() {
                           : "Reactivar"}
                     </Button>
                   </CardContent>
+                  {toggleError[rp.id] && (
+                    <p className="px-5 pb-3 text-sm text-destructive" role="alert">
+                      {toggleError[rp.id]}
+                    </p>
+                  )}
 
                   <CardContent className="flex flex-col gap-2 border-t border-border px-5 py-3">
                     {clubId && (
@@ -1415,7 +1441,7 @@ export default function StaffPanelPage() {
                           .map((s) => (
                           <li
                             key={s.id}
-                            className="flex items-center justify-between"
+                            className="flex flex-wrap items-center justify-between"
                           >
                             <span
                               className={
@@ -1430,12 +1456,17 @@ export default function StaffPanelPage() {
                               type="button"
                               onClick={() => handleRemoveSchedule(s.id)}
                               disabled={removingScheduleId === s.id}
-                              className="font-medium text-destructive underline underline-offset-2 disabled:opacity-50"
+                              className="-mr-2 inline-flex h-11 items-center px-2 font-medium text-destructive underline underline-offset-2 disabled:opacity-50"
                             >
                               {removingScheduleId === s.id
                                 ? "Quitando..."
                                 : "Quitar"}
                             </button>
+                            {quitarTurnoError?.id === s.id && (
+                              <span className="basis-full text-destructive" role="alert">
+                                {quitarTurnoError.mensaje}
+                              </span>
+                            )}
                           </li>
                         ))}
                       </ul>

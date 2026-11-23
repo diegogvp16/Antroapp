@@ -97,6 +97,19 @@ Notas importantes:
   - `node scripts/dev/probar-rp-panel.mjs` (40/40, Playwright)
   - `node scripts/dev/recorrido-roles.mjs` (32/32, 6 roles a 390 px)
 
+  Rama `noche2` (20/11/2026, con `sql/2026-11-21-caja-idempotencia.sql` y
+  `sql/2026-11-21-grupo-conversion.sql` en dev):
+  - `node scripts/dev/probar-caja-concurrencia.mjs` (29/29: reintentos, 3 staff a la vez)
+  - `node scripts/dev/probar-caja-multi.mjs` (17/17, Playwright, 3 sesiones, sin red, respuestas perdidas)
+  - `node scripts/dev/probar-carga-caja.mjs` (medidas: 50 mesas, 1,150 movimientos, CPU 4×)
+  - `node scripts/verificar-cuadre.mjs` (solo lectura: caja = cuadres = comisiones = nómina = /grupo = panel RP, al centavo)
+  - `node scripts/dev/probar-dashboards.mjs` (28/28) y `probar-dashboards-pantalla.mjs` (24/24)
+  - `node scripts/dev/probar-instalable.mjs` (34/34, contra `servidor-prod-dev`)
+
+  Para medir como en el teléfono real: `node scripts/dev/servidor-prod-dev.mjs`
+  (build de producción contra dev en `.next-build`, puerto 3002; no pisa la
+  `.next` de `servidor-dev`).
+
   Playwright no es dependencia del proyecto: los scripts lo toman de
   `PLAYWRIGHT_DESDE=<carpeta con node_modules/playwright>`.
 - **Flujo de ramas**: se trabaja en `desarrollo` con commits pequeños; cada
@@ -636,6 +649,16 @@ Dragones). Evitar explícitamente el look genérico morado-degradado.
 
 ## 9. Pendientes inmediatos
 
+### Rama `noche2` (20/11/2026): sin integrar a `desarrollo`
+
+Caja en condiciones reales (idempotencia, saldo esperado, firma de la noche,
+aviso sin conexión), números de `/grupo` (conversión, rendimiento por RP),
+apps instalables Staff/RP/Dueño, arreglos de la auditoría móvil y el
+comparativo de temas (`lib/tema-reportes.ts`, en "actual"). Integrarla es
+decisión de Diego; su SQL va en el paso 7b del pase. Detalle en
+`docs/reporte-noche-2.md`. La rama `fase2` (inventario y propinas, bandera
+`NEXT_PUBLIC_FASE2`) es aparte: `docs/fase2.md`.
+
 ### Hecho en `desarrollo` y antroapp-dev, FALTA el pase a producción (bloque 6)
 
 Todo probado en dev (ver "Pruebas contra dev" en la sección 2). El pase lo
@@ -755,3 +778,18 @@ Por prioridad:
 - **Contar "entraron" no es lo mismo que contar "consumieron"**: la cuota
   del RP sale siempre de `rp_progreso_cuota()` (base), nunca de un conteo
   armado en el navegador.
+- **Turbopack (servidor-dev) puede no recoger cambios de `app/globals.css`**
+  hechos desde fuera del editor: la regla nueva no aparece en el CSS servido.
+  Parar el servidor, borrar `.next` y levantarlo de nuevo. Revisar con
+  `getComputedStyle`, no solo con la captura.
+- **`app/manifest.ts` le gana a `metadata.manifest`** de un layout anidado:
+  para que una sección declare su propio manifest, el del cliente tiene que
+  ser un archivo estático (`public/manifest.webmanifest`) declarado en
+  `app/layout.tsx`.
+- **El Chromium de Playwright no emula `display-mode: standalone`** (CDP lo
+  ignora): la instalabilidad se prueba con `Page.getAppManifest` y
+  `Page.getInstallabilityErrors`.
+- **Medir rendimiento con el build de producción**, no con `next dev`: el
+  React de desarrollo es 2–5× más lento y exagera los tiempos.
+- **Un reintento con mala señal puede duplicar**: toda escritura de dinero
+  lleva clave de idempotencia y, al cobrar, el saldo que vio el staff.

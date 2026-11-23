@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 
 const ENFOCABLES = "button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])";
@@ -22,15 +22,18 @@ export function Hoja({
   pie?: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  const teclado = useTeclado(abierta);
 
   useEffect(() => {
     if (!abierta) return;
-    // Foco: entra a la hoja (primer campo o, si no hay, el panel), no se sale
-    // con Tab y regresa al elemento que la abrió al cerrar.
+    // Foco: entra a la hoja (al campo marcado con data-autofocus o, si no
+    // hay, al panel: en el celular enfocar un campo abre el teclado y tapa la
+    // mitad de la hoja, así que solo se hace donde hay que escribir sí o sí),
+    // no se sale con Tab y regresa al elemento que la abrió al cerrar.
     const previoFoco = document.activeElement as HTMLElement | null;
     const enfocables = () =>
       Array.from(panel.current?.querySelectorAll<HTMLElement>(ENFOCABLES) ?? []).filter((el) => !el.hasAttribute("disabled"));
-    const primerCampo = panel.current?.querySelector<HTMLElement>("input, textarea, select");
+    const primerCampo = panel.current?.querySelector<HTMLElement>("[data-autofocus]");
     (primerCampo ?? panel.current)?.focus();
 
     const alTeclado = (e: KeyboardEvent) => {
@@ -59,9 +62,21 @@ export function Hoja({
 
   if (!abierta) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center" role="dialog" aria-modal="true" aria-label={titulo}>
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center"
+      role="dialog"
+      aria-modal="true"
+      aria-label={titulo}
+      // iPhone: el teclado no encoge la página; se sube la hoja lo que mide.
+      style={teclado.alto > 0 ? { paddingBottom: teclado.alto } : undefined}
+    >
       <button type="button" aria-hidden="true" tabIndex={-1} className="absolute inset-0 bg-black/60" onClick={onCerrar} />
-      <div ref={panel} tabIndex={-1} className="relative flex max-h-[88dvh] w-full max-w-md flex-col rounded-t-xl border border-caja-borde bg-caja-superficie outline-none">
+      <div
+        ref={panel}
+        tabIndex={-1}
+        className="relative flex max-h-[88dvh] w-full max-w-md flex-col rounded-t-xl border border-caja-borde bg-caja-superficie outline-none"
+        style={teclado.alto > 0 ? { maxHeight: teclado.visible * 0.92 } : undefined}
+      >
         <div className="flex items-center justify-between gap-3 border-b border-caja-borde px-4 py-2">
           <h2 className="text-base font-semibold">{titulo}</h2>
           <button
@@ -80,6 +95,30 @@ export function Hoja({
       </div>
     </div>
   );
+}
+
+// Cuánto tapa el teclado en pantallas donde no encoge la página (Safari en
+// iPhone). En Chrome Android la página ya se encoge (interactive-widget en
+// app/layout.tsx) y esto da 0.
+function useTeclado(activo: boolean) {
+  const [medida, setMedida] = useState({ alto: 0, visible: 0 });
+  useEffect(() => {
+    const vv = typeof window !== "undefined" ? window.visualViewport : null;
+    if (!activo || !vv) return;
+    const medir = () => {
+      const alto = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+      setMedida({ alto: alto > 80 ? alto : 0, visible: vv.height });
+    };
+    medir();
+    vv.addEventListener("resize", medir);
+    vv.addEventListener("scroll", medir);
+    return () => {
+      vv.removeEventListener("resize", medir);
+      vv.removeEventListener("scroll", medir);
+      setMedida({ alto: 0, visible: 0 });
+    };
+  }, [activo]);
+  return medida;
 }
 
 // Botón principal de la caja: alto de 48 px, dorado, ancho completo.

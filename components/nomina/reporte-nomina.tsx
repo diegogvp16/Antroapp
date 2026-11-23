@@ -179,8 +179,8 @@ export function ReporteNomina({ clubId, clubNombre }: { clubId: string; clubNomb
             <CardHeader>
               <CardTitle>Totales de la semana</CardTitle>
               <CardDescription>
-                {totales.reservasEntraron} reservas entraron · {totales.comisiones} comisiones ·{" "}
-                {totales.dias} días
+                {totales.reservasEntraron} reservas entraron · {totales.comisiones} consumieron (mesas
+                cuadradas) · {totales.dias} {totales.dias === 1 ? "día" : "días"} de asistencia
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">

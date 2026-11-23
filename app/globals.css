@@ -358,3 +358,49 @@ body:has(.theme-noche) {
 body:has(.theme-caja) {
   background-color: var(--caja-fondo);
 }
+
+/*
+ * Tamaño táctil en las pantallas operativas (staff, RP, dueño, admin): en el
+ * celular, ningún botón, campo ni select de shadcn mide menos de 44 px,
+ * aunque la pantalla use size="sm" o el alto por defecto (32 px). Un solo
+ * punto, en lugar de cambiar cada botón. En escritorio (puntero fino y
+ * ventana ancha) se respetan los tamaños compactos.
+ */
+@media (pointer: coarse), (max-width: 640px) {
+  .theme-control [data-slot="button"],
+  .theme-control [data-slot="input"],
+  .theme-control select {
+    min-height: 44px;
+  }
+  .theme-control [data-slot="button"][data-size^="icon"] {
+    min-width: 44px;
+  }
+}
+
+/*
+ * Variante clara del lenguaje de la caja (propuesta del bloque 4, para las
+ * pantallas de números; se elige en lib/tema-reportes.ts). Misma estructura
+ * que .theme-caja: solo cambian los colores base. Fondo hueso #F6F3EC,
+ * superficies #FFFDF8, bordes #E5DFD3, texto #1B1814, secundario #625A4F;
+ * el dorado es EL MISMO (#D4AF5A) y se usa en rellenos, bordes y foco, con
+ * texto oscuro encima (contraste 8:1). Va después de .theme-caja: gana por orden.
+ */
+.theme-caja-claro {
+  --caja-fondo: #f6f3ec;
+  --caja-superficie: #fffdf8;
+  --caja-borde: #e5dfd3;
+  --caja-texto: #1b1814;
+  --caja-secundario: #625a4f;
+  --caja-ok: #2f7a4a;
+  --caja-aviso: #8a5d00;
+  --caja-rojo: #b4483a;
+  --caja-control: #8c8478;
+  --secondary: #efe9de;
+  --muted: #efe9de;
+  --accent: #efe9de;
+  --destructive: #b4483a;
+  color-scheme: light;
+}
+body:has(.theme-caja-claro) {
+  background-color: #f6f3ec;
+}

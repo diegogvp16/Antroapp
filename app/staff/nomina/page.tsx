@@ -7,6 +7,8 @@ import { createClient } from "@/lib/supabase/client";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ReporteNomina } from "@/components/nomina/reporte-nomina";
+import { mensajeParaUsuario } from "@/lib/errores-base";
+import { TemaReportesContenedor } from "@/components/tema-reportes";
 
 type Estado =
   | { tipo: "cargando" }
@@ -50,7 +52,7 @@ export default function StaffNominaPage() {
       }
       const clubRes = await supabase.from("clubs").select("nombre").eq("id", clubId).maybeSingle();
       if (clubRes.error) {
-        setEstado({ tipo: "error", mensaje: clubRes.error.message });
+        setEstado({ tipo: "error", mensaje: mensajeParaUsuario(clubRes.error, "No pudimos cargar tu antro. Intenta de nuevo.") });
         return;
       }
       setEstado({
@@ -63,7 +65,7 @@ export default function StaffNominaPage() {
   }, [router]);
 
   return (
-    <div className="flex flex-1 flex-col items-center px-4 py-6 sm:px-6 sm:py-10">
+    <TemaReportesContenedor className="flex flex-1 flex-col items-center px-4 py-6 sm:px-6 sm:py-10">
       <div className="flex w-full max-w-2xl min-w-0 flex-col gap-5">
         <Link
           href="/staff/panel"
@@ -105,6 +107,6 @@ export default function StaffNominaPage() {
           <ReporteNomina clubId={estado.clubId} clubNombre={estado.clubNombre} />
         )}
       </div>
-    </div>
+    </TemaReportesContenedor>
   );
 }

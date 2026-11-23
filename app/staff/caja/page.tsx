@@ -4,13 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, WifiOff } from "lucide-react";
 import { CuadreNoche } from "@/components/caja/cuadre-noche";
 import { MapaNoche } from "@/components/caja/mapa-noche";
 import { DetalleMesa } from "@/components/caja/detalle-mesa";
 import { etiquetaNoche } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
 import { cn } from "@/lib/utils";
+import { esErrorDeRed } from "@/lib/errores-base";
+import { useEnLinea } from "@/lib/use-en-linea";
 import {
   formatearCentavos,
   resumirMesa,
@@ -30,6 +32,13 @@ import {
 } from "@/lib/domain/caja";
 
 type Vista = "mesas" | "cuadre";
+
+// Cada cuánto se vuelve a leer la caja para ver lo que registran otros staff
+// (sin recargar la página). Con la conexión caída se reintenta más seguido.
+const CADA_MS = 10_000;
+const CADA_MS_SIN_RED = 4_000;
+const horaMinSeg = (d: Date) =>
+  d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 const COLUMNAS_SESION =
   "id, mesa_id, estado, abierta_por, abierta_en, cerrada_en, cuadrada_por, cuadrada_en";
@@ -65,6 +74,17 @@ async function todas<T>(armar: () => ConsultaPaginada, que: string): Promise<T[]
   }
 }
 
+// Firma de la noche: cambia cuando cambia algo de la caja. Nula si la base
+// aún no tiene la función (entonces cada revisión lee todo, como antes).
+async function leerFirma(clubId: string): Promise<string | null> {
+  const r = await createClient().rpc("caja_firma_noche", { p_club_id: clubId });
+  if (r.error) {
+    if (r.error.code === "PGRST202") return null;
+    throw new Error(`Firma: ${r.error.message}`);
+  }
+  return typeof r.data === "string" ? r.data : null;
+}
+
 // Lee todo lo de la noche operativa en curso del club.
 async function cargarCaja(clubId: string): Promise<{ fecha: string; datos: DatosCaja }> {
   const supabase = createClient();
@@ -97,7 +117,7 @@ async function cargarCaja(clubId: string): Promise<{ fecha: string; datos: Datos
   const reservas = filas<ReservaSentable>(reservasRes, "Reservas");
 
   let sesiones: MesaSesion[] = [];
-  const cuentas: MesaCuenta[] = [];
+  let cuentas: MesaCuenta[] = [];
   let consumos: CajaConsumo[] = [];
   let pagos: CajaPago[] = [];
   let cuadres: CajaCuadre[] = [];
@@ -105,20 +125,30 @@ async function cargarCaja(clubId: string): Promise<{ fecha: string; datos: Datos
   if (noche) {
     const nocheId = noche.id;
     // Orden con desempate por id: estable entre páginas.
-    [sesiones, consumos, pagos, cuadres] = await Promise.all([
+    // Las cuentas se filtran por la noche de su sesión (join en la base),
+    // en el mismo viaje que lo demás.
+    let cuentasConSesion: (MesaCuenta & { mesa_sesiones?: unknown })[];
+    [sesiones, consumos, pagos, cuadres, cuentasConSesion] = await Promise.all([
       todas<MesaSesion>(() => supabase.from("mesa_sesiones").select(COLUMNAS_SESION).eq("noche_id", nocheId).order("abierta_en").order("id"), "Sesiones"),
       todas<CajaConsumo>(() => supabase.from("caja_consumos").select(COLUMNAS_CONSUMO).eq("noche_id", nocheId).order("registrado_en").order("id"), "Consumos"),
       todas<CajaPago>(() => supabase.from("caja_pagos").select(COLUMNAS_PAGO).eq("noche_id", nocheId).order("registrado_en").order("id"), "Pagos"),
       todas<CajaCuadre>(() => supabase.from("caja_cuadres").select(COLUMNAS_CUADRE).eq("noche_id", nocheId).order("id"), "Cuadres"),
+      todas<MesaCuenta & { mesa_sesiones?: unknown }>(
+        () =>
+          supabase
+            .from("mesa_cuentas")
+            .select(`${COLUMNAS_CUENTA}, mesa_sesiones!inner(noche_id)`)
+            .eq("mesa_sesiones.noche_id", nocheId)
+            .order("creada_en")
+            .order("id"),
+        "Cuentas",
+      ),
     ]);
-
-    // Cuentas por lotes de sesiones (la lista de ids va en la URL).
-    for (let i = 0; i < sesiones.length; i += 150) {
-      const ids = sesiones.slice(i, i + 150).map((x) => x.id);
-      cuentas.push(
-        ...(await todas<MesaCuenta>(() => supabase.from("mesa_cuentas").select(COLUMNAS_CUENTA).in("sesion_id", ids).order("creada_en").order("id"), "Cuentas")),
-      );
-    }
+    cuentas = cuentasConSesion.map((c) => {
+      const copia = { ...c };
+      delete copia.mesa_sesiones;
+      return copia;
+    });
   }
 
   const sentadas = new Set(cuentas.map((c) => c.reservation_id).filter(Boolean));
@@ -170,6 +200,16 @@ export default function StaffCajaPage() {
   const [esGerente, setEsGerente] = useState(false);
   // Solo cuenta la respuesta de la última recarga (si se piden dos seguidas).
   const ultimaCarga = useRef(0);
+  const enVuelo = useRef(false);
+  // Firma de la noche de la última lectura completa (caja_firma_noche).
+  const ultimaFirma = useRef<string | null>(null);
+  const enLinea = useEnLinea();
+  // La última lectura falló por la red (wifi sin salida, señal mala).
+  const [falloRed, setFalloRed] = useState(false);
+  // Hora de la última lectura confirmada. Ref, no estado: cada revisión sin
+  // cambios no vuelve a pintar las 50 mesas; el aviso la lee al aparecer.
+  const actualizado = useRef<Date | null>(null);
+  const sinConexion = !enLinea || falloRed;
 
   // Sesión: solo staff o gerente con antro.
   useEffect(() => {
@@ -218,6 +258,8 @@ export default function StaffCajaPage() {
           if (uno[i].error) console.error(`Error leyendo permiso ${p}:`, uno[i].error);
           nuevos[p] = uno[i].data === true;
         });
+        // Sin permisos leídos la mesa se vería sin botones y sin explicación.
+        if (uno.some((x) => x.error)) setErrorCarga("No pudimos leer tus permisos de caja. Revisa tu conexión y vuelve a abrir la caja.");
       }
       setPermisos(nuevos);
       setClubId(club);
@@ -225,28 +267,73 @@ export default function StaffCajaPage() {
     cargarSesion();
   }, [router]);
 
-  const recargar = useCallback(async () => {
-    if (!clubId) return;
-    const numero = ++ultimaCarga.current;
-    setRecargando(true);
-    try {
-      const resultado = await cargarCaja(clubId);
-      if (numero !== ultimaCarga.current) return;
-      setFecha(resultado.fecha);
-      setDatos(resultado.datos);
-      setErrorCarga(null);
-    } catch (err) {
-      console.error("Error cargando la caja:", err);
-      if (numero !== ultimaCarga.current) return;
-      setErrorCarga("No se pudo cargar la caja. Revisa tu conexión e intenta de nuevo.");
-    } finally {
-      if (numero === ultimaCarga.current) setRecargando(false);
-    }
-  }, [clubId]);
+  // silencioso: la revisión periódica no mueve el ícono de actualizar.
+  const cargar = useCallback(
+    async (silencioso: boolean) => {
+      if (!clubId) return;
+      const numero = ++ultimaCarga.current;
+      enVuelo.current = true;
+      if (!silencioso) setRecargando(true);
+      try {
+        // La firma se pide antes de leer: si algo cambia mientras se lee, la
+        // siguiente revisión lo nota y vuelve a leer.
+        const firma = await leerFirma(clubId);
+        if (silencioso && firma !== null && firma === ultimaFirma.current) {
+          // Nada cambió: no se baja la noche otra vez.
+          if (numero === ultimaCarga.current) {
+            setFalloRed(false);
+            actualizado.current = new Date();
+          }
+          return;
+        }
+        const resultado = await cargarCaja(clubId);
+        ultimaFirma.current = firma;
+        if (numero !== ultimaCarga.current) return;
+        setFecha(resultado.fecha);
+        setDatos(resultado.datos);
+        setErrorCarga(null);
+        setFalloRed(false);
+        actualizado.current = new Date();
+      } catch (err) {
+        if (numero !== ultimaCarga.current) return;
+        if (esErrorDeRed(err)) {
+          setFalloRed(true);
+        } else {
+          console.error("Error cargando la caja:", err);
+          setErrorCarga("Revisa tu conexión e intenta de nuevo.");
+        }
+      } finally {
+        if (numero === ultimaCarga.current) {
+          enVuelo.current = false;
+          setRecargando(false);
+        }
+      }
+    },
+    [clubId],
+  );
+  const recargar = useCallback(() => cargar(false), [cargar]);
 
   useEffect(() => {
     recargar();
   }, [recargar]);
+
+  // Revisión periódica mientras la pantalla está a la vista, y al volver la
+  // red o la pantalla. No pisa lo que el staff está capturando: las hojas
+  // guardan su propio estado y solo cambian los números de la base.
+  useEffect(() => {
+    if (!clubId) return;
+    const revisar = () => {
+      if (document.visibilityState === "visible" && !enVuelo.current) void cargar(true);
+    };
+    const id = window.setInterval(revisar, sinConexion ? CADA_MS_SIN_RED : CADA_MS);
+    window.addEventListener("online", revisar);
+    document.addEventListener("visibilitychange", revisar);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("online", revisar);
+      document.removeEventListener("visibilitychange", revisar);
+    };
+  }, [clubId, cargar, sinConexion]);
 
   const nocheCerrada = datos?.noche?.estado === "cerrada";
   // Una sola pasada por render de datos (no por tecla del buscador: la
@@ -302,7 +389,19 @@ export default function StaffCajaPage() {
           </header>
         )}
 
-        {errorCarga && (
+        {sinConexion && (
+          <div role="status" className="sticky top-0 z-30 flex items-start gap-2 rounded-lg border border-caja-aviso/60 bg-caja-superficie px-3 py-2 text-sm">
+            <WifiOff className="mt-0.5 size-4 shrink-0 text-caja-aviso" aria-hidden="true" />
+            <p>
+              <span className="font-medium">Sin conexión · reconectando…</span>
+              <span className="block text-xs text-caja-secundario">
+                {actualizado.current ? `Los montos son de las ${horaMinSeg(actualizado.current)} y pueden haber cambiado. ` : ""}No se guarda nada hasta que vuelva la señal; lo que capturaste no se pierde.
+              </span>
+            </p>
+          </div>
+        )}
+
+        {errorCarga && !(datos && sinConexion) && (
           <div className="flex flex-col gap-2 rounded-lg border border-caja-borde p-3">
             <p className="text-sm text-destructive" role="alert">No pudimos cargar la caja. {errorCarga}</p>
             <button type="button" onClick={recargar} className="h-11 w-fit rounded-md border border-caja-borde px-3 text-sm">Reintentar</button>
@@ -321,6 +420,7 @@ export default function StaffCajaPage() {
             permisos={permisos}
             esGerente={esGerente}
             nocheCerrada={nocheCerrada}
+            sinConexion={sinConexion}
             onVolver={() => setMesaId(null)}
             onCambio={recargar}
           />
