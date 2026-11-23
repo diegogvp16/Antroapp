@@ -64,7 +64,10 @@ aparecen y el rendimiento dice "todavía no está disponible").
 
 ## Decisiones para Diego
 
-1. **Definición de conversión**: hoy es "reservas cuya cuenta tuvo consumo /
+0. **Decidido el 23/11/2026** (rama `candidato-pase`): la conversión se
+   calcula **solo con noches cerradas** (ya pasó su corte de las 08:00 o el
+   gerente la cerró en la caja). La noche en curso no la baja.
+1. ~~**Definición de conversión**~~ (resuelto arriba): hoy es "reservas cuya cuenta tuvo consumo /
    reservas que ya podían llegar". La noche en curso cuenta completa (las que
    aún no llegan bajan el % hasta que cierre la noche). ¿Se excluye la noche
    en curso?

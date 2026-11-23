@@ -106,6 +106,12 @@ Notas importantes:
   - `node scripts/dev/probar-dashboards.mjs` (28/28) y `probar-dashboards-pantalla.mjs` (24/24)
   - `node scripts/dev/probar-instalable.mjs` (34/34, contra `servidor-prod-dev`)
 
+  Rama `candidato-pase` (23/11/2026):
+  - `node scripts/humo-produccion.mjs <url> [--vercel-curl] [--navegador]` (solo GET, sin sesión)
+  - `node scripts/dev/probar-escaner.mjs` (9/9, QR con poca luz) y `video-junta.mjs` (video de respaldo, sin escribir)
+  - `node scripts/dev/ensayo-pase.mjs` (ensayo del pase en dev) y `respaldar-dev.mjs` (respaldo de dev en `backups/`)
+  - `node scripts/db/conteos-prod.mjs` (producción: solo conteos fijos, sin datos personales)
+
   Para medir como en el teléfono real: `node scripts/dev/servidor-prod-dev.mjs`
   (build de producción contra dev en `.next-build`, puerto 3002; no pisa la
   `.next` de `servidor-dev`).
@@ -649,7 +655,17 @@ Dragones). Evitar explícitamente el look genérico morado-degradado.
 
 ## 9. Pendientes inmediatos
 
-### Rama `noche2` (20/11/2026): sin integrar a `desarrollo`
+### Rama `candidato-pase` (23/11/2026): lista para el pase
+
+`candidato-pase` = `desarrollo` + `noche2` (sin `fase2`), con tema oscuro en
+nómina y /grupo, conversión solo con noches cerradas y cabeceras de
+seguridad. El pase completo se ensayó en dev (`scripts/dev/ensayo-pase.mjs`):
+esquema idéntico al de producción antes, idéntico al de la rama después,
+todo en verde. Orden final, rollback por paso y criterios para parar en
+`docs/pase-produccion.md`; detalle en `docs/reporte-pase.md`. La junta:
+`docs/guion-junta.md`. Lo manual de seguridad: `docs/seguridad-manual.md`.
+
+### Rama `noche2` (20/11/2026): integrada en `candidato-pase`
 
 Caja en condiciones reales (idempotencia, saldo esperado, firma de la noche,
 aviso sin conexión), números de `/grupo` (conversión, rendimiento por RP),
@@ -735,7 +751,7 @@ Por prioridad:
 - **Supabase no deja borrar `storage.objects` por SQL**: se vacía con la API
   de Storage.
 - **Finales de línea**: con `core.autocrlf` un `.sql` puede quedar con CRLF
-  y el `` termina dentro del cuerpo de las funciones. `.gitattributes`
+  y el `` termina dentro del cuerpo de las funciones. `.gitattributes`
   fija LF para `*.sql` y `*.mjs`, y `aplicar-dev.mjs` lo normaliza.
 - **El límite de intentos de la app** (/api/auth/login) solo cubre los
   formularios; contra quien llama a Supabase Auth directo están los límites
@@ -793,3 +809,11 @@ Por prioridad:
   React de desarrollo es 2–5× más lento y exagera los tiempos.
 - **Un reintento con mala señal puede duplicar**: toda escritura de dinero
   lleva clave de idempotencia y, al cobrar, el saldo que vio el staff.
+- **`sembrar-dev` cambia la contraseña de los usuarios ficticios de dev**
+  (la nueva queda en `backups/dev-credenciales.json`) y recrea las cuentas
+  `demo_*` al correr después `demo-datos`: las sesiones abiertas de dev se caen.
+- **Las pruebas de pantalla dependen de los datos de la semana**: con la
+  demo de otro día, `/grupo` no tiene reservas y la conversión sale "—".
+  Regenerar la noche demo antes de probar.
+- **Antes de un pase, ensayarlo en dev**: rollbacks hasta igualar el
+  catálogo de producción, pase paso a paso, comparar esquemas antes y después.

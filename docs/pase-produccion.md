@@ -62,6 +62,27 @@ cada archivo en el SQL Editor.
 | 10 | Humo (`node scripts/humo-produccion.mjs https://antroapp.vercel.app`) y recorrido de los 6 roles | — | — | 5 + 30 min |
 | 11 | Datos demo para la junta (después de las 08:00 del día de la junta) | IRREVERSIBLE para lo demo | el respaldo del paso 1 | 10 min |
 
+### Tiempos del ensayo (dev, 23/11/2026)
+
+Ensayo completo: dev llevado al catálogo de producción con los rollbacks
+(16 s; comparación: **idéntico**, 888 líneas), diagnósticos en 0, y el pase
+paso a paso con `node scripts/dev/ensayo-pase.mjs paso <n>`:
+
+| Paso | Aplicar + verificar (dev) | En producción (pegar en el SQL Editor) |
+|---|---|---|
+| 3 cover | 3.2 s | ~1 min |
+| 4 caja por mesa | 3.4 s | ~2 min (archivo grande) |
+| 5 estabilidad | 3.1 s | ~1 min |
+| 6 nómina y grupo | 3.2 s | ~1 min |
+| 7 panel RP + permisos | 4.8 s | ~2 min (dos pestañas) |
+| 7b idempotencia + conversión | 4.7 s | ~2 min (dos pestañas) |
+| 8 build de Vercel (`candidato-pase`) | 33–57 s | ~1 min + revisar Ready |
+| 9 candado de puerta | 3.1 s (rollback 3.3 s y otra vez 3.3 s) | ~1 min |
+| 10 humo / recorrido 6 roles | 12 s local · 218 s vista previa / 81 s | 5 min / 30 min a mano |
+
+Después del pase el esquema de dev quedó **idéntico** al de antes del ensayo
+(0 líneas de diferencia) y todas las pruebas en verde.
+
 **Por qué 7b va antes del merge** (evidencia en `docs/reporte-pase.md`,
 pregunta 1b):
 - El SQL del 7b es compatible con el código viejo: sus parámetros nuevos tienen default.
@@ -380,5 +401,9 @@ node scripts/dev/probar-caja-concurrencia.mjs                  # 29/29
 PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/probar-caja-multi.mjs  # 17/17 (con servidor-dev)
 PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/probar-carga-caja.mjs  # medidas (mejor contra servidor-prod-dev)
 node scripts/verificar-cuadre.mjs                              # sin diferencias
+# candidato-pase (23/11/2026):
+node scripts/humo-produccion.mjs <url> [--vercel-curl|--navegador] # solo GET; 74/74 en la vista previa
+PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/probar-escaner.mjs     # 9/9 (QR con poca luz)
+node scripts/dev/ensayo-pase.mjs a-prod | comparar | diagnosticos | paso <n> | rollback <n>
 npx tsc --noEmit && npx eslint . && npx next build
 ```

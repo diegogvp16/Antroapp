@@ -5,7 +5,7 @@ versiones. Solo en la rama `noche2`; `desarrollo` no se tocó.
 
 | Tema | Qué es |
 |---|---|
-| `actual` | Como hoy: `.theme-control` (gris claro, solo Inter). **Es el que está puesto.** |
+| `actual` | Como antes: `.theme-control` (gris claro, solo Inter). En `noche2` sigue puesto. |
 | `oscuro` | El lenguaje de la caja y del panel del RP (`.theme-caja`): fondo #0C0B0A, superficies #12100E, bordes #25211D, texto #F4EFE6, dorado #D4AF5A. |
 | `claro` | La misma estructura en paleta clara sobria (`.theme-caja` + `.theme-caja-claro`): fondo hueso #F6F3EC, superficies #FFFDF8, bordes #E5DFD3, texto #1B1814, secundario #625A4F, **el mismo dorado** #D4AF5A como acento (rellenos, foco), siempre con texto oscuro encima. |
 
@@ -14,7 +14,7 @@ versiones. Solo en la rama `noche2`; `desarrollo` no se tocó.
 `lib/tema-reportes.ts`:
 
 ```ts
-export const TEMA_REPORTES: TemaReportes = "actual"; // "oscuro" | "claro"
+export const TEMA_REPORTES: TemaReportes = "oscuro"; // en candidato-pase (23/11/2026)
 ```
 
 Las tres pantallas se envuelven con `components/tema-reportes.tsx`, que pone
