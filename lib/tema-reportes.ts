@@ -8,7 +8,7 @@
 // Capturas para comparar: screenshots-temas/ (scripts/dev/capturas-temas.mjs).
 export type TemaReportes = "actual" | "oscuro" | "claro";
 
-export const TEMA_REPORTES: TemaReportes = "actual";
+export const TEMA_REPORTES: TemaReportes = "oscuro";
 
 export const CLASE_TEMA_REPORTES: Record<TemaReportes, string> = {
   actual: "",
