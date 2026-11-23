@@ -78,17 +78,16 @@ try {
     nota(`${clave}: no ve otros antros`, noVe.every((n) => !titulos.some((t) => t.includes(n.trim()) && !ve.includes(t))), titulos.join(" | "));
     for (const f of filas ?? []) {
       nota(`${clave}: consumo de ${f.nombre} en pantalla = base (${pesos(Number(f.consumo_centavos))})`, texto.includes(pesos(Number(f.consumo_centavos))));
-      nota(`${clave}: conversión de ${f.nombre} visible`, /\d+% de conversión/.test(texto));
+      // Con reservas que ya podían llegar hay %; sin ellas, "—".
+      const ocurridas = Number(f.reservas) - Number(f.reservas_por_venir ?? 0);
+      nota(`${clave}: conversión de ${f.nombre} visible`, ocurridas > 0 ? /\d+% de conversión/.test(texto) : /— de conversión/.test(texto));
     }
-    if (ve.length === 1) {
-      // Un solo antro: el rendimiento por RP sale abierto.
-      await p.getByText(/consumieron \(/).first().waitFor({ timeout: 20000 }).catch(() => {});
-      nota(`${clave}: rendimiento por RP abierto con RPs`, await p.getByText(/consumieron \(/).first().isVisible().catch(() => false));
-    } else {
-      await p.getByRole("button", { name: "Rendimiento por RP" }).first().click();
-      await p.getByText(/consumieron \(/).first().waitFor({ timeout: 20000 }).catch(() => {});
-      nota(`${clave}: rendimiento por RP se abre`, await p.getByText(/consumieron \(/).first().isVisible().catch(() => false));
-    }
+    // Rendimiento por RP: con datos, RPs con "consumieron (…)"; sin reservas
+    // en la semana, el texto de vacío. Nunca "todavía no está disponible".
+    const rendimiento = p.getByText(/consumieron \(|Ningún RP tuvo reservas/).first();
+    if (ve.length > 1) await p.getByRole("button", { name: "Rendimiento por RP" }).first().click();
+    await rendimiento.waitFor({ timeout: 20000 }).catch(() => {});
+    nota(`${clave}: rendimiento por RP ${ve.length === 1 ? "abierto" : "se abre"}`, await rendimiento.isVisible().catch(() => false));
     const ancho = await p.evaluate(() => document.documentElement.scrollWidth);
     nota(`${clave}: sin scroll horizontal a 390 px`, ancho <= 390, `${ancho}px`);
     nota(`${clave}: sin errores de página`, errores.length === 0, errores.join(" | "));
