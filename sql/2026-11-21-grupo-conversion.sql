@@ -19,6 +19,11 @@
 --                                  en curso del antro (aún no pueden entrar)
 --        reservas_con_consumo      reservas cuya cuenta tiene consumo vigente
 --        consumo_con_reserva_centavos  consumo de cuentas que vienen de reserva
+--        reservas_noches_cerradas  reservas de noches ya cerradas (pasó su corte
+--                                  de las 08:00 o el gerente cerró la noche)
+--        consumieron_noches_cerradas   de ésas, las que consumieron: la
+--                                  conversión se calcula SOLO con noches cerradas
+--                                  (la noche en curso no la baja mientras la gente llega)
 --   2. grupo_rendimiento_rp(club, desde, hasta): una fila por RP del antro con
 --      reservas, por venir, entraron, consumieron, consumo, ticket y
 --      comisiones (comisión + pago por día, sin anulados). Mismo acceso que
@@ -44,7 +49,9 @@ returns table (
   noches_cerradas               int,
   reservas_por_venir            int,
   reservas_con_consumo          int,
-  consumo_con_reserva_centavos  bigint
+  consumo_con_reserva_centavos  bigint,
+  reservas_noches_cerradas      int,
+  consumieron_noches_cerradas   int
 )
 language plpgsql
 stable
@@ -80,7 +87,11 @@ begin
            count(*) filter (where r.fecha > mis.hoy)::int as por_venir,
            count(*) filter (where exists (
              select 1 from public.mesa_cuentas mc join public.caja_consumos k on k.cuenta_id = mc.id
-             where mc.reservation_id = r.id and not k.anulado))::int as con_consumo
+             where mc.reservation_id = r.id and not k.anulado))::int as con_consumo,
+           count(*) filter (where (r.fecha < mis.hoy or exists (select 1 from public.caja_noches nc where nc.club_id = r.club_id and nc.fecha_operacion = r.fecha and nc.estado = 'cerrada')))::int as cerradas,
+           count(*) filter (where (r.fecha < mis.hoy or exists (select 1 from public.caja_noches nc where nc.club_id = r.club_id and nc.fecha_operacion = r.fecha and nc.estado = 'cerrada')) and exists (
+             select 1 from public.mesa_cuentas mc join public.caja_consumos k on k.cuenta_id = mc.id
+             where mc.reservation_id = r.id and not k.anulado))::int as con_consumo_cerradas
     from public.reservations r
     join mis on mis.id = r.club_id
     where r.fecha between p_desde and p_hasta
@@ -118,7 +129,8 @@ begin
          coalesce(con.cuentas, 0), coalesce(con.cent, 0),
          case when coalesce(con.cuentas, 0) > 0 then round(con.cent::numeric / con.cuentas)::bigint else 0 end,
          coalesce(com.cent, 0), coalesce(noc.cerradas, 0),
-         coalesce(res.por_venir, 0), coalesce(res.con_consumo, 0), coalesce(con.cent_reserva, 0)
+         coalesce(res.por_venir, 0), coalesce(res.con_consumo, 0), coalesce(con.cent_reserva, 0),
+         coalesce(res.cerradas, 0), coalesce(res.con_consumo_cerradas, 0)
   from mis
   left join res on res.club_id = mis.id
   left join con on con.club_id = mis.id
@@ -140,7 +152,9 @@ returns table (
   consumieron         int,
   consumo_centavos    bigint,
   ticket_centavos     bigint,
-  comisiones_centavos bigint
+  comisiones_centavos bigint,
+  noches_cerradas_reservas    int,
+  noches_cerradas_consumieron int
 )
 language plpgsql
 stable
@@ -174,7 +188,11 @@ begin
                                   is not distinct from 'entro')::int as entraron,
            count(*) filter (where exists (
              select 1 from public.mesa_cuentas mc join public.caja_consumos k on k.cuenta_id = mc.id
-             where mc.reservation_id = r.id and not k.anulado))::int as consumieron
+             where mc.reservation_id = r.id and not k.anulado))::int as consumieron,
+           count(*) filter (where (r.fecha < v_hoy or exists (select 1 from public.caja_noches nc where nc.club_id = r.club_id and nc.fecha_operacion = r.fecha and nc.estado = 'cerrada')))::int as cerradas,
+           count(*) filter (where (r.fecha < v_hoy or exists (select 1 from public.caja_noches nc where nc.club_id = r.club_id and nc.fecha_operacion = r.fecha and nc.estado = 'cerrada')) and exists (
+             select 1 from public.mesa_cuentas mc join public.caja_consumos k on k.cuenta_id = mc.id
+             where mc.reservation_id = r.id and not k.anulado))::int as consumieron_cerradas
     from public.reservations r
     where r.club_id = p_club_id and r.source = 'rp' and r.rp_id is not null
       and r.fecha between p_desde and p_hasta
@@ -211,7 +229,8 @@ begin
          coalesce(res.n, 0), coalesce(res.por_venir, 0), coalesce(res.entraron, 0), coalesce(res.consumieron, 0),
          coalesce(con.cent, 0),
          case when coalesce(res.consumieron, 0) > 0 then round(coalesce(con.cent, 0)::numeric / res.consumieron)::bigint else 0 end,
-         coalesce(com.cent, 0)
+         coalesce(com.cent, 0),
+         coalesce(res.cerradas, 0), coalesce(res.consumieron_cerradas, 0)
   from rps
   left join public.profiles p on p.id = rps.id
   left join res on res.rp_id = rps.id

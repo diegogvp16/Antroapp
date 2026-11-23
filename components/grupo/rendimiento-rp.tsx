@@ -81,8 +81,11 @@ export function RendimientoPorRp({
           {conDatos.length > 0 && (
             <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
               {conDatos.map((r) => {
-                const ocurridas = reservasOcurridas(r.reservas, r.por_venir);
-                const conv = porcentajeEntrada(r.consumieron, ocurridas);
+                // Conversión solo con noches cerradas; sin esas columnas, la de antes.
+                const conv =
+                  r.noches_cerradas_reservas !== null && r.noches_cerradas_consumieron !== null
+                    ? porcentajeEntrada(r.noches_cerradas_consumieron, r.noches_cerradas_reservas)
+                    : porcentajeEntrada(r.consumieron, reservasOcurridas(r.reservas, r.por_venir));
                 return (
                   <li key={r.rp_id} className="flex flex-col gap-1 px-3 py-2.5">
                     <div className="flex items-baseline justify-between gap-3">
@@ -94,8 +97,8 @@ export function RendimientoPorRp({
                     </div>
                     <p className="text-xs text-muted-foreground tabular-nums">
                       {r.reservas} {r.reservas === 1 ? "reserva" : "reservas"}
-                      {r.por_venir > 0 ? ` (${r.por_venir} por venir)` : ""} · {r.entraron} entraron · {r.consumieron} consumieron (
-                      {textoPorcentaje(conv)})
+                      {r.por_venir > 0 ? ` (${r.por_venir} por venir)` : ""} · {r.entraron} entraron · {r.consumieron} consumieron ({textoPorcentaje(conv)} en
+                      noches cerradas)
                     </p>
                     <p className="text-xs text-muted-foreground tabular-nums">
                       Ticket {formatearCentavos(r.ticket_centavos)} por reserva que consumió · Comisiones y pagos{" "}

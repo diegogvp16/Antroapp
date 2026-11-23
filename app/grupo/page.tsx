@@ -194,7 +194,7 @@ export default function GrupoPage() {
           registrado en las mesas, con y sin reserva, sin anulados.{" "}
           <span className="font-medium text-foreground">Entrada y conversión</span>: sobre las
           reservas que ya podían llegar (las de noches que no empiezan van aparte, como &quot;por
-          venir&quot;); conversión = reservas cuya cuenta tuvo consumo. Comisiones y pagos por día, sin
+          venir&quot;). Conversión = reservas cuya cuenta tuvo consumo, solo de noches cerradas (ya pasó su corte o el gerente las cerró). Comisiones y pagos por día, sin
           anulados. Cada antro cuenta sus noches en su propia hora.
         </p>
 

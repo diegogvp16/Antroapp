@@ -52,12 +52,14 @@ type Numeros = Pick<
   | "reservas_por_venir"
   | "reservas_con_consumo"
   | "consumo_con_reserva_centavos"
+  | "reservas_noches_cerradas"
+  | "consumieron_noches_cerradas"
 >;
 
 function Cifras({ n, grande }: { n: Numeros; grande: boolean }) {
   const ocurridas = reservasOcurridas(n.reservas, n.reservas_por_venir);
   const pctEntrada = porcentajeEntrada(n.entraron, ocurridas);
-  const pctConversion = conversion(n.reservas_con_consumo, n.reservas, n.reservas_por_venir);
+  const pctConversion = conversion(n.consumieron_noches_cerradas, n.reservas_noches_cerradas);
   return (
     <>
       <Cifra
@@ -71,7 +73,7 @@ function Cifras({ n, grande }: { n: Numeros; grande: boolean }) {
         <Cifra
           etiqueta="Consumieron"
           valor={String(n.reservas_con_consumo)}
-          detalle={`${textoPorcentaje(pctConversion)} de conversión`}
+          detalle={`${textoPorcentaje(pctConversion)} de conversión (noches cerradas)`}
           grande={grande}
         />
       )}

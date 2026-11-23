@@ -28,6 +28,9 @@ export interface ResumenAntro {
   reservas_por_venir: number | null;
   reservas_con_consumo: number | null;
   consumo_con_reserva_centavos: number | null;
+  // Solo noches cerradas (pasó su corte o el gerente la cerró): base de la conversión.
+  reservas_noches_cerradas: number | null;
+  consumieron_noches_cerradas: number | null;
 }
 
 function numero(valor: unknown): number {
@@ -62,6 +65,8 @@ export function normalizarResumen(fila: Record<string, unknown>): ResumenAntro {
     reservas_por_venir: numeroONulo(fila.reservas_por_venir),
     reservas_con_consumo: numeroONulo(fila.reservas_con_consumo),
     consumo_con_reserva_centavos: numeroONulo(fila.consumo_con_reserva_centavos),
+    reservas_noches_cerradas: numeroONulo(fila.reservas_noches_cerradas),
+    consumieron_noches_cerradas: numeroONulo(fila.consumieron_noches_cerradas),
   };
 }
 
@@ -83,6 +88,8 @@ export interface TotalesGrupo {
   reservas_por_venir: number | null;
   reservas_con_consumo: number | null;
   consumo_con_reserva_centavos: number | null;
+  reservas_noches_cerradas: number | null;
+  consumieron_noches_cerradas: number | null;
 }
 
 export function ticketPromedio(consumoCentavos: number, cuentas: number): number {
@@ -90,7 +97,10 @@ export function ticketPromedio(consumoCentavos: number, cuentas: number): number
 }
 
 // Suma una columna que puede faltar: si falta en alguna fila, el total es null.
-function sumaONulo(filas: ResumenAntro[], clave: "reservas_por_venir" | "reservas_con_consumo" | "consumo_con_reserva_centavos"): number | null {
+function sumaONulo(
+  filas: ResumenAntro[],
+  clave: "reservas_por_venir" | "reservas_con_consumo" | "consumo_con_reserva_centavos" | "reservas_noches_cerradas" | "consumieron_noches_cerradas",
+): number | null {
   let total = 0;
   for (const f of filas) {
     const v = f[clave];
@@ -126,6 +136,8 @@ export function totalesGrupo(filas: ResumenAntro[]): TotalesGrupo {
     reservas_por_venir: sumaONulo(filas, "reservas_por_venir"),
     reservas_con_consumo: sumaONulo(filas, "reservas_con_consumo"),
     consumo_con_reserva_centavos: sumaONulo(filas, "consumo_con_reserva_centavos"),
+    reservas_noches_cerradas: sumaONulo(filas, "reservas_noches_cerradas"),
+    consumieron_noches_cerradas: sumaONulo(filas, "consumieron_noches_cerradas"),
   };
 }
 
@@ -145,10 +157,12 @@ export function reservasOcurridas(reservas: number, porVenir: number | null): nu
   return Math.max(0, reservas - (porVenir ?? 0));
 }
 
-// Conversión: reservas que consumieron / reservas que ya podían llegar.
-export function conversion(consumieron: number | null, reservas: number, porVenir: number | null): number | null {
-  if (consumieron === null) return null;
-  return porcentajeEntrada(consumieron, reservasOcurridas(reservas, porVenir));
+// Conversión: reservas que consumieron / reservas, SOLO de noches cerradas
+// (la noche en curso no la baja mientras la gente sigue llegando). null si
+// la base no trae esas columnas o no hay noches cerradas en el rango.
+export function conversion(consumieronCerradas: number | null, reservasCerradas: number | null): number | null {
+  if (consumieronCerradas === null || reservasCerradas === null) return null;
+  return porcentajeEntrada(consumieronCerradas, reservasCerradas);
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +180,8 @@ export interface RendimientoRp {
   consumo_centavos: number;
   ticket_centavos: number;
   comisiones_centavos: number;
+  noches_cerradas_reservas: number | null;
+  noches_cerradas_consumieron: number | null;
 }
 
 export function normalizarRendimiento(fila: Record<string, unknown>): RendimientoRp {
@@ -180,6 +196,8 @@ export function normalizarRendimiento(fila: Record<string, unknown>): Rendimient
     consumo_centavos: numero(fila.consumo_centavos),
     ticket_centavos: numero(fila.ticket_centavos),
     comisiones_centavos: numero(fila.comisiones_centavos),
+    noches_cerradas_reservas: numeroONulo(fila.noches_cerradas_reservas),
+    noches_cerradas_consumieron: numeroONulo(fila.noches_cerradas_consumieron),
   };
 }
 

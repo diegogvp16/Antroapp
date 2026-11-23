@@ -238,6 +238,21 @@ try {
           comparar(donde, "/grupo reservas por venir", g.reservas_por_venir, conv.por_venir);
           comparar(donde, "/grupo reservas que consumieron", g.reservas_con_consumo, conv.con_consumo);
           comparar(donde, "/grupo consumo con reserva", g.consumo_con_reserva_centavos, conRes.cent);
+          if ("reservas_noches_cerradas" in g) {
+            // Conversión solo con noches cerradas: pasó su corte o el gerente la cerró.
+            const [cer] = await db.q(
+              `select count(*)::int as n,
+                      count(*) filter (where exists (select 1 from public.mesa_cuentas mc join public.caja_consumos k on k.cuenta_id = mc.id
+                                                     where mc.reservation_id = r.id and not k.anulado))::int as consumieron
+               from public.reservations r
+               where r.club_id = $1 and r.fecha between $2::date and $2::date + 6
+                 and (r.fecha < public.club_fecha_operacion(r.club_id)
+                      or exists (select 1 from public.caja_noches nc where nc.club_id = r.club_id and nc.fecha_operacion = r.fecha and nc.estado = 'cerrada'))`,
+              [s.club_id, s.lunes],
+            );
+            comparar(donde, "/grupo reservas de noches cerradas", g.reservas_noches_cerradas, cer.n);
+            comparar(donde, "/grupo consumieron en noches cerradas", g.consumieron_noches_cerradas, cer.consumieron);
+          }
           // Rendimiento por RP: suma de RPs = cifras del antro (solo reservas de RP).
           const rend = await db.q(`select * from public.grupo_rendimiento_rp($1, $2::date, $2::date + 6)`, [s.club_id, s.lunes]);
           cobertura.rendimiento_rp += rend.length;

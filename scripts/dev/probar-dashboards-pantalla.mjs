@@ -78,9 +78,9 @@ try {
     nota(`${clave}: no ve otros antros`, noVe.every((n) => !titulos.some((t) => t.includes(n.trim()) && !ve.includes(t))), titulos.join(" | "));
     for (const f of filas ?? []) {
       nota(`${clave}: consumo de ${f.nombre} en pantalla = base (${pesos(Number(f.consumo_centavos))})`, texto.includes(pesos(Number(f.consumo_centavos))));
-      // Con reservas que ya podían llegar hay %; sin ellas, "—".
-      const ocurridas = Number(f.reservas) - Number(f.reservas_por_venir ?? 0);
-      nota(`${clave}: conversión de ${f.nombre} visible`, ocurridas > 0 ? /\d+% de conversión/.test(texto) : /— de conversión/.test(texto));
+      // La conversión sale solo de noches cerradas: con alguna hay %; sin ninguna, "—".
+      const cerradas = Number(f.reservas_noches_cerradas ?? 0);
+      nota(`${clave}: conversión de ${f.nombre} (${cerradas ? "noches cerradas" : "sin noches cerradas: —"})`, cerradas > 0 ? /\d+% de conversión/.test(texto) : /— de conversión/.test(texto));
     }
     // Rendimiento por RP: con datos, RPs con "consumieron (…)"; sin reservas
     // en la semana, el texto de vacío. Nunca "todavía no está disponible".
