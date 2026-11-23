@@ -1,6 +1,7 @@
 # Pase a producción — runbook paso a paso
 
-> Preparado la noche del 19/11/2026. **Nada de esto se ha ejecutado en
+> Preparado la noche del 19/11/2026 y actualizado el 23/11/2026 para la rama
+> `candidato-pase` (con ensayo completo en dev). **Nada de esto se ha ejecutado en
 > producción.** Lo corre Diego, o Claude Code cuando Diego lo pida de forma
 > explícita. Cada paso dice si se puede deshacer:
 >
@@ -16,8 +17,9 @@
 - **Cuándo**: de día, sin antros operando, idealmente lunes a miércoles
   antes de las 18:00. Los pasos 5 (estabilidad) y 8 (merge) van **seguidos,
   el mismo día y con minutos de diferencia** (ver paso 5).
-- **Tiempo estimado**: 60–90 minutos, más el recorrido de roles.
-- **Estado de la rama `desarrollo`**: todas las pruebas en verde contra dev
+- **Tiempo estimado**: 45–60 minutos de pasos, más el recorrido de roles
+  (30 min). La ventana crítica (paso 5 al 8) es de unos 10 minutos.
+- **Estado de la rama `candidato-pase`**: todas las pruebas en verde contra dev
   (ver "Pruebas en dev" al final) y el build de producción sin errores.
 - **El catálogo de producción no ha cambiado** desde
   `sql/esquema/esquema-prod.sql`: se comparó el 19/11/2026 en solo lectura
@@ -37,22 +39,57 @@
   los rollbacks, del último al primero) se probó en dev el 19/11/2026 y dejó
   el esquema **idéntico** al de producción.
 
-## Orden
+## Orden (final, rama `candidato-pase`)
 
-| # | Paso | Tipo | Tiempo |
-|---|---|---|---|
-| 1 | Respaldo del día | — | 10 min |
-| 2 | Diagnósticos de solo lectura | — | 5 min |
-| 3 | `sql/2026-11-20-cover.sql` | REVERSIBLE | 2 min |
-| 4 | `sql/2026-11-20-caja-por-mesa.sql` | REVERSIBLE CON CUIDADO | 5 min |
-| 5 | `sql/2026-11-20-estabilidad.sql` | REVERSIBLE | 2 min |
-| 6 | `sql/2026-11-20-nomina-y-grupo.sql` | REVERSIBLE | 2 min |
-| 7 | `sql/2026-11-21-rp-panel.sql` y `sql/2026-11-21-caja-permisos.sql` | REVERSIBLE | 2 min |
-| 7b | **Solo si `noche2` ya se integró a `desarrollo`**: `sql/2026-11-21-caja-idempotencia.sql` y `sql/2026-11-21-grupo-conversion.sql` | REVERSIBLE | 2 min |
-| 8 | Merge `desarrollo` → `master` (auto-deploy) | REVERSIBLE (redeploy anterior) | 10 min |
-| 9 | `sql/2026-11-20-caja-candado-puerta.sql` | REVERSIBLE | 2 min |
-| 10 | Recorrido de los 6 roles en producción | — | 30 min |
-| 11 | Datos demo para la junta (25/11 después de las 08:00) | IRREVERSIBLE para lo demo | 10 min |
+`candidato-pase` = `desarrollo` + `noche2` (sin `fase2`), con el tema oscuro
+y la conversión solo con noches cerradas. Tiempos medidos en el ensayo en
+dev (ver `docs/reporte-pase.md`); en producción sumar el tiempo de pegar
+cada archivo en el SQL Editor.
+
+| # | Paso | Tipo | Rollback exacto | Tiempo |
+|---|---|---|---|---|
+| 0 | Restablecer la contraseña de la base de producción y actualizarla donde se use (ver `docs/seguridad-manual.md`) | — | — | 5 min |
+| 1 | Respaldo del día (Database → Backups) | — | — | 10 min |
+| 2 | Diagnósticos de solo lectura y comparación del catálogo | — | — | 5 min |
+| 3 | `sql/2026-11-20-cover.sql` | REVERSIBLE | `sql/2026-11-20-cover-rollback.sql` | 1 min |
+| 4 | `sql/2026-11-20-caja-por-mesa.sql` | REVERSIBLE CON CUIDADO | `sql/2026-11-20-caja-por-mesa-rollback.sql` (borra lo registrado en caja) | 2 min |
+| 5 | `sql/2026-11-20-estabilidad.sql` — **inicia la ventana**: de aquí al paso 8, minutos | REVERSIBLE | `sql/2026-11-20-estabilidad-rollback.sql` | 1 min |
+| 6 | `sql/2026-11-20-nomina-y-grupo.sql` | REVERSIBLE | `sql/2026-11-20-nomina-y-grupo-rollback.sql` | 1 min |
+| 7 | `sql/2026-11-21-rp-panel.sql` y `sql/2026-11-21-caja-permisos.sql` | REVERSIBLE | `drop function if exists public.caja_mis_permisos(uuid);` y `sql/2026-11-21-rp-panel-rollback.sql` | 1 min |
+| 7b | `sql/2026-11-21-caja-idempotencia.sql` y `sql/2026-11-21-grupo-conversion.sql` — **antes** del merge | REVERSIBLE | `sql/2026-11-21-grupo-conversion-rollback.sql` y `sql/2026-11-21-caja-idempotencia-rollback.sql` (en ese orden) | 1 min |
+| 8 | Merge `candidato-pase` → `master` (auto-deploy de Vercel) | REVERSIBLE | Vercel → Instant Rollback al deploy anterior (código viejo; ver nota del paso 5) | 3–5 min (build) |
+| 9 | `sql/2026-11-20-caja-candado-puerta.sql` — **solo con el paso 8 Ready** | REVERSIBLE | `sql/2026-11-20-caja-candado-puerta-rollback.sql` | 1 min |
+| 10 | Humo (`node scripts/humo-produccion.mjs https://antroapp.vercel.app`) y recorrido de los 6 roles | — | — | 5 + 30 min |
+| 11 | Datos demo para la junta (después de las 08:00 del día de la junta) | IRREVERSIBLE para lo demo | el respaldo del paso 1 | 10 min |
+
+**Por qué 7b va antes del merge** (evidencia en `docs/reporte-pase.md`,
+pregunta 1b):
+- El SQL del 7b es compatible con el código viejo: sus parámetros nuevos tienen default.
+- El código nuevo sin ese SQL **funciona, pero degradado**: un reintento o
+  dos staff cobrando a la vez pueden duplicar cobros (en la prueba: mesa de
+  $3,250 cobrada $6,500); cada consumo y cobro hace dos viajes; la caja baja
+  la noche completa cada 10 s; `/grupo` no muestra conversión ni rendimiento por RP.
+- Aplicado después, el código lo usa al instante (sin recargar ni volver a desplegar).
+
+### Punto de no retorno
+
+**No hay uno técnico antes del paso 11.** Todos los pasos de SQL tienen
+rollback probado en dev y la cadena completa, en orden inverso, deja el
+esquema idéntico al de producción. El punto de no retorno **práctico** es
+**la primera noche que un antro real registre movimientos en la caja** (o
+el paso 11 en Club Demo). Desde ahí, el rollback del paso 4 borra datos
+reales: solo se revierte con el respaldo del paso 1 y perdiendo lo
+capturado después.
+
+### Criterios para parar y revertir
+
+| Cuándo | Señal | Qué hacer |
+|---|---|---|
+| Pasos 3–7b y 9 | El SQL Editor marca error | Postgres ya revirtió ese archivo completo. **Parar.** No seguir al siguiente paso; leer el error en "Problemas comunes". Si no se resuelve en 15 min, revertir en orden inverso lo ya aplicado. |
+| Paso 8 | El deploy no queda Ready en 10 min, o el build falla | Nada se publicó: el sitio sigue con el código viejo. Revertir 5 → 3 si no se va a reintentar hoy (el código viejo pierde comisiones con el paso 5). |
+| Paso 8, ya Ready | El humo falla en login, `/staff/caja` o el boleto `/r/…`, o `app_errores` crece | **Instant Rollback** en Vercel (1 min). Después revertir el SQL en orden inverso solo si no se va a corregir hoy. |
+| Paso 10 | Una pantalla de un rol falla y no hay arreglo en 30 min | Instant Rollback y anotar; el SQL puede quedarse (es compatible), salvo la nota del paso 5. |
+| Cualquier momento | Hay un antro operando | No empezar o parar: el pase es de día y sin antros abiertos. |
 
 ---
 
@@ -212,8 +249,7 @@ Los dos son idempotentes.
 
 ## 7b. Caja en condiciones reales — `sql/2026-11-21-caja-idempotencia.sql`
 
-**Solo si el trabajo de la rama `noche2` ya se integró a `desarrollo`** (con
-autorización de Diego). Si no, se omite: el código de `desarrollo` no lo usa.
+Va **antes** del merge (ver "Por qué 7b va antes del merge" en el orden).
 
 Agrega la clave de idempotencia de consumos y cobros, el saldo esperado al
 cobrar y `caja_firma_noche` (detalle en `docs/caja-condiciones-reales.md`).
@@ -235,8 +271,9 @@ protección (llama como antes).
 
 Junto con él, `sql/2026-11-21-grupo-conversion.sql`: `grupo_resumen` con
 conversión, reservas por venir y consumo con reserva, y
-`grupo_rendimiento_rp` (detalle en `docs/numeros-dashboards.md`). Si falta,
-`/grupo` sigue funcionando sin esas cifras.
+`grupo_rendimiento_rp`, con la conversión calculada solo con noches cerradas
+(detalle en `docs/numeros-dashboards.md`). Si falta, `/grupo` sigue
+funcionando sin esas cifras.
 
 - **Verificar**: `select proname from pg_proc where proname = 'grupo_rendimiento_rp';` (1).
 - **Rollback**: `sql/2026-11-21-grupo-conversion-rollback.sql` (esquema idéntico, probado en dev).
@@ -248,9 +285,10 @@ La rama `fase2` (inventario y propinas, `sql/fase2/`) **no** forma parte del pas
 ```bash
 git checkout master
 git pull
-git merge --no-ff desarrollo -m "Pase a producción: caja por mesa, panel RP, nómina, estabilidad"
+git merge --no-ff origin/candidato-pase -m "Pase a producción: caja por mesa, panel RP, nómina, estabilidad, caja en condiciones reales"
 git push origin master
 git checkout desarrollo
+git merge --ff-only master     # desarrollo queda igual a lo publicado
 ```
 
 - Vercel publica solo (auto-deploy desde `master`). Revisar:
@@ -273,6 +311,7 @@ como `usada` sin pasar por la puerta nueva. Si se aplica antes, rompe el
 botón "Confirmar entrada" del código viejo.
 
 - **Verificar**: `select tgname from pg_trigger where tgname like '%candado_puerta%';`
+- Después: `node scripts/humo-produccion.mjs https://antroapp.vercel.app` (solo GET).
 - **Rollback**: `sql/2026-11-20-caja-candado-puerta-rollback.sql`.
 
 ## 10. Recorrido de los 6 roles en producción
