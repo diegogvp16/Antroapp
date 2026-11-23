@@ -77,7 +77,7 @@ aquí se elige el proveedor y se pega su "secret key".
 **Qué deberías ver**:
 - En **dev** (antroapp-dev): **apagado**. Así se probó todo el SQL nuevo, con
   GRANT explícitos en cada tabla.
-- En **producción**: hoy está **encendido** (por eso el SQL del pase revoca
+- En **producción**: hasta donde sabemos está **encendido** (las tablas nuevas recibían permisos solas; confírmalo aquí). Por eso el SQL del pase revoca
   a `anon` lo que no debe ver). El SQL funciona igual apagado o encendido.
   Apagarlo en producción hace que mañana una tabla nueva sin GRANT no quede
   expuesta por accidente: **recomendado apagarlo antes del pase** (no afecta
