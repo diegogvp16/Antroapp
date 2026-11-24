@@ -28,6 +28,9 @@ const svc = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE
 const arg = (n, def) => (process.argv.find((a) => a.startsWith(`--${n}=`))?.split("=")[1] ?? def).replace(/\/$/, "");
 const SIN = arg("sin", "http://localhost:3001");
 const CON = arg("con", "http://localhost:3003");
+// Opcional: servidor con la bandera encendida pero SIN TURNSTILE_SECRET_KEY,
+// que el servidor trata como "Cloudflare no responde" → modo degradado.
+const DEG = process.argv.some((a) => a.startsWith("--degradado=")) ? arg("degradado", "") : null;
 const TOKEN_PRUEBA = "XXXX.DUMMY.TOKEN.XXXX"; // token de prueba que aceptan las secretas 1x/2x
 const hash = (t) => createHash("sha256").update(t).digest("hex");
 
@@ -36,9 +39,9 @@ let pasan = 0, fallan = 0, saltadas = 0;
 // correos por hora: si el registro choca con ese límite no es una falla de
 // la ruta, pero tampoco se pudo probar.
 const limiteCorreos = (r) => r.status === 429 && /correos de confirmación/.test(r.cuerpo.error ?? "");
-function saltar(texto) {
+function saltar(texto, motivo = "límite de correos de confirmación de Supabase en dev; repetir en una hora") {
   saltadas++;
-  console.log("SALTADA " + texto + "  — límite de correos de confirmación de Supabase en dev; repetir en una hora");
+  console.log("SALTADA " + texto + "  — " + motivo);
 }
 function revisar(cond, texto, detalle = "") {
   if (cond) pasan++; else fallan++;
@@ -59,7 +62,7 @@ try {
   // ---------- 1. Reglas puras ----------
   revisar(decidirCaptcha("valido").permitir && !decidirCaptcha("valido").degradado, "token válido: pasa normal");
   revisar(!decidirCaptcha("invalido").permitir, "token inválido: se rechaza");
-  revisar(decidirCaptcha("sin_token").permitir && decidirCaptcha("sin_token").degradado, "sin token: pasa en modo degradado");
+  revisar(!decidirCaptcha("sin_token").permitir, "sin token con Cloudflare sano: se rechaza (quien llama no elige el modo degradado)");
   revisar(decidirCaptcha("sin_servicio").permitir && decidirCaptcha("sin_servicio").degradado, "Cloudflare sin respuesta: pasa en modo degradado");
   revisar(interpretarSiteverify({ success: false, "error-codes": ["invalid-input-secret"] }) === "sin_servicio", "llave secreta mal configurada no deja fuera a nadie");
   revisar(interpretarSiteverify({ success: false, "error-codes": ["timeout-or-duplicate"] }) === "invalido", "token repetido o vencido: inválido");
@@ -85,12 +88,16 @@ try {
   // ---------- 3. Bandera ENCENDIDA (3003) ----------
   const ok = await post(CON, "/api/auth/login", { email: correoCliente, password: PASS, captchaToken: TOKEN_PRUEBA }, nuevaIp());
   revisar(ok.status === 200, "encendida: login con token válido → 200", JSON.stringify(ok.cuerpo));
-  const ipDeg = nuevaIp();
-  const sinToken = await post(CON, "/api/auth/login", { email: correoCliente, password: PASS }, ipDeg);
-  revisar(sinToken.status === 200, "encendida: sin token (CAPTCHA no cargó) → entra en modo degradado");
-  for (let i = 0; i < 3; i++) await post(CON, "/api/auth/login", { email: correoCliente, password: "mala" + i }, ipDeg);
-  const bloq = await post(CON, "/api/auth/login", { email: correoCliente, password: PASS }, ipDeg);
-  revisar(bloq.status === 429, "modo degradado: 3 fallos del correo desde la misma IP bloquean (en vez de 5)", String(bloq.status));
+  const sinToken = await post(CON, "/api/auth/login", { email: correoCliente, password: PASS }, nuevaIp());
+  revisar(sinToken.status === 400 && /Marca la casilla/.test(sinToken.cuerpo.error ?? ""), "encendida: sin token y Cloudflare sano → 400 «Marca la casilla»", JSON.stringify(sinToken.cuerpo));
+  if (DEG) {
+    const ipDeg = nuevaIp();
+    const entra = await post(DEG, "/api/auth/login", { email: correoCliente, password: PASS }, ipDeg);
+    revisar(entra.status === 200, "Cloudflare caído (servidor sin respuesta): entra en modo degradado");
+    for (let i = 0; i < 3; i++) await post(DEG, "/api/auth/login", { email: correoCliente, password: "mala" + i }, ipDeg);
+    const bloq = await post(DEG, "/api/auth/login", { email: correoCliente, password: PASS }, ipDeg);
+    revisar(bloq.status === 429, "modo degradado: 3 fallos del correo desde la misma IP bloquean (en vez de 5)", String(bloq.status));
+  } else saltar("modo degradado del login", "falta --degradado=<servidor sin TURNSTILE_SECRET_KEY>");
   const ipNormal = nuevaIp();
   for (let i = 0; i < 3; i++) await post(CON, "/api/auth/login", { email: correoCliente, password: "mala" + i, captchaToken: TOKEN_PRUEBA }, ipNormal);
   revisar((await post(CON, "/api/auth/login", { email: correoCliente, password: PASS, captchaToken: TOKEN_PRUEBA }, ipNormal)).status === 200, "con CAPTCHA válido: 3 fallos todavía no bloquean");
@@ -124,12 +131,17 @@ try {
   for (let i = 0; i < 3; i++) await post(CON, "/api/auth/registro", { ...regCli, email: `captcha_lim${i}_${sufijo}@example.com`, nombre: "Límite " + i }, ipReg).then(() => correos.push(`captcha_lim${i}_${sufijo}@example.com`));
   const limite = await post(CON, "/api/auth/registro", { ...regCli, email: `captcha_lim9_${sufijo}@example.com`, nombre: "Límite 9" }, ipReg);
   revisar(limite.status === 429, "6.º registro desde la misma IP en una hora → 429", String(limite.status));
-  const ipRegDeg = nuevaIp();
-  const sinTok = { ...regCli, captchaToken: null };
-  await post(CON, "/api/auth/registro", { ...sinTok, email: `captcha_deg1_${sufijo}@example.com`, nombre: "Degradado 1" }, ipRegDeg);
-  await post(CON, "/api/auth/registro", { ...sinTok, email: `captcha_deg2_${sufijo}@example.com`, nombre: "Degradado 2" }, ipRegDeg);
-  correos.push(`captcha_deg1_${sufijo}@example.com`, `captcha_deg2_${sufijo}@example.com`);
-  revisar((await post(CON, "/api/auth/registro", { ...sinTok, email: `captcha_deg3_${sufijo}@example.com`, nombre: "Degradado 3" }, ipRegDeg)).status === 429, "registro sin CAPTCHA (degradado): el 3.º desde la misma IP → 429");
+  const sinTokReg = await post(CON, "/api/auth/registro", { ...regCli, captchaToken: null, email: `captcha_st_${sufijo}@example.com` }, nuevaIp());
+  revisar(sinTokReg.status === 400, "registro sin token y Cloudflare sano → 400");
+  if (DEG) {
+    const ipRegDeg = nuevaIp();
+    const sinTok = { ...regCli, captchaToken: null };
+    for (const k of [1, 2]) {
+      await post(DEG, "/api/auth/registro", { ...sinTok, email: `captcha_deg${k}_${sufijo}@example.com`, nombre: "Degradado " + k }, ipRegDeg);
+      correos.push(`captcha_deg${k}_${sufijo}@example.com`);
+    }
+    revisar((await post(DEG, "/api/auth/registro", { ...sinTok, email: `captcha_deg3_${sufijo}@example.com`, nombre: "Degradado 3" }, ipRegDeg)).status === 429, "registro en modo degradado: el 3.º desde la misma IP → 429");
+  } else saltar("límite de registro en modo degradado", "falta --degradado=<servidor sin TURNSTILE_SECRET_KEY>");
 
   // ---------- 4. Cambio de contraseña obligatorio ----------
   const correoTemp = `captcha_temp_${sufijo}@example.com`;

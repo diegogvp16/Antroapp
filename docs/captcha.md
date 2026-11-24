@@ -14,8 +14,8 @@ exactamente como hoy.
 
 **Falla segura (modo `app`, el recomendado):**
 
-- Si la casilla no carga (bloqueador, mala señal, Cloudflare caído) o
-  Cloudflare no responde a nuestro servidor, **se deja entrar** en «modo
+- Si **Cloudflare no responde a nuestro servidor** (caído o lento, lo
+  comprueba el servidor, no el navegador), **se deja entrar** en «modo
   degradado», con límites más estrictos:
 
   | Límite | Normal | Degradado |
@@ -24,8 +24,12 @@ exactamente como hoy.
   | Fallos desde la misma IP | 20 | 8 |
   | Registros por IP por hora | 5 | 2 |
 
-- Un token **inválido** (falso, vencido o repetido) sí se rechaza con
+- Un token **inválido** (falso, vencido o repetido) se rechaza con
   «No pudimos confirmar que eres una persona…».
+- **Sin token** y con Cloudflare sano (un bot que no lo manda, o un
+  bloqueador de anuncios en el teléfono) se rechaza con «Marca la casilla de
+  verificación…». Quien llama no puede elegir el modo degradado solo con no
+  mandar el token (arreglo de la revisión de seguridad).
 - Si la llave secreta está mal puesta, la app no deja fuera a nadie: trabaja
   en modo degradado y lo registra en los logs de Vercel («captcha: error de
   configuración»).

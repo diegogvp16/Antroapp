@@ -6,9 +6,29 @@ import { interpretarSiteverify, type ResultadoCaptcha } from "@/lib/domain/captc
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const TIEMPO_MAXIMO_MS = 4000;
 
+// Sin token: ¿es porque Cloudflare no responde (falla de ellos → modo
+// degradado) o porque quien llama no lo mandó (bot → se rechaza)? Lo decide
+// el servidor preguntándole a Cloudflare, no el que llama.
+async function cloudflareResponde(secreto: string): Promise<boolean> {
+  try {
+    const r = await fetch(SITEVERIFY, {
+      method: "POST",
+      body: new URLSearchParams({ secret: secreto, response: "sin-token" }),
+      signal: AbortSignal.timeout(TIEMPO_MAXIMO_MS),
+      cache: "no-store",
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function verificarTurnstile(token: unknown, ip: string): Promise<ResultadoCaptcha> {
-  if (typeof token !== "string" || !token || token.length > 2048) return "sin_token";
   const secreto = process.env.TURNSTILE_SECRET_KEY;
+  if (typeof token !== "string" || !token || token.length > 2048) {
+    if (!secreto) return "sin_servicio";
+    return (await cloudflareResponde(secreto)) ? "sin_token" : "sin_servicio";
+  }
   if (!secreto) {
     console.error("captcha: falta TURNSTILE_SECRET_KEY (modo degradado)");
     return "sin_servicio";

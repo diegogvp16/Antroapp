@@ -77,6 +77,9 @@ export async function POST(request: Request) {
   // 2. Límite por IP.
   const admin = clienteServicio();
   const ipHash = hashTexto(ip);
+  // Primero se anota el intento y después se cuenta (con él incluido): así
+  // varias peticiones al mismo tiempo no pasan todas con "0 intentos".
+  await admin.from("registro_intentos").insert({ ip_hash: ipHash, tipo: d.tipo, degradado });
   const { count, error: errCuenta } = await admin
     .from("registro_intentos")
     .select("id", { count: "exact", head: true })
@@ -86,11 +89,9 @@ export async function POST(request: Request) {
     console.error("registro: contar intentos", errCuenta.code);
     return NextResponse.json({ error: GENERICO }, { status: 500 });
   }
-  if ((count ?? 0) >= (degradado ? DEGRADADO_REGISTROS_POR_IP_HORA : REGISTROS_POR_IP_HORA)) {
+  if ((count ?? 0) > (degradado ? DEGRADADO_REGISTROS_POR_IP_HORA : REGISTROS_POR_IP_HORA)) {
     return NextResponse.json({ error: "Demasiados registros desde esta conexión. Intenta de nuevo en una hora." }, { status: 429 });
   }
-  await admin.from("registro_intentos").insert({ ip_hash: ipHash, tipo: d.tipo, degradado });
-
   // 3. Cuenta, perfil y antro.
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({
@@ -109,6 +110,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: GENERICO }, { status: 500 });
   }
   const usuario = data.user;
+  // Con la confirmación por correo encendida, Supabase responde igual cuando
+  // el correo YA existe (sin decirlo, para no revelar cuentas): viene sin
+  // identidades. En ese caso no se escribe ni se borra NADA de esa cuenta,
+  // y se responde lo mismo que a un registro nuevo.
+  const yaExistia = (usuario.identities?.length ?? 0) === 0;
+  const { data: perfilPrevio } = await admin.from("profiles").select("id").eq("id", usuario.id).maybeSingle();
+  if (yaExistia || perfilPrevio) return NextResponse.json({ ok: true, sesion: false });
+  const recienCreada = Date.now() - Date.parse(usuario.created_at) < 120_000;
   // Con sesión (confirmación de correo apagada) se escribe como el usuario;
   // sin sesión, con service_role y valores fijos (lo que haría el candado).
   const escritor = data.session ? supabase : admin;
@@ -143,8 +152,11 @@ export async function POST(request: Request) {
     // 4. Nada a medias.
     console.error("registro: perfil o antro", fallo.code);
     if (data.session) await supabase.auth.signOut();
-    const borrar = await admin.auth.admin.deleteUser(usuario.id);
-    if (borrar.error) console.error("registro: no se pudo deshacer la cuenta", borrar.error.code);
+    // Solo se deshace una cuenta creada en ESTA petición.
+    if (recienCreada) {
+      const borrar = await admin.auth.admin.deleteUser(usuario.id);
+      if (borrar.error) console.error("registro: no se pudo deshacer la cuenta", borrar.error.code);
+    }
     return NextResponse.json({ error: GENERICO }, { status: 500 });
   }
   return NextResponse.json({ ok: true, sesion: !!data.session });

@@ -2,13 +2,14 @@
 //
 //   valido        → sigue normal.
 //   invalido      → se rechaza (token falso, vencido o ya usado).
-//   sin_token     → el navegador no pudo cargar el CAPTCHA (bloqueador,
-//                   red lenta, Cloudflare caído) o es un bot que no lo manda:
-//                   se deja pasar en MODO DEGRADADO, con límites más estrictos.
-//   sin_servicio  → nuestro servidor no pudo hablar con Cloudflare: igual,
-//                   modo degradado.
-// Así una caída de Cloudflare nunca deja a nadie fuera del login; solo
-// aprieta los límites de intentos mientras dura.
+//   sin_token     → no llegó token y Cloudflare SÍ responde (lo comprueba
+//                   el servidor): un bot que no lo manda, o un bloqueador en
+//                   el navegador. Se rechaza con un mensaje claro.
+//   sin_servicio  → nuestro servidor no pudo hablar con Cloudflare (caído o
+//                   lento): se deja pasar en MODO DEGRADADO, con límites de
+//                   intentos más estrictos.
+// Así una caída de Cloudflare nunca deja a nadie fuera del login, y quien
+// llama no puede elegir el modo degradado solo con no mandar el token.
 
 export type ResultadoCaptcha = "valido" | "invalido" | "sin_token" | "sin_servicio";
 
@@ -17,6 +18,7 @@ export type DecisionCaptcha =
   | { permitir: false; error: string };
 
 export const MENSAJE_CAPTCHA_INVALIDO = "No pudimos confirmar que eres una persona. Vuelve a marcar la casilla e intenta de nuevo.";
+export const MENSAJE_CAPTCHA_FALTA = "Marca la casilla de verificación y vuelve a intentar. Si no aparece, desactiva el bloqueador de anuncios o recarga la página.";
 
 export function decidirCaptcha(resultado: ResultadoCaptcha): DecisionCaptcha {
   switch (resultado) {
@@ -24,6 +26,8 @@ export function decidirCaptcha(resultado: ResultadoCaptcha): DecisionCaptcha {
       return { permitir: true, degradado: false };
     case "invalido":
       return { permitir: false, error: MENSAJE_CAPTCHA_INVALIDO };
+    case "sin_token":
+      return { permitir: false, error: MENSAJE_CAPTCHA_FALTA };
     default:
       return { permitir: true, degradado: true };
   }
