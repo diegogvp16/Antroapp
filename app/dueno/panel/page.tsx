@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -9,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ReglasPagoRP } from "@/components/reglas-pago-rp";
 import { VerificacionAntro } from "@/components/verificacion-antro";
+import { CoverCampo } from "@/components/cover-campo";
 import {
   Card,
   CardContent,
@@ -16,9 +18,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { Club, ClubPhoto, ClubTable, Profile } from "@/types";
+import type { Club, ClubPhoto, ClubTable, CoverModo, Profile } from "@/types";
 import { formatearFechaLarga } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
+import { coverMontoATexto, validarCover } from "@/lib/cover";
 
 // Mesas visibles antes de "Ver todas": la lista completa puede tener decenas.
 const MESAS_VISIBLES = 12;
@@ -45,6 +48,8 @@ export default function DuenoPanelPage() {
   const [clubTipoMusica, setClubTipoMusica] = useState("");
   const [clubVestimenta, setClubVestimenta] = useState("");
   const [clubEdadMinima, setClubEdadMinima] = useState("");
+  const [clubCoverModo, setClubCoverModo] = useState<CoverModo>("oculto");
+  const [clubCoverMonto, setClubCoverMonto] = useState("");
   const [clubSubmitting, setClubSubmitting] = useState(false);
   const [clubError, setClubError] = useState<string | null>(null);
   const [clubSaved, setClubSaved] = useState(false);
@@ -140,6 +145,8 @@ export default function DuenoPanelPage() {
       setClubEdadMinima(
         loadedClub.edad_minima !== null ? String(loadedClub.edad_minima) : "",
       );
+      setClubCoverModo(loadedClub.cover_modo);
+      setClubCoverMonto(coverMontoATexto(loadedClub.cover_monto));
       return loadedClub;
     } catch (err) {
       console.error("Error cargando club del dueño:", err);
@@ -256,6 +263,12 @@ export default function DuenoPanelPage() {
       }
     }
 
+    const cover = validarCover(clubCoverModo, clubCoverMonto);
+    if (!cover.ok) {
+      setClubError(cover.error);
+      return;
+    }
+
     setClubSubmitting(true);
     try {
       const supabase = createClient();
@@ -271,6 +284,8 @@ export default function DuenoPanelPage() {
           tipo_musica: clubTipoMusica.trim() || null,
           codigo_vestimenta: clubVestimenta.trim() || null,
           edad_minima: edadMinimaNum,
+          cover_modo: cover.cover_modo,
+          cover_monto: cover.cover_monto,
         })
         .eq("id", club.id);
 
@@ -529,6 +544,25 @@ export default function DuenoPanelPage() {
           </Button>
         </div>
 
+        <div className="grid grid-cols-2 gap-3">
+          <Button
+            render={<Link href="/dueno/nomina" />}
+            nativeButton={false}
+            variant="outline"
+            className="w-full"
+          >
+            Nómina de RPs
+          </Button>
+          <Button
+            render={<Link href="/grupo" />}
+            nativeButton={false}
+            variant="outline"
+            className="w-full"
+          >
+            Resumen y grupo
+          </Button>
+        </div>
+
         <VerificacionAntro club={club} onCambioEstado={fetchClub} />
 
         <section className="flex flex-col gap-4">
@@ -687,6 +721,13 @@ export default function DuenoPanelPage() {
                     onChange={(e) => setClubEdadMinima(e.target.value)}
                   />
                 </div>
+                <CoverCampo
+                  idPrefix="club"
+                  modo={clubCoverModo}
+                  monto={clubCoverMonto}
+                  onModoChange={setClubCoverModo}
+                  onMontoChange={setClubCoverMonto}
+                />
 
                 {clubError && (
                   <p className="text-sm text-destructive" role="alert">

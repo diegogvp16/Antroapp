@@ -21,8 +21,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { hoyMexico } from "@/lib/fechas";
+import { nocheOperativaMexico } from "@/lib/fechas";
 import { textoCover } from "@/lib/cover";
+import { enlaceCompartir, mensajeReserva } from "@/lib/domain/compartir";
 import type { Club } from "@/types";
 
 interface ReservaResumen {
@@ -59,7 +60,9 @@ function ReservarPage() {
   const [error, setError] = useState<string | null>(null);
   const [reserva, setReserva] = useState<ReservaResumen | null>(null);
 
-  const minDate = hoyMexico();
+  // Desde la noche en curso (corte 08:00): a la 1:00 a. m. todavía se
+  // reserva para la noche que la puerta acepta.
+  const minDate = nocheOperativaMexico();
   const backHref = club ? `/cliente/${club.id}` : "/cliente";
 
   useEffect(() => {
@@ -181,6 +184,11 @@ function ReservarPage() {
       });
 
       if (insertError) {
+        // Índice único: una reserva por cliente, antro y noche.
+        if (insertError.code === "23505") {
+          setError("Ya tienes una reserva en este antro para esa noche.");
+          return;
+        }
         console.error("Supabase insert error (reservations):", insertError);
         throw insertError;
       }
@@ -263,9 +271,16 @@ function ReservarPage() {
   }
 
   if (reserva) {
-    const whatsappHref = `https://wa.me/?text=${encodeURIComponent(
-      `Aquí está tu reservación en ${club.nombre} para ${reserva.cliente_nombre} el ${reserva.fecha} (${reserva.personas} personas). Ábrelo aquí para ver tu código: ${window.location.origin}/r/${reserva.qr_code}`,
-    )}`;
+    const whatsappHref = enlaceCompartir(
+      mensajeReserva({
+        quien: "cliente",
+        antro: club.nombre,
+        cliente: reserva.cliente_nombre,
+        fecha: reserva.fecha,
+        personas: reserva.personas,
+        enlace: `${window.location.origin}/r/${reserva.qr_code}`,
+      }),
+    );
 
     return (
       <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-16">

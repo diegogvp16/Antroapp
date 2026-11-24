@@ -47,7 +47,9 @@ export function resumirPeriodo(
   let registrosGanancia = 0;
   for (const g of ganancias) {
     if (!enRango(g.noche, rango)) continue;
+    // Lo anulado se muestra en el desglose pero no cuenta como ganado.
     ganadoPorEstado[g.status] = (ganadoPorEstado[g.status] ?? 0) + g.monto;
+    if (g.status === "anulada") continue;
     ganado += g.monto;
     registrosGanancia += 1;
   }

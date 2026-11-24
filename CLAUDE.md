@@ -40,12 +40,89 @@ Notas importantes:
 - **Todo es client-side**. Prácticamente todas las páginas son `"use client"` y
   hablan con Supabase desde el navegador con la *anon key*. La seguridad
   depende por completo de RLS y de los triggers de la base (sección 7).
-- **Deploy manual**: `npx vercel --prod --scope antroapp`. Sin `--scope`
-  responde "Not authorized". El auto-deploy desde GitHub **no existe**: el
-  proyecto de Vercel no está conectado a ningún repositorio (verificado el
-  19/11/2026; `vercel git connect` falla porque la app de Vercel en GitHub no
-  tiene acceso a `diegogvp16/Antroapp`). Lo que se sube con el CLI lo filtra
-  `.vercelignore` (`backups/`, `demo-assets/`, `docs/`, `sql/`, capturas).
+- **Deploy automático desde GitHub** (conectado el 19/11/2026): cada push a
+  `master` publica en producción (antroapp.vercel.app) sin preguntar. Cualquier
+  otra rama genera un deploy Preview. El deploy manual
+  (`npx vercel --prod --scope antroapp`) queda solo para emergencias. Lo que
+  se sube con el CLI lo filtra `.vercelignore` (`backups/`, `demo-assets/`,
+  `docs/`, `sql/`, capturas).
+
+### Ramas y entornos
+
+| | Producción | Desarrollo |
+|---|---|---|
+| Rama de Git | `master` | `desarrollo` (y sus ramas) |
+| Vercel | Production (antroapp.vercel.app) | Preview (URL por deploy) |
+| Supabase | `kigltjvakwuuulvzbyri` | antroapp-dev, `ygumrpckbtlngzspqdvo` |
+| Llaves locales | `.env.local` | `.env.dev` |
+
+- **Todo se trabaja en `desarrollo`.** A `master` solo se pasa con merge,
+  cuando lo nuevo ya pasó sus pruebas en dev. `desarrollo` no sigue a
+  ninguna rama remota de `master` (un `git push` pelón no llega a master).
+- **Vercel Preview usa las llaves de dev** (configurado con
+  `node scripts/dev/vercel-preview-a-dev.mjs`, que lee `.env.dev`). Nunca
+  mezclar llaves de dev y prod. Las `NEXT_PUBLIC_*` van como tipo `config`
+  (Vercel no permite Secret con ese prefijo); la service role como Secret.
+- **`.env.dev`** (gitignored) trae la URL y las llaves legacy de dev, y
+  `DATABASE_URL_DEV` / `DATABASE_URL_PROD` (Session pooler).
+- **Herramientas de base** (`scripts/db/`), con candados en
+  `scripts/db/conexion.mjs`:
+  - A **producción** solo se conecta en modo solo lectura
+    (`default_transaction_read_only = on`) y solo acepta SELECT/WITH sobre el
+    catálogo (`pg_catalog`, `information_schema`, `storage.buckets`…); rechaza
+    cualquier otra sentencia y cualquier tabla de datos.
+  - A **dev** escribe, pero se niega si la URL o el ref de las llaves son de
+    producción.
+- **Esquema**: `node scripts/db/extraer-esquema.mjs --origen=prod
+  --salida=sql/esquema/esquema-prod.sql` lo saca del catálogo (tablas,
+  funciones, triggers, RLS incluidas restrictivas, GRANT explícitos a
+  anon/authenticated/service_role, buckets, políticas de Storage, event
+  trigger). `node scripts/db/aplicar-dev.mjs [--reiniciar] <archivo.sql>` lo
+  aplica en dev en una sola transacción. En dev "Automatically expose new
+  tables" está desactivado: **toda tabla nueva necesita sus GRANT
+  explícitos** en su SQL.
+- **Datos de dev**: `node scripts/dev/sembrar-dev.mjs` crea datos ficticios
+  (un usuario por rol `dev_<rol>@example.com`, "Club Demo Dev" publicado,
+  un borrador con dueño y uno sin dueño). Contraseña en
+  `backups/dev-credenciales.json`.
+- **Datos demo en dev**: después de `sembrar-dev`, `node scripts/demo-datos.mjs
+  --env=.env.dev --si` arma la noche en curso con caja (mesas con 2 y 3
+  grupos, RPs en los 4 estados, reservas de mañana, una RP con la cuota
+  alcanzada y otro sin alcanzarla) y `node scripts/dev/mesas-extra.mjs`
+  sube Club Demo Dev a 50 mesas. Los tres se niegan a correr contra prod.
+- **Pruebas contra dev** (19/11/2026, todas en verde):
+  - `node scripts/probar-clubs-visibilidad.mjs --env=.env.dev` (68/68)
+  - `node scripts/dev/probar-caja.mjs` (167/167)
+  - `node scripts/dev/probar-login.mjs` (15/15, con `servidor-dev`)
+  - `node scripts/dev/probar-rp-panel.mjs` (40/40, Playwright)
+  - `node scripts/dev/recorrido-roles.mjs` (32/32, 6 roles a 390 px)
+
+  Rama `noche2` (20/11/2026, con `sql/2026-11-21-caja-idempotencia.sql` y
+  `sql/2026-11-21-grupo-conversion.sql` en dev):
+  - `node scripts/dev/probar-caja-concurrencia.mjs` (29/29: reintentos, 3 staff a la vez)
+  - `node scripts/dev/probar-caja-multi.mjs` (17/17, Playwright, 3 sesiones, sin red, respuestas perdidas)
+  - `node scripts/dev/probar-carga-caja.mjs` (medidas: 50 mesas, 1,150 movimientos, CPU 4×)
+  - `node scripts/verificar-cuadre.mjs` (solo lectura: caja = cuadres = comisiones = nómina = /grupo = panel RP, al centavo)
+  - `node scripts/dev/probar-dashboards.mjs` (28/28) y `probar-dashboards-pantalla.mjs` (24/24)
+  - `node scripts/dev/probar-instalable.mjs` (34/34, contra `servidor-prod-dev`)
+
+  Rama `candidato-pase` (23/11/2026):
+  - `node scripts/humo-produccion.mjs <url> [--vercel-curl] [--navegador]` (solo GET, sin sesión)
+  - `node scripts/dev/probar-escaner.mjs` (9/9, QR con poca luz) y `video-junta.mjs` (video de respaldo, sin escribir)
+  - `node scripts/dev/ensayo-pase.mjs` (ensayo del pase en dev) y `respaldar-dev.mjs` (respaldo de dev en `backups/`)
+  - `node scripts/db/conteos-prod.mjs` (producción: solo conteos fijos, sin datos personales)
+
+  Para medir como en el teléfono real: `node scripts/dev/servidor-prod-dev.mjs`
+  (build de producción contra dev en `.next-build`, puerto 3002; no pisa la
+  `.next` de `servidor-dev`).
+
+  Playwright no es dependencia del proyecto: los scripts lo toman de
+  `PLAYWRIGHT_DESDE=<carpeta con node_modules/playwright>`.
+- **Flujo de ramas**: se trabaja en `desarrollo` con commits pequeños; cada
+  push a `desarrollo` genera un Preview (llaves de dev). A `master` solo por
+  merge en el pase (`docs/pase-produccion.md`).
+- **SQL nuevo**: primero en dev (con sus pruebas por rol), y solo después en
+  producción por el SQL Editor, con su rollback listo.
 - Rutas de servidor (usan la *service role key*, y antes verifican quién
   llama por la cookie de sesión):
   - `app/api/admin/create-staff/route.ts`
@@ -58,7 +135,11 @@ npm run dev          # desarrollo (Turbopack)
 npx tsc --noEmit     # type-check — correr SIEMPRE antes de dar algo por hecho
 npx eslint .         # lint
 npx next build       # build de producción, antes de cualquier deploy
-npx vercel --prod --scope antroapp   # deploy manual (requiere login previo)
+npx vercel --prod --scope antroapp   # deploy manual de emergencia
+node scripts/db/extraer-esquema.mjs --origen=prod --salida=sql/esquema/esquema-prod.sql
+node scripts/db/aplicar-dev.mjs --reiniciar sql/esquema/esquema-prod.sql   # solo dev
+node scripts/dev/sembrar-dev.mjs                                           # solo dev
+node scripts/probar-clubs-visibilidad.mjs --env=.env.dev
 ```
 
 ---
@@ -246,6 +327,37 @@ Decidido con el socio. **Nada de esto está implementado como cobro real todaví
   (`rp_attendance`), por escaneo de su QR o marca manual del staff. Tener turno
   asignado no basta.
 
+### Caja por mesa y panel del RP (en `desarrollo`; en producción después del pase)
+- **Grupos por mesa**: una mesa de la noche es una `mesa_sesiones`; cada
+  cliente (reserva o walk-in) es una `mesa_cuentas` con su RP. Una mesa
+  puede tener varios grupos en la noche: cuando se cuadra, el siguiente
+  grupo abre una sesión nueva. Lo cuadrado queda bloqueado ("no se
+  modifica").
+- **Nada se borra en caja**: consumos y pagos se anulan con motivo; una mesa
+  cerrada se reabre con motivo; una mesa cuadrada no se reabre. Lo cuidan
+  los triggers `caja_sin_borrar` y `caja_insert_coherente`, no solo RLS.
+- **Permisos de caja** (`caja_tiene_permiso`, o los 8 de una vez con
+  `caja_mis_permisos`): el staff abre mesas, registra consumo, cobra y
+  cierra; anular, reabrir, cuadrar y cerrar la noche son del gerente/dueño
+  salvo que se le den en `caja_permisos`. Un staff o RP dado de baja
+  (`profiles.activo = false`) no ve la caja ni su nómina.
+- **Comisión**: nace **al cuadrar la mesa**, una vez por cuenta, con el
+  consumo de esa cuenta (`caja_liquidar_cuenta`). El desbloqueo semanal es
+  una cuota: con `D`, la D-ésima reserva que consume ya paga. Diseño de
+  reglas por antro: `docs/reglas-comision.md`.
+- **Estados de reserva para el RP** (`rp_mis_reservas`, que solo devuelve
+  las del RP que llama): Consumió (consumo > 0, cuenta para comisión) ·
+  Llegó, sin consumo · No llegó (la noche ya cerró sin entrada) · Por llegar
+  (la noche sigue abierta). Qué ve el RP lo decide un solo punto,
+  `rp_nivel_visibilidad(club)` (hoy fijo en "estado + monto"). La tarjeta de
+  cuota sale de `rp_progreso_cuota()`, que responde "sin cuota" si no aplica.
+- **Errores en pantalla**: solo se muestran tal cual los avisos de las
+  funciones (`raise exception`, código P0001); el resto pasa por
+  `mensajeParaUsuario` (`lib/errores-base.ts`) y sale genérico.
+- **Login** (`/api/auth/login`): bloqueo de 15 min tras 5 fallos del mismo
+  correo desde la misma IP, 30 del correo desde cualquier IP o 20 de la
+  IP; un RP dado de baja recibe 403.
+
 ---
 
 ## 6. Modelo de datos
@@ -343,7 +455,8 @@ Ordenada por gravedad. Verificado contra producción el 11/11/2026.
 
 ### 🟡 Medios
 
-4. **Auto-deploy de Vercel sin conectar** (ver sección 2). Deploy manual con
+4. ~~**Auto-deploy de Vercel sin conectar**~~ Resuelto: conectado el
+   19/11/2026 (ver sección 2). Texto anterior: deploy manual con
    `npx vercel --prod --scope antroapp` mientras tanto.
 5. **`/dueno/signup` no es transaccional**: crea el perfil y luego el club en
    dos pasos. Si falla el segundo, queda un dueño sin antro que ve "Antro no
@@ -500,11 +613,13 @@ decisión de Diego.
 - **Por fases, con aprobación de Diego en cada paso.** Los cambios grandes se
   parten en checkpoints: se entrega una parte, Diego la revisa, y hasta
   entonces se sigue. No adelantarse a la siguiente fase.
-- **SQL**: Claude Code **no tiene acceso** al dashboard de Supabase ni conexión
-  directa a Postgres (solo PostgREST con las keys del `.env.local`). Todo cambio
-  de esquema se entrega como SQL **completo y listo para pegar** en el SQL
-  Editor, en un solo bloque. Después de que Diego lo corra, verificar por
-  introspección que quedó aplicado antes de seguir.
+- **SQL**: Claude Code escribe directo **solo en antroapp-dev**
+  (`DATABASE_URL_DEV`). A producción solo lee el catálogo, en solo lectura
+  (sección 2, "Ramas y entornos"). No hay token personal de Supabase y no se
+  usa. Todo cambio de esquema en producción se entrega como SQL **completo y
+  listo para pegar** en el SQL Editor, en un solo bloque y con su rollback,
+  después de pasar sus pruebas en dev. Después de que Diego lo corra,
+  verificar por introspección que quedó aplicado antes de seguir.
 - **Nada de `git commit`, `git push` ni deploy sin que Diego lo pida
   explícitamente.** El trabajo se deja en el working tree para que él lo revise.
 - **Verificar antes de afirmar**: `npx tsc --noEmit` después de cada cambio, y
@@ -540,6 +655,55 @@ Dragones). Evitar explícitamente el look genérico morado-degradado.
 
 ## 9. Pendientes inmediatos
 
+### Rama `candidato-pase` (23/11/2026): lista para el pase
+
+`candidato-pase` = `desarrollo` + `noche2` (sin `fase2`), con tema oscuro en
+nómina y /grupo, conversión solo con noches cerradas y cabeceras de
+seguridad. El pase completo se ensayó en dev (`scripts/dev/ensayo-pase.mjs`):
+esquema idéntico al de producción antes, idéntico al de la rama después,
+todo en verde. Orden final, rollback por paso y criterios para parar en
+`docs/pase-produccion.md`; detalle en `docs/reporte-pase.md`. La junta:
+`docs/guion-junta.md`. Lo manual de seguridad: `docs/seguridad-manual.md`.
+
+### Rama `noche2` (20/11/2026): integrada en `candidato-pase`
+
+Caja en condiciones reales (idempotencia, saldo esperado, firma de la noche,
+aviso sin conexión), números de `/grupo` (conversión, rendimiento por RP),
+apps instalables Staff/RP/Dueño, arreglos de la auditoría móvil y el
+comparativo de temas (`lib/tema-reportes.ts`, en "actual"). Integrarla es
+decisión de Diego; su SQL va en el paso 7b del pase. Detalle en
+`docs/reporte-noche-2.md`. La rama `fase2` (inventario y propinas, bandera
+`NEXT_PUBLIC_FASE2`) es aparte: `docs/fase2.md`.
+
+### Hecho en `desarrollo` y antroapp-dev, FALTA el pase a producción (bloque 6)
+
+Todo probado en dev (ver "Pruebas contra dev" en la sección 2). El pase lo
+pide Diego de forma explícita. **El paso a paso completo**, con
+diagnósticos de solo lectura, verificación, rollback de cada paso y
+problemas comunes, está en **`docs/pase-produccion.md`**. Resumen del orden
+(la cadena de rollbacks en orden inverso deja el esquema idéntico al de
+producción, probado el 19/11/2026):
+
+1. Respaldo del día (ver `docs/respaldos.md`) y diagnósticos (duplicados).
+2. `sql/2026-11-20-cover.sql`
+3. `sql/2026-11-20-caja-por-mesa.sql`
+4. `sql/2026-11-20-estabilidad.sql`, **seguido del merge** (paso 7) el mismo
+   día: el código nuevo necesita `login_intentos` y el viejo pierde
+   comisiones con las funciones nuevas.
+5. `sql/2026-11-20-nomina-y-grupo.sql`
+6. `sql/2026-11-21-rp-panel.sql` y `sql/2026-11-21-caja-permisos.sql`
+7. Merge de `desarrollo` a `master` (publica el código nuevo).
+8. **Después** del código nuevo: `sql/2026-11-20-caja-candado-puerta.sql`
+   (rompe el "Confirmar entrada" viejo si se aplica antes).
+9. Recorrido de los 6 roles en producción.
+10. El 25/11 después de las 08:00: `node scripts/demo-datos.mjs --fecha=2026-11-25 --si`.
+
+Con eso quedan resueltos los pendientes 1, 4, 5 (caja; falta alta masiva de
+RPs), 6 y el error del panel de staff después de medianoche. El 2 (bono de
+plataforma) ya no aplica: no hay bono.
+
+### Lista anterior
+
 Por prioridad:
 
 1. **Reescribir `registrar_comision_reserva` y `registrar_pago_dia`**
@@ -573,6 +737,26 @@ Por prioridad:
 
 ## 10. Lecciones aprendidas
 
+- **En dev "Automatically expose new tables" está apagado**: una tabla sin
+  GRANT explícitos no la lee nadie. Todo SQL nuevo lleva sus GRANT para
+  anon, authenticated y service_role (en prod la exposición automática da
+  todo y hay que revocar).
+- **`set local role` dentro de un archivo que se aplica en una transacción
+  se queda para TODO lo que sigue.** Las verificaciones con otro rol van en
+  pruebas aparte, no en el SQL a aplicar.
+- **En plpgsql, `a and new.columna` evalúa `new.columna` aunque `a` sea
+  falso**: en un trigger compartido por tablas distintas, anidar los if.
+- **Con service_role o postgres no hay RLS**: "nada se borra" y la
+  coherencia de la caja se hacen con triggers, no con políticas.
+- **Supabase no deja borrar `storage.objects` por SQL**: se vacía con la API
+  de Storage.
+- **Finales de línea**: con `core.autocrlf` un `.sql` puede quedar con CRLF
+  y el `` termina dentro del cuerpo de las funciones. `.gitattributes`
+  fija LF para `*.sql` y `*.mjs`, y `aplicar-dev.mjs` lo normaliza.
+- **El límite de intentos de la app** (/api/auth/login) solo cubre los
+  formularios; contra quien llama a Supabase Auth directo están los límites
+  y el CAPTCHA del dashboard de Supabase.
+
 - **Las políticas permisivas de Storage se suman entre sí (OR).** Una sola
   política mal acotada (por ejemplo, sin filtrar `bucket_id`) abre **todos**
   los buckets aunque los demás tengan políticas correctas. Pasó con
@@ -599,3 +783,37 @@ Por prioridad:
 - **Un INSERT que "pasa" no significa que guardó lo que mandaste**:
   `clubs_candado_insert` corrige los valores en silencio. Para probar un
   candado, leer después lo que quedó guardado.
+- **`npx next build` pisa la carpeta `.next` del servidor de desarrollo**:
+  después del build, `servidor-dev` responde 500. Pararlo, borrar `.next` y
+  levantarlo de nuevo.
+- **Importar `scripts/dev/sembrar-dev.mjs` lo ejecuta** (no tiene guard de
+  "solo si es el script principal"): volver a sembrar dev a media prueba.
+  Copiar las constantes que hagan falta, no importarlas.
+- **Una prueba de caja con Playwright cambia los datos de dev** (cuadra
+  mesas, abre grupos): para repetirla, regenerar antes la noche demo.
+- **Contar "entraron" no es lo mismo que contar "consumieron"**: la cuota
+  del RP sale siempre de `rp_progreso_cuota()` (base), nunca de un conteo
+  armado en el navegador.
+- **Turbopack (servidor-dev) puede no recoger cambios de `app/globals.css`**
+  hechos desde fuera del editor: la regla nueva no aparece en el CSS servido.
+  Parar el servidor, borrar `.next` y levantarlo de nuevo. Revisar con
+  `getComputedStyle`, no solo con la captura.
+- **`app/manifest.ts` le gana a `metadata.manifest`** de un layout anidado:
+  para que una sección declare su propio manifest, el del cliente tiene que
+  ser un archivo estático (`public/manifest.webmanifest`) declarado en
+  `app/layout.tsx`.
+- **El Chromium de Playwright no emula `display-mode: standalone`** (CDP lo
+  ignora): la instalabilidad se prueba con `Page.getAppManifest` y
+  `Page.getInstallabilityErrors`.
+- **Medir rendimiento con el build de producción**, no con `next dev`: el
+  React de desarrollo es 2–5× más lento y exagera los tiempos.
+- **Un reintento con mala señal puede duplicar**: toda escritura de dinero
+  lleva clave de idempotencia y, al cobrar, el saldo que vio el staff.
+- **`sembrar-dev` cambia la contraseña de los usuarios ficticios de dev**
+  (la nueva queda en `backups/dev-credenciales.json`) y recrea las cuentas
+  `demo_*` al correr después `demo-datos`: las sesiones abiertas de dev se caen.
+- **Las pruebas de pantalla dependen de los datos de la semana**: con la
+  demo de otro día, `/grupo` no tiene reservas y la conversión sale "—".
+  Regenerar la noche demo antes de probar.
+- **Antes de un pase, ensayarlo en dev**: rollbacks hasta igualar el
+  catálogo de producción, pase paso a paso, comparar esquemas antes y después.

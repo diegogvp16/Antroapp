@@ -23,9 +23,14 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "AntroApp",
   description: "Reserva tu lugar en el antro en segundos.",
+  // App del cliente. Las de trabajo (Staff, RP, Dueño) declaran el suyo en el
+  // layout de su sección (lib/app-instalable.ts) y reemplazan a este. Es un
+  // archivo estático y no app/manifest.ts porque esa convención no deja que
+  // una sección lo cambie. Iconos: scripts/generar-iconos.mjs.
+  manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
+    statusBarStyle: "black",
     title: "AntroApp",
   },
   icons: {
@@ -42,6 +47,11 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   themeColor: "#0b0a0a",
   viewportFit: "cover",
+  // Con el teclado abierto, el área de la página se encoge (Chrome Android):
+  // los botones fijos abajo (hojas de la caja, formularios) quedan arriba del
+  // teclado en lugar de debajo. Safari lo ignora; ahí lo resuelve
+  // components/caja/hoja.tsx con visualViewport.
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({

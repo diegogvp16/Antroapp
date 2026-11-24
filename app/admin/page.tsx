@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { textoCover } from "@/lib/cover";
+import { textoCover, validarCover } from "@/lib/cover";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { VerificacionesPendientes } from "@/components/verificaciones-pendientes";
-import type { Club } from "@/types";
+import { ErroresRecientes } from "@/components/errores-recientes";
+import { CoverCampo } from "@/components/cover-campo";
+import type { Club, CoverModo } from "@/types";
 
 interface ConsumoBucket {
   rpTotal: number;
@@ -80,6 +82,8 @@ export default function AdminPage() {
   const [clubNombre, setClubNombre] = useState("");
   const [clubDireccion, setClubDireccion] = useState("");
   const [clubHorario, setClubHorario] = useState("");
+  const [clubCoverModo, setClubCoverModo] = useState<CoverModo>("oculto");
+  const [clubCoverMonto, setClubCoverMonto] = useState("");
   const [clubSubmitting, setClubSubmitting] = useState(false);
   const [clubError, setClubError] = useState<string | null>(null);
 
@@ -294,6 +298,12 @@ export default function AdminPage() {
       return;
     }
 
+    const cover = validarCover(clubCoverModo, clubCoverMonto);
+    if (!cover.ok) {
+      setClubError(cover.error);
+      return;
+    }
+
     setClubSubmitting(true);
     try {
       const supabase = createClient();
@@ -301,6 +311,8 @@ export default function AdminPage() {
         nombre: clubNombre.trim(),
         direccion: clubDireccion.trim(),
         horario: clubHorario.trim(),
+        cover_modo: cover.cover_modo,
+        cover_monto: cover.cover_monto,
         suscripcion_activa: true,
         // Lo da de alta AntroApp directamente: no pasa por la revisión de
         // documentos que hace un dueño auto-registrado.
@@ -313,6 +325,8 @@ export default function AdminPage() {
       setClubNombre("");
       setClubDireccion("");
       setClubHorario("");
+      setClubCoverModo("oculto");
+      setClubCoverMonto("");
       await fetchClubs();
     } catch (err) {
       console.error("Error creando club:", err);
@@ -403,6 +417,8 @@ export default function AdminPage() {
         </div>
 
         <VerificacionesPendientes onCambio={fetchClubs} />
+
+        <ErroresRecientes />
 
         <section className="flex flex-col gap-4">
           <h2 className="text-lg font-semibold">Dashboard general</h2>
@@ -606,6 +622,13 @@ export default function AdminPage() {
                     required
                   />
                 </div>
+                <CoverCampo
+                  idPrefix="nuevo_club"
+                  modo={clubCoverModo}
+                  monto={clubCoverMonto}
+                  onModoChange={setClubCoverModo}
+                  onMontoChange={setClubCoverMonto}
+                />
                 {clubError && (
                   <p className="text-sm text-destructive" role="alert">
                     {clubError}

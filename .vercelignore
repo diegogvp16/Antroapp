@@ -11,3 +11,4 @@ scripts/
 screenshots-*/
 REPORTE-*.md
 .claude/
+.next-build/

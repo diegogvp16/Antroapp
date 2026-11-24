@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { DIAS_SEMANA, formatearDias } from "@/lib/turnos";
-import { hoyMexico } from "@/lib/fechas";
+import { nocheOperativaMexico } from "@/lib/fechas";
 
 interface TurnoRecurrenteFormProps {
   rpId: string;
@@ -28,7 +28,7 @@ export function TurnoRecurrenteForm({
   const [dateInput, setDateInput] = useState("");
   const [pendingDates, setPendingDates] = useState<string[]>([]);
   const [weekdays, setWeekdays] = useState<number[]>([]);
-  const [fechaInicio, setFechaInicio] = useState(hoyMexico());
+  const [fechaInicio, setFechaInicio] = useState(nocheOperativaMexico());
   const [genError, setGenError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +43,7 @@ export function TurnoRecurrenteForm({
       setGenError("Selecciona una fecha.");
       return;
     }
-    if (dateInput < hoyMexico()) {
+    if (dateInput < nocheOperativaMexico()) {
       setGenError("La fecha no puede ser en el pasado.");
       return;
     }
@@ -138,7 +138,7 @@ export function TurnoRecurrenteForm({
       }
 
       setWeekdays([]);
-      setFechaInicio(hoyMexico());
+      setFechaInicio(nocheOperativaMexico());
       await onAssigned();
     } catch (err) {
       console.error("Error guardando turno fijo:", err);
@@ -182,7 +182,7 @@ export function TurnoRecurrenteForm({
             <Input
               id={`turno-fecha-${rpId}`}
               type="date"
-              min={hoyMexico()}
+              min={nocheOperativaMexico()}
               value={dateInput}
               onChange={(e) => setDateInput(e.target.value)}
             />

@@ -18,6 +18,17 @@
 // medianoche (hasta las 03:30) siguen siendo de esa misma noche.
 //
 // Usa la service role key de .env.local; nunca imprime su valor.
+//
+// MODO DEV: --env=.env.dev apunta a antroapp-dev ("Club Demo Dev") y se
+// niega a correr si la URL o la llave son de producción.
+//
+// CAJA: si la base ya tiene las tablas de caja (dev, o producción después del
+// pase), el script arma la CAJA de cada noche (mesas compartidas con cuentas por cliente y su
+// RP, consumos, pagos, cuadres y comisiones nacidas al cuadrar): la noche
+// objetivo queda con mesas abiertas, cerradas y cuadradas y una anulación
+// con motivo; la semana anterior, todo cuadrado. Sin --fecha, en dev toma la
+// noche en curso (corte 08:00) para poder operar la caja en vivo.
+//   node scripts/demo-datos.mjs --env=.env.dev --si
 
 import { createRequire } from "node:module";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -27,8 +38,11 @@ import { dirname, join } from "node:path";
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), "..");
 const { createClient } = createRequire(join(RAIZ, "package.json"))("@supabase/supabase-js");
+const ARCHIVO_ENV = (process.argv.find((a) => a.startsWith("--env=")) ?? "--env=.env.local").slice(6);
+if (!/^\.env\.(local|dev)$/.test(ARCHIVO_ENV)) { console.log("ERROR: --env debe ser .env.local o .env.dev"); process.exit(1); }
+const DEV = ARCHIVO_ENV === ".env.dev";
 const env = Object.fromEntries(
-  readFileSync(join(RAIZ, ".env.local"), "utf8")
+  readFileSync(join(RAIZ, ARCHIVO_ENV), "utf8")
     .split(/\r?\n/)
     .filter((l) => l.includes("=") && !l.trim().startsWith("#"))
     .map((l) => {
@@ -36,18 +50,28 @@ const env = Object.fromEntries(
       return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^["']|["']$/g, "")];
     }),
 );
+// Candado: en modo dev la URL y la llave deben ser de antroapp-dev.
+const REF_DEV = "ygumrpckbtlngzspqdvo", REF_PROD = "kigltjvakwuuulvzbyri";
+const refDe = (jwt) => { try { return JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString()).ref; } catch { return null; } };
+if (DEV && (!env.NEXT_PUBLIC_SUPABASE_URL?.includes(REF_DEV) || env.NEXT_PUBLIC_SUPABASE_URL.includes(REF_PROD) || refDe(env.SUPABASE_SERVICE_ROLE_KEY ?? "") !== REF_DEV)) {
+  console.log("ERROR: --env=.env.dev no apunta a antroapp-dev. No se toca nada.");
+  process.exit(1);
+}
+console.log(`Entorno: ${DEV ? "DEV (antroapp-dev)" : "PRODUCCIÓN"}`);
 const svc = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-const CLUB_ID = "d2f531df-8116-442e-b967-4a1004fcd02e";
-const CREDENCIALES = join(RAIZ, "backups", "2026-11-12-club-demo-credenciales.json");
+const CLUB_ID = DEV ? "0de70000-0000-4000-8000-000000000001" : "d2f531df-8116-442e-b967-4a1004fcd02e";
+const CLUB_NOMBRE = DEV ? "Club Demo Dev" : "Club Demo";
+const CREDENCIALES = join(RAIZ, "backups", DEV ? "dev-credenciales.json" : "2026-11-12-club-demo-credenciales.json");
 const ZONA = "America/Mexico_City";
 const MARCA_TEL = "0000000";
 
 const args = process.argv.slice(2);
 const ESCRIBIR = args.includes("--si");
-const FECHA = (args.find((a) => a.startsWith("--fecha=")) ?? "--fecha=2026-11-25").slice(8);
+const nocheEnCurso = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City" }).format(new Date(Date.now() - 8 * 3600e3));
+const FECHA = (args.find((a) => a.startsWith("--fecha=")) ?? `--fecha=${DEV ? nocheEnCurso : "2026-11-25"}`).slice(8);
 if (!/^\d{4}-\d{2}-\d{2}$/.test(FECHA)) salir(`Fecha inválida: ${FECHA}`);
 
 function salir(msg) {
@@ -107,9 +131,9 @@ const elegir = (xs) => xs[Math.floor(azar() * xs.length)];
 
 // ---------- Club ----------
 const club = ok(await svc.from("clubs").select("id, nombre").eq("id", CLUB_ID).maybeSingle(), "club");
-if (!club || club.nombre !== "Club Demo") salir("Club Demo no existe o cambió de nombre; no se toca nada.");
+if (!club || club.nombre !== CLUB_NOMBRE) salir(`${CLUB_NOMBRE} no existe o cambió de nombre; no se toca nada.`);
 const mesas = ok(await svc.from("club_tables").select("id, numero").eq("club_id", CLUB_ID), "mesas")
-  .sort((a, b) => Number(a.numero) - Number(b.numero));
+  .sort((a, b) => a.numero.localeCompare(b.numero, "es", { numeric: true }));
 
 // ---------- Cuentas demo_* ----------
 const usuarios = [];
@@ -126,8 +150,10 @@ const demoIds = candidatos.length
   : [];
 
 const REPARTO = [
-  { clave: "mariana", nombre: "Mariana Ruiz", tel: "0000000101", tipo: "fijo", monto: 150 },
-  { clave: "diego", nombre: "Diego Ramírez", tel: "0000000104", tipo: "porcentaje", monto: 10 },
+  // Mariana y Diego tienen cuota (desbloqueo semanal): Mariana la alcanza en
+  // la semana de la noche objetivo y Diego no.
+  { clave: "mariana", nombre: "Mariana Ruiz", tel: "0000000101", tipo: "fijo", monto: 150, desbloqueo: 2 },
+  { clave: "diego", nombre: "Diego Ramírez", tel: "0000000104", tipo: "porcentaje", monto: 10, desbloqueo: 10 },
   { clave: "valeria", nombre: "Valeria Cantú", tel: "0000000103", tipo: "fijo", monto: 200 },
   { clave: "luis", nombre: "Luis Herrera", tel: "0000000105", tipo: "porcentaje", monto: 8 },
   { clave: "fernanda", nombre: "Fernanda Ortiz", tel: "0000000106", tipo: "fijo", monto: 150 },
@@ -228,6 +254,8 @@ function generar() {
   }
   // Noche objetivo: 40 reservas, 27 con entrada.
   cargarNoche(FECHA, lista([10, 8, 7, 6, 5, 4]), repartir([7, 6, 5, 4, 3, 2]));
+  // Mañana: reservas por llegar.
+  cargarNoche(sumarDias(FECHA, 1), lista([2, 2, 1, 1, 1, 1]), repartir([0, 0, 0, 0, 0, 0]));
 }
 
 if (!ESCRIBIR) {
@@ -240,6 +268,23 @@ if (!ESCRIBIR) {
 }
 
 // ---------- Escritura ----------
+// 0. Caja de una demo anterior. La caja no se borra por la API ("nada se
+//    borra en caja"): en dev se limpia con el permiso de pruebas; en
+//    producción el script se detiene y pide limpiarla a mano
+//    (sql/limpiar-demo-caja.sql en el SQL Editor, solo Club Demo y solo
+//    reservas con teléfono 0000000…).
+const { escribirCaja, cajaDemoExistente, hayCaja } = await import("./demo-caja.mjs");
+const CAJA = await hayCaja(svc);
+if (CAJA) {
+  if (DEV) {
+    const { limpiarCajaDev } = await import("./dev/sembrar-historia-dev.mjs");
+    await limpiarCajaDev([CLUB_ID], "__ninguno__");
+  } else {
+    const previas = await cajaDemoExistente(svc, borrarIds);
+    if (previas > 0) salir(`Hay ${previas} cuentas de caja de una demo anterior. En producción la caja no se borra por la API: corre sql/limpiar-demo-caja.sql en el SQL Editor y vuelve a correr este script.`);
+  }
+}
+console.log(`Consumos: ${CAJA ? "caja por mesa (modelo nuevo)" : "modelo viejo (consumption_entries): la base todavía no tiene la caja"}`);
 // 1. Borrado de lo demo.
 for (const ids of trozos(borrarIds)) {
   ok(await svc.from("consumption_entries").delete().in("reservation_id", ids), "borrar consumos");
@@ -270,7 +315,7 @@ for (const r of REPARTO) {
 
 // 3. Comisión individual y turno fijo mié–sáb desde el lunes de la semana anterior.
 ok(await svc.from("rp_comision_overrides").insert(REPARTO.map((r) => ({
-  club_id: CLUB_ID, rp_id: rpIds[r.clave], comision_tipo: r.tipo, comision_monto: r.monto, comision_desbloqueo_reservas: 0,
+  club_id: CLUB_ID, rp_id: rpIds[r.clave], comision_tipo: r.tipo, comision_monto: r.monto, comision_desbloqueo_reservas: r.desbloqueo ?? 0,
 }))), "comisiones individuales");
 ok(await svc.from("rp_schedule").insert(REPARTO.map((r) => ({
   rp_id: rpIds[r.clave], club_id: CLUB_ID, fecha: lunesAnterior, es_fijo: true, dias_semana: [3, 4, 5, 6], fecha_inicio: lunesAnterior,
@@ -279,9 +324,19 @@ ok(await svc.from("rp_schedule").insert(REPARTO.map((r) => ({
 // 4. Reservas, consumos, comisiones y asistencia.
 generar();
 for (const xs of trozos(reservas)) ok(await svc.from("reservations").insert(xs), "reservas");
-for (const xs of trozos(consumos)) ok(await svc.from("consumption_entries").insert(xs), "consumos");
-for (const xs of trozos(comisiones)) ok(await svc.from("commissions").insert(xs), "comisiones");
+if (!CAJA) {
+  for (const xs of trozos(consumos)) ok(await svc.from("consumption_entries").insert(xs), "consumos");
+  for (const xs of trozos(comisiones)) ok(await svc.from("commissions").insert(xs), "comisiones");
+}
 ok(await svc.from("rp_attendance").insert(asistencias), "asistencia");
+if (CAJA) {
+  const caja = await escribirCaja({
+    svc, clubId: CLUB_ID, fechaObjetivo: FECHA, reservas, consumos, reparto: REPARTO, rpIds, mesas, entre,
+    alHora: (noche, hora, minuto) => mx(noche, hora, minuto).toISOString(),
+  });
+  console.log(`Caja: ${caja.noches} noches, ${caja.sesiones} mesas (${caja.abiertas} abiertas, ${caja.cerradas} por cuadrar, ${caja.cuadradas} cuadradas; ${caja.multigrupo} mesas con varios grupos), ${caja.consumos} consumos, ${caja.anulados} anulado con motivo, ${caja.sinMesa} con entrada sin mesa, ${caja.comisiones} comisiones.`);
+  for (const [noche, r] of Object.entries(caja.porNoche)) resumen[noche] = { ...resumen[noche], consumo: r.consumo, comisiones: r.comisiones };
+}
 
 // ---------- Resumen y verificación contra la base ----------
 const pesos = (n) => `$${n.toLocaleString("es-MX")}`;
@@ -293,13 +348,16 @@ for (const noche of Object.keys(resumen)) {
   const ids = enBase.map((x) => x.id);
   let consumoBase = 0, comisionBase = 0;
   for (const t of trozos(ids)) {
-    consumoBase += ok(await svc.from("consumption_entries").select("monto").in("reservation_id", t), "v consumos").reduce((s, c) => s + Number(c.monto), 0);
+    consumoBase += CAJA
+      ? ok(await svc.from("caja_consumos").select("monto_centavos").eq("anulado", false).in("reservation_id", t), "v consumos caja").reduce((s, c) => s + Number(c.monto_centavos) / 100, 0)
+      : ok(await svc.from("consumption_entries").select("monto").in("reservation_id", t), "v consumos").reduce((s, c) => s + Number(c.monto), 0);
     comisionBase += ok(await svc.from("commissions").select("monto").in("reservation_id", t), "v comisiones").reduce((s, c) => s + Number(c.monto), 0);
   }
-  const cuadra = enBase.length === r.reservas && enBase.filter((x) => x.status === "usada").length === r.entradas && consumoBase === r.consumo && comisionBase === r.comisiones;
+  const cent = (x) => Math.round(x * 100);
+  const cuadra = enBase.length === r.reservas && enBase.filter((x) => x.status === "usada").length === r.entradas && cent(consumoBase) === cent(r.consumo) && cent(comisionBase) === cent(r.comisiones);
   todoCuadra &&= cuadra;
   console.log(`${etiqueta(noche)}: ${r.reservas} reservas, ${r.entradas} con entrada, consumo ${pesos(r.consumo)}, comisiones ${pesos(r.comisiones)} ${cuadra ? "✓ coincide con la base" : "✗ NO coincide con la base"}`);
 }
 const noDemoDespues = await contarNoDemo();
-console.log(`Reservas no-demo de Club Demo: antes ${noDemoAntes}, después ${noDemoDespues}${noDemoAntes === noDemoDespues ? " ✓" : " ✗"}`);
+console.log(`Reservas no-demo de ${CLUB_NOMBRE}: antes ${noDemoAntes}, después ${noDemoDespues}${noDemoAntes === noDemoDespues ? " ✓" : " ✗"}`);
 if (!todoCuadra || noDemoAntes !== noDemoDespues) process.exit(1);

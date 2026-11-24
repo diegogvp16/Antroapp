@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BottomNav, type RpTab } from "@/components/bottom-nav";
+import { ReservasRp } from "@/components/rp/reservas-rp";
+import { CuotaDeLaSemana } from "@/components/rp/tarjeta-cuota";
 import {
   describirTurno,
   esTurnoFijo,
@@ -16,7 +18,7 @@ import {
 import {
   diaSemanaISO,
   etiquetaRango,
-  hoyMexico,
+  nocheOperativaMexico,
   mesOperativo,
   semanaOperativa,
   type RangoNoches,
@@ -42,6 +44,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { AVISO_QR, enlaceCompartir, fechaLarga, mensajeReserva } from "@/lib/domain/compartir";
+import { mensajeParaUsuario } from "@/lib/errores-base";
 
 interface RpSession {
   id: string;
@@ -51,6 +55,7 @@ interface RpSession {
 
 interface ReservaResumen {
   cliente_nombre: string;
+  telefono: string;
   fecha: string;
   personas: number;
   qr_code: string;
@@ -86,15 +91,12 @@ interface PagoDiaRow {
 
 const COMISION_STATUS_LABEL: Record<string, string> = {
   pendiente: "Pendiente",
+  en_revision: "En revisión",
   validada: "Validada",
   pagada: "Pagada",
+  anulada: "Anulada",
 };
 
-const RESERVA_STATUS_LABEL: Record<string, string> = {
-  pendiente: "Pendiente",
-  confirmada: "Confirmada",
-  usada: "Ingresó",
-};
 
 const DIA_SEMANA_LABEL = [
   "Dom",
@@ -136,13 +138,11 @@ export default function RpPanelPage() {
     mes: mesOperativo(),
   }));
   const [resumenes, setResumenes] = useState<Resumenes>(RESUMENES_VACIOS);
-  const [comisionDesbloqueoReservas, setComisionDesbloqueoReservas] = useState<
-    number | null
-  >(null);
   const [loadingRendimiento, setLoadingRendimiento] = useState(true);
-  const [reservasSemanaDetalle, setReservasSemanaDetalle] = useState<
-    ReservaRp[]
-  >([]);
+  // Si falla, no se muestran ceros como si fueran reales.
+  const [errorRendimiento, setErrorRendimiento] = useState<string | null>(null);
+  // Falla al leer la cuenta (red): se avisa y se reintenta, sin cerrar sesión.
+  const [errorSesion, setErrorSesion] = useState<string | null>(null);
   const [pagoRpModo, setPagoRpModo] = useState<"reserva" | "dia">("reserva");
   const [pagosDiaSemana, setPagosDiaSemana] = useState<PagoDiaRow[]>([]);
 
@@ -153,8 +153,10 @@ export default function RpPanelPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reserva, setReserva] = useState<ReservaResumen | null>(null);
+  const [versionReservas, setVersionReservas] = useState(0);
+  const [mostrarNueva, setMostrarNueva] = useState(false);
 
-  const minDate = hoyMexico();
+  const minDate = nocheOperativaMexico(); // noche en curso (corte 08:00)
 
   useEffect(() => {
     async function loadSession() {
@@ -176,8 +178,12 @@ export default function RpPanelPage() {
 
       // Este panel es solo para RPs: sin el check del rol, cualquier sesión
       // (cliente, gerente, dueño) podía abrirlo escribiendo la URL.
-      if (profileError || !profile || profile.role !== "rp") {
-        console.error("Error cargando perfil RP:", profileError);
+      if (profileError) {
+        setErrorSesion(mensajeParaUsuario(profileError, "No pudimos cargar tu cuenta. Revisa tu conexión e intenta de nuevo."));
+        setCheckingSession(false);
+        return;
+      }
+      if (!profile || profile.role !== "rp") {
         await supabase.auth.signOut();
         router.replace("/cliente/login");
         return;
@@ -190,7 +196,7 @@ export default function RpPanelPage() {
       if (profile.club_id) {
         const { data: club, error: clubError } = await supabase
           .from("clubs")
-          .select("nombre, comision_desbloqueo_reservas, pago_rp_modo")
+          .select("nombre, pago_rp_modo")
           .eq("id", profile.club_id)
           .maybeSingle();
 
@@ -198,7 +204,6 @@ export default function RpPanelPage() {
           console.error("Error cargando antro del RP:", clubError);
         } else if (club) {
           setClubNombre(club.nombre);
-          setComisionDesbloqueoReservas(club.comision_desbloqueo_reservas);
           setPagoRpModo(club.pago_rp_modo);
           modoActual = club.pago_rp_modo;
         }
@@ -209,7 +214,7 @@ export default function RpPanelPage() {
           .from("rp_schedule")
           .select("id, fecha, es_fijo, dias_semana, fecha_inicio")
           .eq("rp_id", profile.id)
-          .or(`es_fijo.eq.true,fecha.gte.${hoyMexico()}`)
+          .or(`es_fijo.eq.true,fecha.gte.${nocheOperativaMexico()}`)
           .order("fecha", { ascending: true });
 
         if (turnosError) {
@@ -218,20 +223,8 @@ export default function RpPanelPage() {
           setMisTurnos((turnosData ?? []) as TurnoRow[]);
         }
         setLoadingTurnos(false);
-
-        if (modoActual === "reserva") {
-          const { data: override, error: overrideError } = await supabase
-            .from("rp_comision_overrides")
-            .select("comision_desbloqueo_reservas")
-            .eq("rp_id", profile.id)
-            .maybeSingle();
-
-          if (overrideError) {
-            console.error("Error cargando comisión personalizada:", overrideError);
-          } else if (override) {
-            setComisionDesbloqueoReservas(override.comision_desbloqueo_reservas);
-          }
-        }
+        // El panel se muestra ya; el rendimiento llega después con su "Cargando…".
+        setCheckingSession(false);
 
         await fetchRendimiento(profile.id, profile.club_id, modoActual);
       }
@@ -245,6 +238,7 @@ export default function RpPanelPage() {
       modo: "reserva" | "dia",
     ) {
       setLoadingRendimiento(true);
+      setErrorRendimiento(null);
       try {
         const supabase = createClient();
         // Todo se filtra por la NOCHE (reservations.fecha / rp_pagos_dia.fecha),
@@ -317,14 +311,9 @@ export default function RpPanelPage() {
           anterior: resumirPeriodo(reservas, ganancias, periodos.anterior),
           mes: resumirPeriodo(reservas, ganancias, periodos.mes),
         });
-        setReservasSemanaDetalle(
-          reservas.filter(
-            (r) =>
-              r.fecha >= periodos.semana.desde && r.fecha <= periodos.semana.hasta,
-          ),
-        );
       } catch (err) {
         console.error("Error cargando rendimiento del RP:", err);
+        setErrorRendimiento("No pudimos cargar lo que llevas ganado. Revisa tu conexión y vuelve a abrir el panel.");
       } finally {
         setLoadingRendimiento(false);
       }
@@ -391,8 +380,10 @@ export default function RpPanelPage() {
         throw insertError;
       }
 
+      setVersionReservas((v) => v + 1);
       setReserva({
         cliente_nombre: clienteNombre.trim(),
+        telefono: clienteTelefono.trim(),
         fecha,
         personas,
         qr_code: qrCode,
@@ -408,13 +399,35 @@ export default function RpPanelPage() {
   }
 
   if (checkingSession) {
-    return null;
+    return (
+      <div className="theme-caja flex flex-1 items-center justify-center px-4 py-10">
+        <p className="text-sm text-caja-secundario">Cargando tu panel…</p>
+      </div>
+    );
+  }
+  if (errorSesion) {
+    return (
+      <div className="theme-caja flex flex-1 flex-col items-center justify-center px-4 py-10">
+        <div className="w-full max-w-sm">
+          <ErrorConReintento mensaje={errorSesion} />
+        </div>
+      </div>
+    );
   }
 
+  // Directo al chat del cliente (con el teléfono que capturó el RP).
   const whatsappHref = reserva
-    ? `https://wa.me/?text=${encodeURIComponent(
-        `Aquí está tu reservación en ${clubNombre ?? "tu antro"} para ${reserva.cliente_nombre} el ${reserva.fecha} (${reserva.personas} personas). Ábrelo aquí para ver tu código: ${window.location.origin}/r/${reserva.qr_code}`,
-      )}`
+    ? enlaceCompartir(
+        mensajeReserva({
+          quien: "rp",
+          antro: clubNombre ?? "el antro",
+          cliente: reserva.cliente_nombre,
+          fecha: reserva.fecha,
+          personas: reserva.personas,
+          enlace: `${window.location.origin}/r/${reserva.qr_code}`,
+        }),
+        reserva.telefono,
+      )
     : "#";
 
   if (!session?.clubId) {
@@ -440,8 +453,8 @@ export default function RpPanelPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center">
-      <main className="mx-auto w-full max-w-sm flex-1 px-6 pt-8 pb-[calc(5rem+env(safe-area-inset-bottom))]">
+    <div className="theme-caja flex flex-1 flex-col items-center font-sans">
+      <main className="mx-auto w-full max-w-md flex-1 px-4 pt-4 pb-[calc(5rem+env(safe-area-inset-bottom))]">
         {activeTab === "perfil" && (
           <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-1">
@@ -464,6 +477,8 @@ export default function RpPanelPage() {
               <CardContent className="flex flex-col gap-3 px-6 pb-6">
                 {loadingRendimiento ? (
                   <p className="text-sm text-muted-foreground">Cargando...</p>
+                ) : errorRendimiento ? (
+                  <ErrorConReintento mensaje={errorRendimiento} />
                 ) : (
                   <dl className="grid grid-cols-2 gap-3">
                     {(
@@ -493,7 +508,7 @@ export default function RpPanelPage() {
             <Button
               type="button"
               variant="outline"
-              className="w-full"
+              className="h-11 w-full"
               onClick={handleLogout}
             >
               Cerrar sesión
@@ -554,6 +569,8 @@ export default function RpPanelPage() {
             <CardContent className="flex flex-col gap-4 px-6 pb-6">
               {loadingRendimiento ? (
                 <p className="text-sm text-muted-foreground">Cargando...</p>
+              ) : errorRendimiento ? (
+                <ErrorConReintento mensaje={errorRendimiento} />
               ) : (
                 <>
                   {(
@@ -592,20 +609,7 @@ export default function RpPanelPage() {
                     </div>
                   ))}
 
-                  {pagoRpModo === "reserva" &&
-                    comisionDesbloqueoReservas !== null &&
-                    comisionDesbloqueoReservas > 0 && (
-                      <div className="flex flex-col gap-1 border-t border-border pt-3">
-                        <p className="text-sm font-medium">
-                          Desbloqueo de comisión semanal
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          {resumenes.semana.entraron >= comisionDesbloqueoReservas
-                            ? `Llevas ${resumenes.semana.entraron} de ${comisionDesbloqueoReservas} reservas con entrada esta semana. Comisión desbloqueada.`
-                            : `Llevas ${resumenes.semana.entraron} de ${comisionDesbloqueoReservas} reservas con entrada; te faltan ${comisionDesbloqueoReservas - resumenes.semana.entraron} para desbloquear comisión.`}
-                        </p>
-                      </div>
-                    )}
+                  {pagoRpModo === "reserva" && <CuotaDeLaSemana />}
 
                   {pagoRpModo === "dia" && pagosDiaSemana.length > 0 && (
                     <div className="flex flex-col gap-1 border-t border-border pt-3">
@@ -635,73 +639,20 @@ export default function RpPanelPage() {
         )}
 
         {activeTab === "reservas" && (
-          <div className="flex flex-col gap-6">
-            <Card className="w-full">
-              <CardHeader>
-                <CardTitle>Mi rendimiento</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4 px-6 pb-6">
-                {loadingRendimiento ? (
-                  <p className="text-sm text-muted-foreground">Cargando...</p>
-                ) : (
-                  <>
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <p className="text-sm font-medium">Esta semana</p>
-                        <p className="text-xs text-muted-foreground">
-                          {etiquetaRango(periodos.semana)}
-                        </p>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {resumenes.semana.reservas} reservas —{" "}
-                        {resumenes.semana.entraron} entraron,{" "}
-                        {resumenes.semana.sinEntrar} sin entrar
-                      </p>
-                      {reservasSemanaDetalle.length > 0 && (
-                        <ul className="mt-1 flex flex-col gap-1 text-xs text-muted-foreground">
-                          {reservasSemanaDetalle.map((r) => (
-                            <li
-                              key={r.id}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <span className="min-w-0 truncate">
-                                {r.cliente_nombre} · {formatFechaConDia(r.fecha)}
-                              </span>
-                              <span
-                                className={
-                                  r.status === "usada"
-                                    ? "shrink-0 font-medium text-status-ok"
-                                    : "shrink-0"
-                                }
-                              >
-                                {RESERVA_STATUS_LABEL[r.status] ?? r.status}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-
-                    <div className="flex flex-col gap-1 border-t border-border pt-3">
-                      <p className="text-sm font-medium">Semana anterior</p>
-                      <p className="text-sm text-muted-foreground">
-                        {resumenes.anterior.reservas} reservas —{" "}
-                        {resumenes.anterior.entraron} entraron
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col gap-1 border-t border-border pt-3">
-                      <p className="text-sm font-medium">Este mes</p>
-                      <p className="text-sm text-muted-foreground">
-                        {resumenes.mes.reservas} reservas —{" "}
-                        {resumenes.mes.entraron} entraron,{" "}
-                        {resumenes.mes.sinEntrar} sin entrar
-                      </p>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-2">
+              <h1 className="text-base font-semibold">Mis reservas</h1>
+              {!reserva && (
+                <button
+                  type="button"
+                  onClick={() => setMostrarNueva((v) => !v)}
+                  aria-expanded={mostrarNueva}
+                  className="h-11 rounded-lg border border-caja-borde px-3 text-sm font-medium text-caja-dorado"
+                >
+                  {mostrarNueva ? "Cerrar" : "+ Nueva reserva"}
+                </button>
+              )}
+            </div>
 
             {reserva ? (
               <Card className="w-full">
@@ -722,13 +673,14 @@ export default function RpPanelPage() {
                     </p>
                     <p>
                       <span className="text-muted-foreground">Fecha:</span>{" "}
-                      {reserva.fecha}
+                      {fechaLarga(reserva.fecha)}
                     </p>
                     <p>
                       <span className="text-muted-foreground">Personas:</span>{" "}
                       {reserva.personas}
                     </p>
                   </div>
+                  <p className="w-full text-xs text-muted-foreground">{AVISO_QR}</p>
                   <Button
                     render={
                       <a
@@ -746,14 +698,14 @@ export default function RpPanelPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="w-full"
+                    className="h-11 w-full"
                     onClick={resetForm}
                   >
                     Crear otra reserva
                   </Button>
                 </CardContent>
               </Card>
-            ) : (
+            ) : mostrarNueva ? (
               <Card className="w-full">
                 <CardHeader>
                   <CardTitle>Nueva reserva para cliente</CardTitle>
@@ -767,6 +719,7 @@ export default function RpPanelPage() {
                       <Label htmlFor="cliente_nombre">Nombre del cliente</Label>
                       <Input
                         id="cliente_nombre"
+                        className="h-11"
                         value={clienteNombre}
                         onChange={(e) => setClienteNombre(e.target.value)}
                         required
@@ -776,6 +729,7 @@ export default function RpPanelPage() {
                       <Label htmlFor="cliente_telefono">Teléfono</Label>
                       <Input
                         id="cliente_telefono"
+                        className="h-11"
                         type="tel"
                         value={clienteTelefono}
                         onChange={(e) => setClienteTelefono(e.target.value)}
@@ -786,6 +740,7 @@ export default function RpPanelPage() {
                       <Label htmlFor="fecha">Fecha</Label>
                       <Input
                         id="fecha"
+                        className="h-11"
                         type="date"
                         min={minDate}
                         value={fecha}
@@ -813,12 +768,27 @@ export default function RpPanelPage() {
                   </form>
                 </CardContent>
               </Card>
-            )}
+            ) : null}
+
+            {/* La key cambia al crear una reserva: la lista se vuelve a leer y ya la incluye. */}
+            <ReservasRp key={versionReservas} clubNombre={clubNombre} />
           </div>
         )}
       </main>
 
       <BottomNav active={activeTab} onChange={setActiveTab} />
+    </div>
+  );
+}
+
+// Error con un botón para volver a cargar el panel (44 px).
+function ErrorConReintento({ mensaje }: { mensaje: string }) {
+  return (
+    <div className="flex flex-col gap-3" role="alert">
+      <p className="text-sm text-destructive">{mensaje}</p>
+      <button type="button" onClick={() => window.location.reload()} className="h-11 w-fit rounded-md border border-border px-4 text-sm font-medium">
+        Reintentar
+      </button>
     </div>
   );
 }

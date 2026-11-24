@@ -15,8 +15,12 @@ import { randomUUID } from "node:crypto";
 
 const PANIC_ROOM = "8e433d37-ac56-407e-82a6-4e405d6d9fdc";
 
+// --env=.env.dev corre contra antroapp-dev (con candado: las llaves deben ser
+// de dev). Sin el argumento usa .env.local (producción).
+const ARCHIVO_ENV = (process.argv.find((a) => a.startsWith("--env=")) ?? "--env=.env.local").slice(6);
+if (!/^\.env\.(local|dev)$/.test(ARCHIVO_ENV)) throw new Error("--env debe ser .env.local o .env.dev");
 const env = Object.fromEntries(
-  readFileSync(new URL("../.env.local", import.meta.url), "utf8")
+  readFileSync(new URL(`../${ARCHIVO_ENV}`, import.meta.url), "utf8")
     .split(/\r?\n/)
     .filter((l) => l.includes("=") && !l.trim().startsWith("#"))
     .map((l) => {
@@ -25,6 +29,12 @@ const env = Object.fromEntries(
     }),
 );
 const URL_ = env.NEXT_PUBLIC_SUPABASE_URL;
+if (ARCHIVO_ENV === ".env.dev") {
+  const ref = (k) => { try { return JSON.parse(Buffer.from(k.split(".")[1], "base64url").toString()).ref; } catch { return null; } };
+  if (!URL_.includes("ygumrpckbtlngzspqdvo") || ref(env.SUPABASE_SERVICE_ROLE_KEY) !== "ygumrpckbtlngzspqdvo")
+    throw new Error("ABORTO: .env.dev no apunta a antroapp-dev");
+}
+console.log(`Entorno: ${ARCHIVO_ENV === ".env.dev" ? "DEV (antroapp-dev)" : "PRODUCCIÓN"}`);
 const opciones = { auth: { persistSession: false, autoRefreshToken: false } };
 const svc = createClient(URL_, env.SUPABASE_SERVICE_ROLE_KEY, opciones);
 const nuevoAnon = () => createClient(URL_, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, opciones);

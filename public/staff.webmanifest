@@ -1,0 +1,18 @@
+{
+  "id": "/staff/panel",
+  "name": "AntroApp Staff",
+  "short_name": "Antro Staff",
+  "description": "Recibe clientes, caja y mesas de la noche.",
+  "lang": "es-MX",
+  "start_url": "/staff/panel",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0a0a",
+  "theme_color": "#0b0a0a",
+  "icons": [
+    { "src": "/iconos/staff-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/iconos/staff-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/iconos/staff-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
