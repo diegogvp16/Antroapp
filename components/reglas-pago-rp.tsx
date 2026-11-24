@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfigRpAntro } from "@/components/config-rp/config-rp-antro";
 import type {
   Club,
   ClubDiaTarifa,
@@ -36,19 +37,6 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
   const [modoSubmitting, setModoSubmitting] = useState(false);
   const [modoError, setModoError] = useState<string | null>(null);
   const [modoSaved, setModoSaved] = useState(false);
-
-  const [comisionTipo, setComisionTipo] = useState<"fijo" | "porcentaje">(
-    club.comision_tipo,
-  );
-  const [comisionMonto, setComisionMonto] = useState(
-    String(club.comision_monto),
-  );
-  const [comisionDesbloqueo, setComisionDesbloqueo] = useState(
-    String(club.comision_desbloqueo_reservas),
-  );
-  const [comisionSubmitting, setComisionSubmitting] = useState(false);
-  const [comisionError, setComisionError] = useState<string | null>(null);
-  const [comisionSaved, setComisionSaved] = useState(false);
 
   const [tarifas, setTarifas] = useState<ClubDiaTarifa[]>([]);
   const [loadingTarifas, setLoadingTarifas] = useState(true);
@@ -88,9 +76,6 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
 
   useEffect(() => {
     setModo(club.pago_rp_modo);
-    setComisionTipo(club.comision_tipo);
-    setComisionMonto(String(club.comision_monto));
-    setComisionDesbloqueo(String(club.comision_desbloqueo_reservas));
   }, [club]);
 
   async function fetchTarifas() {
@@ -217,58 +202,6 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
       setModoError("No pudimos guardar. Intenta de nuevo.");
     } finally {
       setModoSubmitting(false);
-    }
-  }
-
-  async function handleUpdateComisiones(e: FormEvent) {
-    e.preventDefault();
-    setComisionError(null);
-    setComisionSaved(false);
-
-    if (!comisionMonto || !comisionDesbloqueo) {
-      setComisionError("Completa todos los campos.");
-      return;
-    }
-
-    const comisionMontoNum = Number(comisionMonto);
-    const desbloqueoNum = Number(comisionDesbloqueo);
-
-    if (!Number.isFinite(comisionMontoNum) || comisionMontoNum < 0) {
-      setComisionError("El monto de comisión debe ser un número válido.");
-      return;
-    }
-    if (comisionTipo === "porcentaje" && comisionMontoNum > 100) {
-      setComisionError("El porcentaje de comisión no puede ser mayor a 100.");
-      return;
-    }
-    if (!Number.isInteger(desbloqueoNum) || desbloqueoNum < 0) {
-      setComisionError(
-        "Las reservas para desbloquear deben ser un número entero mayor o igual a 0.",
-      );
-      return;
-    }
-
-    setComisionSubmitting(true);
-    try {
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("clubs")
-        .update({
-          comision_tipo: comisionTipo,
-          comision_monto: comisionMontoNum,
-          comision_desbloqueo_reservas: desbloqueoNum,
-        })
-        .eq("id", club.id);
-
-      if (error) throw error;
-
-      await onUpdate();
-      setComisionSaved(true);
-    } catch (err) {
-      console.error("Error actualizando reglas de comisión:", err);
-      setComisionError("No pudimos guardar los cambios. Intenta de nuevo.");
-    } finally {
-      setComisionSubmitting(false);
     }
   }
 
@@ -534,83 +467,9 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
         </CardContent>
       </Card>
 
-      {modo === "reserva" && (
-        <Card>
-          <CardContent className="px-6 py-6">
-            <form
-              onSubmit={handleUpdateComisiones}
-              className="flex flex-col gap-4"
-            >
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="comision_tipo">Tipo de comisión para RP</Label>
-                <select
-                  id="comision_tipo"
-                  className={SELECT_CLASSES}
-                  value={comisionTipo}
-                  onChange={(e) =>
-                    setComisionTipo(e.target.value as "fijo" | "porcentaje")
-                  }
-                >
-                  <option value="fijo">Fijo</option>
-                  <option value="porcentaje">Porcentaje del consumo</option>
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="comision_monto">
-                  {comisionTipo === "fijo"
-                    ? "Monto de comisión para RP ($)"
-                    : "Comisión para RP (% del consumo)"}
-                </Label>
-                <Input
-                  id="comision_monto"
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  max={comisionTipo === "porcentaje" ? 100 : undefined}
-                  value={comisionMonto}
-                  onChange={(e) => setComisionMonto(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="comision_desbloqueo">
-                  Reservas necesarias para desbloquear comisión esta semana
-                </Label>
-                <Input
-                  id="comision_desbloqueo"
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  value={comisionDesbloqueo}
-                  onChange={(e) => setComisionDesbloqueo(e.target.value)}
-                  required
-                />
-                <p className="text-xs text-muted-foreground">
-                  Ej. 4 significa que las primeras 3 reservas validadas de la
-                  semana (lunes a domingo) no generan comisión para el RP —
-                  a partir de la 4ta sí.
-                </p>
-              </div>
-              {comisionError && (
-                <p className="text-sm text-destructive" role="alert">
-                  {comisionError}
-                </p>
-              )}
-              {comisionSaved && !comisionError && (
-                <p className="text-sm text-muted-foreground">
-                  Cambios guardados.
-                </p>
-              )}
-
-              <Button type="submit" disabled={comisionSubmitting}>
-                {comisionSubmitting
-                  ? "Guardando..."
-                  : "Guardar reglas de comisión"}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      )}
+      {/* Qué ven los RPs y regla de comisión del antro: con vigencia desde el
+          lunes siguiente y bitácora (sql/post-junta/07-config-rp.sql). */}
+      <ConfigRpAntro clubId={club.id} />
 
       {modo === "dia" && (
         <>
