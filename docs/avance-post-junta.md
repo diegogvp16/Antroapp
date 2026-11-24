@@ -24,8 +24,8 @@ Orden pedido: 1 → 5 → 4 → 3 → 2 → 8 → 7 → 6 → 9 → 10.
 | 5. Puerta y equipo | ✅ Hecho y probado en dev |
 | 4. CAPTCHA y antiabuso | ✅ Hecho (bandera apagada); falta probar el registro completo |
 | 3. Legales | ✅ Borradores + páginas y casillas (bandera apagada) |
-| 2. Mensualidad con Stripe (prueba) | ⏳ Siguiente |
-| 8. Qué ve el RP, por antro | Pendiente |
+| 2. Mensualidad con Stripe (prueba) | ✅ Hecho sin llaves reales (bandera apagada); falta probar con tus llaves de prueba |
+| 8. Qué ve el RP, por antro | ⏳ Siguiente |
 | 7. Fase 2 | Pendiente |
 | 6. Monitoreo y operación | Pendiente |
 | 9. Tema oscuro y pulido | Pendiente |
@@ -259,3 +259,41 @@ Capturas en `screenshots-post-junta/legales/`.
 
 **Para producción (pase 2)**: `05-legales.sql` antes de encender la bandera.
 Rollback: `05-legales-rollback.sql` (borra la constancia: exportarla antes).
+
+---
+
+## Bloque 2 — Mensualidad con Stripe ✅ (bandera apagada, sin llaves reales)
+
+**Qué quedó** (pasos clic a clic y preguntas de precios: `docs/stripe-mensualidad.md`)
+
+- `sql/post-junta/06-mensualidad.sql`: `planes` (apuntan a un precio de
+  Stripe; el monto vive en Stripe), `suscripciones` (activa, en_gracia,
+  vencida, cancelada, sin_suscripcion), `pagos_mensualidad` (historial),
+  `stripe_eventos` (idempotencia), `config_plataforma.mensualidad_real` y
+  el trigger `clubs_candado_suscripcion`: con cobro real, el dueño ya no
+  activa la suscripción a mano (deuda 2).
+- Webhook `/api/stripe/webhook`: firma verificada sobre el cuerpo crudo,
+  idempotente, tolerante al desorden (un evento viejo no pisa uno nuevo),
+  rechaza eventos de producción sin permiso explícito.
+- **Nunca bloqueo en plena noche**: la gracia termina a las 08:00 en la zona
+  del antro; el webhook nunca despublica; lo hace la tarea diaria
+  (`/api/cron/mensualidad` con `CRON_SECRET`, en `vercel.json` a las 16:00
+  UTC). Vencido: deja de verse al público; puerta, caja y reportes siguen.
+- `/dueno/mensualidad`: plan, estado, próximo cobro, gracia, historial,
+  «Suscribirme» (Checkout) y «Administrar pago» (portal). `/admin/mensualidad`:
+  estado de todos los antros y alta de planes.
+- Solo llaves de prueba (`sk_test_`/`rk_test_`); `sk_live_` se rechaza salvo
+  `STRIPE_PERMITIR_PRODUCCION=1`.
+
+**Cómo probarlo**: `node scripts/dev/probar-mensualidad.mjs` (cabecera con los
+dos servidores y las variables). Resultado: **56/56**, con eventos firmados
+localmente con un secreto inventado.
+
+**Pendiente (necesita tus llaves de prueba de Stripe)**: Checkout y portal de
+verdad. En la prueba llegan hasta Stripe y fallan por la llave falsa (502,
+sin detalles). Pasos en `docs/stripe-mensualidad.md`, «Probar en modo de
+prueba».
+
+**Para producción (pase 2)**: `06-mensualidad.sql` con
+`mensualidad_real = false` (todo igual que hoy). Rollback:
+`06-mensualidad-rollback.sql` (exportar antes si ya hubo cobros).
