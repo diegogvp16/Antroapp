@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Html5Qrcode } from "html5-qrcode";
 import { BotonLinterna } from "@/components/boton-linterna";
 import { createClient } from "@/lib/supabase/client";
+import { cerrarSesionDadoDeBaja } from "@/lib/cuenta-dada-de-baja";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -227,9 +228,13 @@ export default function StaffPanelPage() {
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("role, club_id")
+        .select("role, club_id, activo")
         .eq("id", user.id)
         .maybeSingle();
+      if (profile?.activo === false) {
+        await cerrarSesionDadoDeBaja(supabase, router);
+        return;
+      }
 
       if (
         profileError ||
@@ -1271,7 +1276,15 @@ export default function StaffPanelPage() {
 
         {/* Solo el gerente: el staff no ve sueldos ni consumos del antro. */}
         {staffRole === "gerente" && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Button
+              render={<Link href="/staff/equipo" />}
+              nativeButton={false}
+              variant="outline"
+              className="w-full"
+            >
+              Equipo y actividad
+            </Button>
             <Button
               render={<Link href="/staff/nomina" />}
               nativeButton={false}

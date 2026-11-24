@@ -4,6 +4,7 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { EquipoPersonal } from "@/components/equipo/equipo-personal";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -126,6 +127,18 @@ export default function DuenoPanelPage() {
         .eq("dueno_id", user.id)
         .maybeSingle();
 
+      if (!error && !data) {
+        // Dueño de grupo sin antro propio (alta desde /admin): su vista es /grupo.
+        const { data: membresia } = await supabase
+          .from("grupo_miembros")
+          .select("grupo_id")
+          .eq("profile_id", user.id)
+          .limit(1);
+        if (membresia?.length) {
+          router.replace("/grupo");
+          return;
+        }
+      }
       if (error || !data) {
         setClubNotFound(true);
         setClub(null);
@@ -813,20 +826,15 @@ export default function DuenoPanelPage() {
             </CardContent>
           </Card>
 
-          {personal.length > 0 && (
-            <div className="flex flex-col gap-2">
-              {personal.map((p) => (
-                <Card key={p.id}>
-                  <CardContent className="flex items-center justify-between px-5 py-3 text-sm">
-                    <span className="font-medium">{p.nombre}</span>
-                    <span className="text-muted-foreground">
-                      {p.role === "gerente" ? "Gerente" : "Staff"}
-                    </span>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
+          <EquipoPersonal clubId={club.id} miId={null} puedeGerentes recargar={personal.length} />
+          <Button
+            render={<Link href="/dueno/equipo" />}
+            nativeButton={false}
+            variant="outline"
+            className="h-10 self-start"
+          >
+            Ver actividad del antro
+          </Button>
         </section>
 
         <section className="flex flex-col gap-4">
