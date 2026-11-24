@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { textoCover, validarCover } from "@/lib/cover";
+import { textoCover } from "@/lib/cover";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -17,8 +18,7 @@ import {
 } from "@/components/ui/card";
 import { VerificacionesPendientes } from "@/components/verificaciones-pendientes";
 import { ErroresRecientes } from "@/components/errores-recientes";
-import { CoverCampo } from "@/components/cover-campo";
-import type { Club, CoverModo } from "@/types";
+import type { Club } from "@/types";
 
 interface ConsumoBucket {
   rpTotal: number;
@@ -78,14 +78,6 @@ export default function AdminPage() {
 
   const [clubs, setClubs] = useState<Club[]>([]);
   const [loadingClubs, setLoadingClubs] = useState(true);
-
-  const [clubNombre, setClubNombre] = useState("");
-  const [clubDireccion, setClubDireccion] = useState("");
-  const [clubHorario, setClubHorario] = useState("");
-  const [clubCoverModo, setClubCoverModo] = useState<CoverModo>("oculto");
-  const [clubCoverMonto, setClubCoverMonto] = useState("");
-  const [clubSubmitting, setClubSubmitting] = useState(false);
-  const [clubError, setClubError] = useState<string | null>(null);
 
   const [staffNombre, setStaffNombre] = useState("");
   const [staffEmail, setStaffEmail] = useState("");
@@ -287,53 +279,6 @@ export default function AdminPage() {
     const supabase = createClient();
     await supabase.auth.signOut();
     router.replace("/admin/login");
-  }
-
-  async function handleCreateClub(e: FormEvent) {
-    e.preventDefault();
-    setClubError(null);
-
-    if (!clubNombre.trim() || !clubDireccion.trim() || !clubHorario.trim()) {
-      setClubError("Completa todos los campos.");
-      return;
-    }
-
-    const cover = validarCover(clubCoverModo, clubCoverMonto);
-    if (!cover.ok) {
-      setClubError(cover.error);
-      return;
-    }
-
-    setClubSubmitting(true);
-    try {
-      const supabase = createClient();
-      const { error: insertError } = await supabase.from("clubs").insert({
-        nombre: clubNombre.trim(),
-        direccion: clubDireccion.trim(),
-        horario: clubHorario.trim(),
-        cover_modo: cover.cover_modo,
-        cover_monto: cover.cover_monto,
-        suscripcion_activa: true,
-        // Lo da de alta AntroApp directamente: no pasa por la revisión de
-        // documentos que hace un dueño auto-registrado.
-        estado_verificacion: "verificado",
-        verificado_en: new Date().toISOString(),
-      });
-
-      if (insertError) throw insertError;
-
-      setClubNombre("");
-      setClubDireccion("");
-      setClubHorario("");
-      setClubCoverModo("oculto");
-      setClubCoverMonto("");
-      await fetchClubs();
-    } catch (err) {
-      console.error("Error creando club:", err);
-      setClubError("No pudimos crear el antro. Intenta de nuevo.");
-    } finally {
-      setClubSubmitting(false);
-    }
   }
 
   async function handleCreateStaff(e: FormEvent) {
@@ -586,59 +531,17 @@ export default function AdminPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Crear antro</CardTitle>
-              <CardDescription>Agrega un nuevo antro a la plataforma.</CardDescription>
+              <CardTitle className="text-base">Dar de alta un antro</CardTitle>
+              <CardDescription>
+                Asistente en pasos: datos, cover y políticas, mesas, equipo
+                (dueño, gerentes, staff y RPs) y grupo. Queda en borrador o
+                publicado; si algo falla no se guarda nada.
+              </CardDescription>
             </CardHeader>
             <CardContent className="px-6 pb-6">
-              <form
-                onSubmit={handleCreateClub}
-                className="flex flex-col gap-4"
-              >
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="club_nombre">Nombre</Label>
-                  <Input
-                    id="club_nombre"
-                    value={clubNombre}
-                    onChange={(e) => setClubNombre(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="club_direccion">Dirección</Label>
-                  <Input
-                    id="club_direccion"
-                    value={clubDireccion}
-                    onChange={(e) => setClubDireccion(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="club_horario">Horario</Label>
-                  <Input
-                    id="club_horario"
-                    value={clubHorario}
-                    onChange={(e) => setClubHorario(e.target.value)}
-                    placeholder="ej. 10pm - 4am"
-                    required
-                  />
-                </div>
-                <CoverCampo
-                  idPrefix="nuevo_club"
-                  modo={clubCoverModo}
-                  monto={clubCoverMonto}
-                  onModoChange={setClubCoverModo}
-                  onMontoChange={setClubCoverMonto}
-                />
-                {clubError && (
-                  <p className="text-sm text-destructive" role="alert">
-                    {clubError}
-                  </p>
-                )}
-
-                <Button type="submit" disabled={clubSubmitting}>
-                  {clubSubmitting ? "Creando..." : "Crear antro"}
-                </Button>
-              </form>
+              <Button className="h-10" render={<Link href="/admin/alta-antro" />} nativeButton={false}>
+                Empezar el alta
+              </Button>
             </CardContent>
           </Card>
         </section>
