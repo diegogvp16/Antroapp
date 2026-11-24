@@ -3,7 +3,7 @@
 // su flujo de siempre (directo a Supabase).
 
 export type DatosRegistro =
-  | { tipo: "cliente"; nombre: string; telefono: string; email: string; password: string; captchaToken: string | null }
+  | { tipo: "cliente"; nombre: string; telefono: string; email: string; password: string; captchaToken: string | null; aceptaLegales?: boolean }
   | {
       tipo: "dueno";
       nombre: string;

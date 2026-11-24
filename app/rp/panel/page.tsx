@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { createClient } from "@/lib/supabase/client";
 import { cerrarSesionDadoDeBaja } from "@/lib/cuenta-dada-de-baja";
+import { legalesActivos } from "@/lib/legal/version";
+import { aceptoVersionVigente } from "@/lib/legal/aceptaciones";
+import { AceptarLegales } from "@/components/legal/aceptar-legales";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -144,6 +147,8 @@ export default function RpPanelPage() {
   const [errorRendimiento, setErrorRendimiento] = useState<string | null>(null);
   // Falla al leer la cuenta (red): se avisa y se reintenta, sin cerrar sesión.
   const [errorSesion, setErrorSesion] = useState<string | null>(null);
+  // Con NEXT_PUBLIC_LEGALES: primera entrada sin aceptar los documentos.
+  const [legalesPendientes, setLegalesPendientes] = useState(false);
   const [pagoRpModo, setPagoRpModo] = useState<"reserva" | "dia">("reserva");
   const [pagosDiaSemana, setPagosDiaSemana] = useState<PagoDiaRow[]>([]);
 
@@ -194,6 +199,7 @@ export default function RpPanelPage() {
         return;
       }
 
+      if (legalesActivos() && !(await aceptoVersionVigente(supabase, profile.id))) setLegalesPendientes(true);
       setSession({ id: profile.id, nombre: profile.nombre, clubId: profile.club_id });
 
       let modoActual: "reserva" | "dia" = "reserva";
@@ -418,6 +424,10 @@ export default function RpPanelPage() {
         </div>
       </div>
     );
+  }
+
+  if (legalesPendientes && session) {
+    return <AceptarLegales profileId={session.id} onListo={() => setLegalesPendientes(false)} onSalir={handleLogout} />;
   }
 
   // Directo al chat del cliente (con el teléfono que capturó el RP).

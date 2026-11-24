@@ -5,6 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { captchaActivo } from "@/lib/captcha";
+import { legalesActivos } from "@/lib/legal/version";
+import { registrarAceptacion } from "@/lib/legal/aceptaciones";
+import { CasillaAceptacion } from "@/components/legal/casilla-aceptacion";
 import { registrarEnServidor } from "@/lib/registro";
 import { Turnstile, type TurnstileRef } from "@/components/turnstile";
 import { Button } from "@/components/ui/button";
@@ -29,6 +32,7 @@ export default function ClienteSignupPage() {
   const [submitting, setSubmitting] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const captcha = useRef<TurnstileRef>(null);
+  const [acepta, setAcepta] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emailTaken, setEmailTaken] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState(false);
@@ -49,11 +53,16 @@ export default function ClienteSignupPage() {
       return;
     }
 
+    if (legalesActivos() && !acepta) {
+      setError("Para crear tu cuenta acepta los Términos y el Aviso de privacidad.");
+      return;
+    }
+
     setSubmitting(true);
     // Con la bandera del CAPTCHA encendida, el registro pasa por el servidor
     // (CAPTCHA, límite por IP y sin cuentas a medias). Apagada: como siempre.
     if (captchaActivo()) {
-      const r = await registrarEnServidor({ tipo: "cliente", nombre: nombre.trim(), telefono: telefono.trim(), email: email.trim(), password, captchaToken });
+      const r = await registrarEnServidor({ tipo: "cliente", nombre: nombre.trim(), telefono: telefono.trim(), email: email.trim(), password, captchaToken, aceptaLegales: legalesActivos() ? acepta : undefined });
       captcha.current?.reiniciar();
       setSubmitting(false);
       if (r.ok) {
@@ -94,6 +103,9 @@ export default function ClienteSignupPage() {
         console.error("Supabase insert error (profiles):", profileError);
         throw profileError;
       }
+
+      // Constancia de aceptación (solo con la bandera de legales).
+      if (legalesActivos() && signUpData.session) await registrarAceptacion(supabase, signUpData.user.id);
 
       if (signUpData.session) {
         router.push("/cliente");
@@ -200,6 +212,8 @@ export default function ClienteSignupPage() {
                 </Link>
               </p>
             )}
+
+            {legalesActivos() && <CasillaAceptacion id="acepto-cliente" marcada={acepta} onCambio={setAcepta} />}
 
             <Turnstile ref={captcha} onToken={setCaptchaToken} accion="registro" />
 

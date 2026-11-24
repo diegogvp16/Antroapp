@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { clienteServicio, hashTexto, ipDe } from "@/lib/supabase/servicio";
 import { captchaActivo, modoCaptcha } from "@/lib/captcha";
+import { DOCUMENTOS_LEGALES, VERSION_LEGAL, legalesActivos } from "@/lib/legal/version";
 import { verificarTurnstile } from "@/lib/captcha-servidor";
 import {
   DEGRADADO_REGISTROS_POR_IP_HORA,
@@ -32,7 +33,7 @@ const base = {
   captchaToken: z.string().max(2048).nullable().optional(),
 };
 const esquema = z.discriminatedUnion("tipo", [
-  z.object({ tipo: z.literal("cliente"), telefono: z.string().trim().max(20).optional().default(""), ...base }),
+  z.object({ tipo: z.literal("cliente"), telefono: z.string().trim().max(20).optional().default(""), aceptaLegales: z.boolean().optional(), ...base }),
   z.object({
     tipo: z.literal("dueno"),
     club: z.object({
@@ -60,6 +61,9 @@ export async function POST(request: Request) {
   const r = esquema.safeParse(cuerpo);
   if (!r.success) return NextResponse.json({ error: r.error.issues[0]?.message ?? "Revisa los datos." }, { status: 400 });
   const d = r.data;
+  if (d.tipo === "cliente" && legalesActivos() && d.aceptaLegales !== true) {
+    return NextResponse.json({ error: "Para crear tu cuenta acepta los Términos y el Aviso de privacidad." }, { status: 400 });
+  }
 
   // 1. CAPTCHA.
   const ip = ipDe(request);
@@ -128,6 +132,12 @@ export async function POST(request: Request) {
       motivo_rechazo: null,
     });
     fallo = club.error;
+  }
+  if (!fallo && d.tipo === "cliente" && legalesActivos()) {
+    const acept = await escritor
+      .from("aceptaciones_legales")
+      .insert(DOCUMENTOS_LEGALES.map((documento) => ({ profile_id: usuario.id, documento, version: VERSION_LEGAL })));
+    fallo = acept.error;
   }
   if (fallo) {
     // 4. Nada a medias.
