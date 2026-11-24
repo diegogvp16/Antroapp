@@ -40,7 +40,7 @@ Orden pedido: 1 → 5 → 4 → 3 → 2 → 8 → 7 → 6 → 9 → 10.
 | 7. Fase 2 | ✅ Integrada (bandera apagada) + CSV y alerta |
 | 6. Monitoreo y operación | ✅ Hecho y probado en dev |
 | 9. Tema oscuro y pulido | ✅ Hecho |
-| 10. Cierre | ⏳ Siguiente |
+| 10. Cierre | ✅ Hecho: reporte en `docs/reporte-post-junta.md` |
 
 ---
 
@@ -443,3 +443,13 @@ Decisiones abiertas de la fase 2 en `docs/fase2.md`.
 - De paso se encontró y limpió basura de dev que dejó la prueba del hueco al
   correrla **sin** el arreglo, para confirmar que lo detectaba. Ahora esa
   prueba deshace lo que alcance a cambiar.
+
+---
+
+## Bloque 10 — Cierre ✅
+
+Resumen, decisiones, configuración manual, riesgos y confirmaciones en
+**`docs/reporte-post-junta.md`**. Recorrido de los 6 roles sobre un build de
+producción contra dev: 35/35 con las banderas apagadas y 41/41 con todas
+encendidas. Pase 2 ensayado en dev con la cadena completa (esquema idéntico).
+Ramas `master`, `desarrollo`, `noche2`, `candidato-pase` y `fase2` intactas.
