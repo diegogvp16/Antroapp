@@ -21,8 +21,8 @@ Orden pedido: 1 → 5 → 4 → 3 → 2 → 8 → 7 → 6 → 9 → 10.
 | Bloque | Estado |
 |---|---|
 | 1. Alta de antro desde /admin | ✅ Hecho y probado en dev |
-| 5. Puerta y equipo | ⏳ Siguiente |
-| 4. CAPTCHA y antiabuso | Pendiente |
+| 5. Puerta y equipo | ✅ Hecho y probado en dev |
+| 4. CAPTCHA y antiabuso | ⏳ Siguiente |
 | 3. Legales | Pendiente |
 | 2. Mensualidad con Stripe (prueba) | Pendiente |
 | 8. Qué ve el RP, por antro | Pendiente |
@@ -99,7 +99,81 @@ A mano: entra como `dev_admin@example.com` a `/admin` → «Empezar el alta».
 - Capturas a 390 y 360 px en `screenshots-post-junta/alta/` (sin scroll
   horizontal ni errores de página).
 
+**Revisión de seguridad (subagente, solo lectura)**: sin hallazgos críticos
+ni altos. Arreglado después (commit `97868dd`):
+- **Idempotencia**: la ruta genera `alta_id`; si la respuesta de la base se
+  pierde, revisa si sí se guardó antes de borrar cuentas, y la misma clave
+  dos veces no crea dos antros.
+- La función solo liga cuentas **recién creadas por el alta**
+  (`app_metadata.alta_club`, de menos de 30 min, sin borrar ni bloquear).
+- Rangos de edad, depósito y textos también en la base.
+- `club_altas` sobrevive si se borra el antro (`on delete set null`).
+- Tope real de 400 cuentas contando dueños.
+- Respuesta con `Cache-Control: no-store`.
+- Errores al deshacer cuentas se registran (sin correos) y
+  `scripts/limpiar-altas-huerfanas.mjs` lista o borra las huérfanas (dev por
+  defecto; producción solo con `--produccion`).
+- El dueño de grupo sin antro propio va directo a `/grupo`.
+
+Queda abierto (decisión tuya, en el reporte): las contraseñas temporales no
+expiran y las cuentas nacen confirmadas; un correo mal escrito del dueño
+queda ligado al antro. Se mitiga en el bloque 4 con «cambiar contraseña en
+el primer inicio».
+
 **Para producción (pase 2)**: aplicar `sql/post-junta/01-alta-club.sql`
 **antes** de publicar el código (sin la función, el asistente responde «No se
 pudo dar de alta el antro. No se guardó nada» y borra las cuentas que creó).
 Rollback: `sql/post-junta/01-alta-club-rollback.sql` (no borra antros).
+
+---
+
+## Bloque 5 — Puerta y equipo ✅
+
+**a) Linterna en el escáner** (`components/boton-linterna.tsx`, en los dos
+escáneres de `/staff/panel`): el botón «Prender linterna» aparece **solo** si
+la cámara la soporta (Chrome en Android sí; Safari en iPhone no). Si falla al
+prenderla, avisa y la cámara sigue leyendo. Prueba: `probar-escaner.mjs`
+13/13 (con linterna simulada: aparece, pide `torch=true` y el QR se lee en
+1.9 s con la linterna prendida; sin linterna: no aparece y lee igual).
+Falta probarla en un celular real.
+
+**b) Baja y reactivación de staff y gerentes** (`sql/post-junta/02-baja-personal.sql`):
+- `current_role_name()` y `current_club_id()` devuelven nulo para un perfil
+  con `activo = false`: **pierde todo al momento aunque tenga la sesión
+  abierta** (todas las políticas pasan por ahí). Además la baja borra sus
+  sesiones de Auth: su cookie vieja da 401 y no puede renovar el token.
+- `personal_cambiar_estado(perfil, activo, motivo)`: motivo obligatorio y
+  bitácora `personal_movimientos` (quién, cuándo, motivo). Admin y dueño:
+  staff y gerentes; gerente: solo staff; nadie a sí mismo. El UPDATE directo
+  de `activo` sobre staff o gerentes queda bloqueado (siempre con motivo). La
+  baja de RPs **sigue igual que hoy**.
+- El login (`/api/auth/login`) y `create-staff` rechazan staff y gerentes
+  dados de baja (antes solo RPs); `/staff/*` y `/rp/panel` cierran la sesión
+  y el login muestra «Tu cuenta ha sido desactivada».
+- Pantallas: en `/dueno/panel` («Mi personal») y en `/staff/equipo` y
+  `/dueno/equipo` («Equipo y actividad»), con confirmación y motivo.
+
+**c) Registro de actividad** (`sql/post-junta/03-actividad.sql`,
+`actividad_club`): quién cuadró, anuló, reabrió o cerró (mesa, monto, motivo,
+hora) y las bajas de personal, por noche operativa; filtros «Anulaciones y
+reaperturas», «Cuadres y cierres», «Personal». Solo gerente, dueño y admin.
+El gerente entra con el botón «Equipo y actividad» de `/staff/panel`; el
+dueño con «Ver actividad del antro».
+
+**Cómo probarlo**
+
+```bash
+node scripts/dev/probar-baja-personal.mjs      # 39/39 (con servidor-dev)
+PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/probar-escaner.mjs   # 13/13
+```
+A mano: `dev_gerente` → «Equipo y actividad»; `dev_dueno` → «Mi personal».
+
+**Regresión** tras cambiar `current_role_name()`: visibilidad 68/68, caja
+167/167, dashboards 28/28, concurrencia 29/29, login 15/15 (dos chequeos
+ajustados: el RP dado de baja ahora recibe «Solo para RPs» en vez de «Tu
+cuenta está desactivada»; sigue rechazado y el panel lo saca con el aviso).
+
+**Para producción (pase 2)**: 02 y 03 **antes** del código (sin 02, las
+pantallas de equipo fallan con «No se pudo guardar»). Rollback en orden
+inverso: `03-actividad-rollback.sql`, `02-baja-personal-rollback.sql`
+(regresa los ayudantes y el trigger; no reactiva a nadie).
