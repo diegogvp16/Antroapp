@@ -155,6 +155,12 @@ try {
   revisar(sG.status === 200, "el gerente nuevo entra con su contraseña temporal");
   const credD = (r1.cuerpo.credenciales ?? []).find((c) => c.rol === "dueno");
   if (credD) {
+    // Con la contraseña temporal no tiene rol en la base (sql/post-junta/08)
+    // hasta elegir una propia.
+    const temporal = await clienteDe(credD.correo, credD.password);
+    const bloqueado = await temporal.rpc("grupo_resumen", { p_desde: "2026-11-01", p_hasta: "2026-11-30" });
+    revisar(!!bloqueado.error || (bloqueado.data ?? []).length === 0, "con la contraseña temporal no ve nada hasta cambiarla");
+    await svc.auth.admin.updateUserById(duenoPerfil.id, { app_metadata: { alta_club: true, debe_cambiar: false } });
     const cd = await clienteDe(credD.correo, credD.password);
     const { data: suyo } = await cd.from("clubs").select("id").eq("dueno_id", duenoPerfil.id);
     revisar(suyo?.length === 1, "el dueño nuevo ve su antro (aunque esté en borrador)");

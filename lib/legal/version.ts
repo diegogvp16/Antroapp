@@ -6,7 +6,9 @@
 // Con la bandera apagada las páginas dan 404 y nada cambia.
 //
 // Al cambiar el texto de los documentos, sube VERSION_LEGAL: a quien aceptó
-// una versión anterior se le vuelve a pedir (aceptaciones_legales).
+// una versión anterior se le vuelve a pedir (aceptaciones_legales). La nueva
+// versión también se publica en la base (versiones_legales), que no acepta
+// constancias de versiones que no existen.
 
 export const VERSION_LEGAL = "2026-11-24-borrador";
 

@@ -69,6 +69,7 @@ try {
   const { data: propia } = await a.c.from("aceptaciones_legales").select("aceptado_en").eq("profile_id", a.id);
   revisar(propia?.length === 1 && propia[0].aceptado_en.startsWith(new Date().getUTCFullYear().toString()), "la fecha la pone la base (no la del navegador)");
   revisar(!!(await a.c.from("aceptaciones_legales").insert(fila(b.id))).error, "no puede registrar la aceptación de otro");
+  revisar(!!(await a.c.from("aceptaciones_legales").insert(fila(a.id, { documento: "privacidad", version: "2099-01-01" }))).error, "no puede aceptar una versión que no se ha publicado");
   revisar(((await b.c.from("aceptaciones_legales").select("id").eq("profile_id", a.id)).data ?? []).length === 0, "no lee la aceptación de otro");
   await a.c.from("aceptaciones_legales").update({ version: "otra" }).eq("profile_id", a.id);
   await a.c.from("aceptaciones_legales").delete().eq("profile_id", a.id);

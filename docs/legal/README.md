@@ -28,9 +28,10 @@ node scripts/legal-a-paginas.mjs            # regenera lib/legal/textos.ts
 node scripts/legal-a-paginas.mjs --revisar  # falla si las páginas no coinciden con los .md
 ```
 
-y cambia `VERSION_LEGAL` en `lib/legal/version.ts`: así a quien ya aceptó una
-versión anterior se le vuelve a pedir que acepte (la aceptación se guarda por
-versión en `aceptaciones_legales`, `sql/post-junta/05-legales.sql`).
+y cambia `VERSION_LEGAL` en `lib/legal/version.ts` **y** publícala en la base
+(`insert into public.versiones_legales (version) values ('<nueva>');`): así a
+quien ya aceptó una versión anterior se le vuelve a pedir que acepte. La base
+solo acepta versiones publicadas (`sql/post-junta/05-legales.sql` y `08`).
 
 ## Preguntas abiertas para el abogado
 
