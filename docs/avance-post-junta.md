@@ -25,8 +25,8 @@ Orden pedido: 1 → 5 → 4 → 3 → 2 → 8 → 7 → 6 → 9 → 10.
 | 4. CAPTCHA y antiabuso | ✅ Hecho (bandera apagada); falta probar el registro completo |
 | 3. Legales | ✅ Borradores + páginas y casillas (bandera apagada) |
 | 2. Mensualidad con Stripe (prueba) | ✅ Hecho sin llaves reales (bandera apagada); falta probar con tus llaves de prueba |
-| 8. Qué ve el RP, por antro | ⏳ Siguiente |
-| 7. Fase 2 | Pendiente |
+| 8. Qué ve el RP, por antro | ✅ Hecho y probado en dev |
+| 7. Fase 2 | ⏳ Siguiente |
 | 6. Monitoreo y operación | Pendiente |
 | 9. Tema oscuro y pulido | Pendiente |
 | 10. Cierre | Pendiente |
@@ -297,3 +297,62 @@ prueba».
 **Para producción (pase 2)**: `06-mensualidad.sql` con
 `mensualidad_real = false` (todo igual que hoy). Rollback:
 `06-mensualidad-rollback.sql` (exportar antes si ya hubo cobros).
+
+---
+
+## Bloque 8 — Qué ve el RP y regla de comisión, por antro ✅
+
+**Qué quedó** (`sql/post-junta/07-config-rp.sql`)
+
+- **Qué ven los RPs** (`club_config_rp`): solo estado · estado y monto (lo de
+  hoy, por defecto) · estado, monto y botellas (renglones de consumo).
+  Aplica al momento; `rp_nivel_visibilidad()` ya no está fija.
+- **Regla de comisión del antro** (`reglas_comision`, con vigencia): % del
+  consumo · $X fijo por reserva que consume · cuota (las primeras N de la
+  semana no pagan; desde la N+1 se paga $X). Un cambio vale **siempre desde
+  el lunes siguiente**; reprogramar antes del lunes reemplaza lo programado.
+  Cada comisión guarda `regla_id`.
+- Compatibilidad: un antro sin regla nueva calcula **exactamente como hoy**;
+  la regla propia de un RP (`rp_comision_overrides`) sigue ganando.
+- Bitácora `config_rp_cambios` (antes, después, desde cuándo, quién).
+  Editan dueño y gerente (y admin); el staff y el RP no leen nada de esto.
+- Pantalla: en «Reglas de pago a RPs» (panel del dueño y del gerente), el
+  editor nuevo sustituye al formulario viejo que cambiaba la regla al
+  momento (retroactivo para la semana en curso).
+
+**Cómo probarlo**: `node scripts/dev/probar-config-rp.mjs` (28/28, dos antros:
+uno con cuota y otro con porcentaje; mesas cuadradas por el camino real).
+Simula «ya llegó el lunes» moviendo la regla programada al lunes actual.
+
+**Pendiente**: las reglas **por RP** siguen con el formulario de antes
+(cambian al momento). Pasarlas al modelo con vigencia es el siguiente paso
+(`docs/reglas-comision.md`).
+
+**Para producción (pase 2)**: `07-config-rp.sql` (redefine
+`caja_liquidar_cuenta` y `rp_progreso_cuota`). Rollback probado en dev
+(`07-config-rp-rollback.sql` regresa las funciones del pase 1).
+
+---
+
+## Revisión de seguridad de los bloques 2 a 5 (subagente, solo lectura)
+
+Sin hallazgos críticos ni altos. Arreglado (`sql/post-junta/08-revision-seguridad.sql`
+y código):
+- **Registro por servidor**: con la confirmación por correo encendida, un
+  correo existente ya no puede provocar que se borre la cuenta de otra
+  persona; solo se deshace lo creado en esa petición.
+- **CAPTCHA**: sin token solo hay modo degradado si el servidor comprueba
+  que Cloudflare no responde (antes bastaba con no mandar el token).
+- **Mensualidad**: un antro no puede terminar con dos suscripciones por pagar
+  dos veces (el checkout consulta Stripe). Los eventos de otra suscripción
+  no pisan la vigente. El estado se aplica en la base con candado y
+  desempate del mismo segundo. Cada evento se reclama antes de procesarlo.
+  La tarea diaria no tiene carreras y vuelve a publicar a quien pagó.
+- **Límite de registros**: se anota el intento antes de contar (las
+  peticiones en paralelo ya no pasan todas).
+- **Contraseña temporal**: mientras no la cambie, la base le quita el rol
+  (`current_role_name`, `club_es_dueno`, `club_es_dueno_grupo`).
+- **Legales**: solo se aceptan versiones publicadas (`versiones_legales`).
+
+Pruebas: mensualidad 60/60, alta 54/54, legales 22/22, baja 39/39,
+config RP 28/28, caja 167/167, visibilidad 68/68, login 15/15.
