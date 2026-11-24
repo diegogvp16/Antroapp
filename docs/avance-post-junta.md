@@ -39,8 +39,8 @@ Orden pedido: 1 → 5 → 4 → 3 → 2 → 8 → 7 → 6 → 9 → 10.
 | 8. Qué ve el RP, por antro | ✅ Hecho y probado en dev |
 | 7. Fase 2 | ✅ Integrada (bandera apagada) + CSV y alerta |
 | 6. Monitoreo y operación | ✅ Hecho y probado en dev |
-| 9. Tema oscuro y pulido | ⏳ Siguiente |
-| 10. Cierre | Pendiente |
+| 9. Tema oscuro y pulido | ✅ Hecho |
+| 10. Cierre | ⏳ Siguiente |
 
 ---
 
@@ -421,3 +421,25 @@ Decisiones abiertas de la fase 2 en `docs/fase2.md`.
   cómo restaurar un respaldo en producción paso a paso.
 
 **Cómo probarlo**: `node scripts/dev/probar-monitoreo.mjs` (8/8).
+
+---
+
+## Bloque 9 — Tema oscuro y pulido ✅
+
+- **Un solo punto**: `TEMA_REPORTES` en `lib/tema-reportes.ts` ahora gobierna
+  nómina, `/grupo`, **todo `/dueno/*` y todo `/admin/*`** (los layouts los
+  envuelven con `TemaReportesContenedor`). Con `"actual"` todo vuelve al
+  claro de antes; con `"claro"`, a la paleta clara con dorado. El cliente ya
+  tenía su oscuro (`.theme-noche`); la caja y el RP, `.theme-caja`.
+- `scripts/dev/capturas-post-junta.mjs`: 16 pantallas de 6 roles a 390 y
+  1280 px, y **mide** el contraste de cada texto (WCAG AA), los elementos
+  táctiles de menos de 40 px y el desborde horizontal. Antes: 0 textos bajo
+  AA y 37 controles chicos en 10 pantallas. Después: **0 y 0 en las 32**.
+- Áreas táctiles a 40 px: enlaces «← Volver», selector de rango de
+  `/grupo`, pasos del alta, «Ver N RPs sin movimientos», borrar mesa y foto
+  (la marca visible sigue igual de chica), «Mi perfil» y «Cerrar sesión» del
+  cliente.
+- Capturas en `screenshots-post-junta/antes` y `…/despues` (no van a Git).
+- De paso se encontró y limpió basura de dev que dejó la prueba del hueco al
+  correrla **sin** el arreglo, para confirmar que lo detectaba. Ahora esa
+  prueba deshace lo que alcance a cambiar.
