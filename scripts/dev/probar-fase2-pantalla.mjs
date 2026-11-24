@@ -121,6 +121,10 @@ async function entrar(clave, destino) {
   await p.goto(BASE + "/cliente/login");
   await p.fill("#email", U[clave].email);
   await p.fill("#password", PASS);
+  // Con la bandera del CAPTCHA (llave de prueba), esperar a que la casilla dé su token.
+  if (await p.locator('script[src*="challenges.cloudflare.com"]').count()) {
+    await p.waitForFunction(() => { try { return !!window.turnstile?.getResponse(); } catch { return false; } }, null, { timeout: 30000 }).catch(() => {});
+  }
   await p.click("button[type=submit]");
   await p.waitForURL(destino, { timeout: 90000 });
   return { ctx, p };

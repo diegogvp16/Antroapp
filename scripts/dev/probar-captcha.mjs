@@ -39,6 +39,10 @@ let pasan = 0, fallan = 0, saltadas = 0;
 // correos por hora: si el registro choca con ese límite no es una falla de
 // la ruta, pero tampoco se pudo probar.
 const limiteCorreos = (r) => r.status === 429 && /correos de confirmación/.test(r.cuerpo.error ?? "");
+// Supabase no acepta @example.com en signUp, y no se usan dominios inventados
+// (con la confirmación encendida, los correos rebotarían y dañan la
+// reputación de envío del proyecto).
+const correoNoAceptado = (r) => r.status === 400 && /Revisa tu correo/.test(r.cuerpo.error ?? "");
 function saltar(texto, motivo = "límite de correos de confirmación de Supabase en dev; repetir en una hora") {
   saltadas++;
   console.log("SALTADA " + texto + "  — " + motivo);
@@ -104,10 +108,13 @@ try {
 
   // Registro por el servidor.
   const ipReg = nuevaIp();
-  const regCli = { tipo: "cliente", nombre: "Cliente Registro", telefono: "0000000777", email: `captcha_reg_${sufijo}@example.com`, password: PASS, captchaToken: TOKEN_PRUEBA };
+  const regCli = { tipo: "cliente", nombre: "Cliente Registro", telefono: "0000000777", email: `captcha_reg_${sufijo}@example.com`, password: PASS, captchaToken: TOKEN_PRUEBA, aceptaLegales: true };
   correos.push(regCli.email);
   const r1 = await post(CON, "/api/auth/registro", regCli, ipReg);
-  if (limiteCorreos(r1)) {
+  if (correoNoAceptado(r1)) {
+    saltar("registro de cliente y de dueño por el servidor (4 chequeos)", "Supabase no acepta @example.com en signUp y no se mandan correos a dominios inventados; probar con la confirmación apagada o un SMTP de prueba");
+    revisar(true, "correo no aceptado por Supabase → 400 con mensaje claro (no 500)");
+  } else if (limiteCorreos(r1)) {
     saltar("registro de cliente y de dueño por el servidor (4 chequeos)");
     revisar(true, "límite de correos de Supabase → 429 con mensaje claro (no 500)");
   } else {

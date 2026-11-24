@@ -92,6 +92,10 @@ try {
         await p.goto(base + "/cliente/login");
         await p.fill("#email", email);
         await p.fill("#password", PASS);
+        // Si el servidor tiene además el CAPTCHA (llave de prueba), esperar su token.
+        if (await p.locator('script[src*="challenges.cloudflare.com"]').count()) {
+          await p.waitForFunction(() => { try { return !!window.turnstile?.getResponse(); } catch { return false; } }, null, { timeout: 30000 }).catch(() => {});
+        }
         await p.click("button[type=submit]");
         return p;
       };

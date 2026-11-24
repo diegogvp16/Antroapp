@@ -105,6 +105,7 @@ export async function POST(request: Request) {
     if (error?.code === "over_email_send_rate_limit") {
       return NextResponse.json({ error: "Por ahora no podemos enviar más correos de confirmación. Intenta de nuevo en un rato." }, { status: 429 });
     }
+    if (error?.code === "email_address_invalid") return NextResponse.json({ error: "Revisa tu correo: no parece válido." }, { status: 400 });
     if (error?.code === "weak_password") return NextResponse.json({ error: "Esa contraseña es muy común o muy corta. Elige otra." }, { status: 400 });
     console.error("registro: signUp", error?.code ?? error?.status);
     return NextResponse.json({ error: GENERICO }, { status: 500 });

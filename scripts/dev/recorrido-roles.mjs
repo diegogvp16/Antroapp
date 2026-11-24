@@ -31,7 +31,12 @@ async function cargarPlaywright() {
 }
 const { chromium } = await cargarPlaywright();
 const { createClient } = req("@supabase/supabase-js");
-const BASE = process.argv[2] ?? "http://localhost:3001";
+const BASE = process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "http://localhost:3001";
+// --banderas: el servidor se levantó con las banderas encendidas (CAPTCHA con
+// llaves de prueba, legales, mensualidad y fase 2): espera la casilla del
+// CAPTCHA, acepta los legales en la primera entrada si se piden y recorre
+// también las pantallas que solo existen con bandera.
+const BANDERAS = process.argv.includes("--banderas");
 const SHOTS = path.join(RAIZ, "screenshots-recorrido-roles") + path.sep;
 mkdirSync(SHOTS, { recursive: true });
 const cred = JSON.parse(readFileSync(path.join(RAIZ, "backups/dev-credenciales.json"), "utf8"));
@@ -41,13 +46,13 @@ const { data: unaReserva } = await svc.from("reservations").select("qr_code").eq
 
 // Rol → [usuario o null (sin sesión), pantallas, URL esperada tras el login].
 const ROLES = [
-  ["anonimo", null, ["/", "/cliente", `/cliente/${CLUB}`, "/acceso-negocios", "/cliente/login", "/cliente/signup", "/dueno/signup", ...(unaReserva ? [`/r/${unaReserva.qr_code}`] : [])]],
+  ["anonimo", null, ["/", "/cliente", `/cliente/${CLUB}`, "/acceso-negocios", "/cliente/login", "/cliente/signup", "/dueno/signup", ...(unaReserva ? [`/r/${unaReserva.qr_code}`] : []), ...(BANDERAS ? ["/terminos", "/privacidad"] : [])]],
   ["cliente", cred.usuarios.cliente, ["/cliente", `/cliente/${CLUB}`, `/cliente/reservar?club=${CLUB}`, "/cliente/perfil"], /\/cliente$/],
   ["rp", "demo_mariana@example.com", ["/rp/panel"], /rp\/panel/],
   ["staff", cred.usuarios.staff, ["/staff/panel", "/staff/caja", "/staff/nomina"], /staff\/panel/],
-  ["gerente", cred.usuarios.gerente, ["/staff/panel", "/staff/caja", "/staff/nomina"], /staff\/panel/],
-  ["dueno", cred.usuarios.dueno, ["/dueno/panel", "/dueno/nomina", "/grupo"], /dueno\/panel/],
-  ["admin", cred.usuarios.admin, ["/admin"], /admin/],
+  ["gerente", cred.usuarios.gerente, ["/staff/panel", "/staff/caja", "/staff/nomina", "/staff/equipo", ...(BANDERAS ? ["/staff/catalogo"] : [])], /staff\/panel/],
+  ["dueno", cred.usuarios.dueno, ["/dueno/panel", "/dueno/nomina", "/grupo", "/dueno/equipo", ...(BANDERAS ? ["/dueno/mensualidad"] : [])], /dueno\/panel/],
+  ["admin", cred.usuarios.admin, ["/admin", "/admin/alta-antro", ...(BANDERAS ? ["/admin/mensualidad"] : [])], /admin/],
 ];
 // Pestañas del panel del RP (cada una es una pantalla).
 const PESTANAS_RP = ["Perfil", "Reservas", "Turnos", "Nómina"];
@@ -72,9 +77,19 @@ try {
       await p.goto(BASE + "/cliente/login");
       await p.fill("#email", email);
       await p.fill("#password", cred.password);
+      if (BANDERAS) {
+        // La casilla de Turnstile (llave de prueba: se resuelve sola) da su token.
+        await p.waitForFunction(() => { try { return !!window.turnstile?.getResponse(); } catch { return false; } }, null, { timeout: 30000 }).catch(() => {});
+      }
       await p.click("button[type=submit]");
       await p.waitForURL(destino, { timeout: 90000 }).catch(() => {});
       nota(`${rol}: inicia sesión`, destino.test(new URL(p.url()).pathname), new URL(p.url()).pathname);
+      // Legales: primera entrada del RP con la bandera encendida.
+      if (BANDERAS && rol === "rp" && (await p.getByText("Antes de empezar").waitFor({ state: "visible", timeout: 15000 }).then(() => true, () => false))) {
+        await p.check("#acepto-rp");
+        await p.getByRole("button", { name: "Aceptar y continuar" }).click();
+        nota("rp: acepta términos y aviso en su primera entrada", await p.getByText("Antes de empezar").waitFor({ state: "hidden", timeout: 15000 }).then(() => true, () => false));
+      }
     }
 
     const revisar = async (nombre) => {

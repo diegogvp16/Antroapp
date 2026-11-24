@@ -28,7 +28,7 @@ const Stripe = requerir("stripe");
 const opts = { auth: { persistSession: false, autoRefreshToken: false } };
 const svc = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, opts);
 const SIN = "http://localhost:3001";
-const CON = "http://localhost:3003";
+const CON = (process.argv.find((a) => a.startsWith("--con="))?.slice(6) ?? "http://localhost:3003").replace(/\/$/, "");
 const SECRETO = process.env.STRIPE_WEBHOOK_SECRET;
 const CRON = process.env.CRON_SECRET;
 if (!SECRETO || !CRON) {
