@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { iniciarSesion } from "@/lib/login";
+import { AVISO_CUENTA_DADA_DE_BAJA } from "@/lib/cuenta-dada-de-baja";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,6 +23,11 @@ export default function ClienteLoginPage() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Llegó aquí porque lo dieron de baja con la sesión abierta.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("baja") === "1") setError(AVISO_CUENTA_DADA_DE_BAJA);
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -54,9 +60,9 @@ export default function ClienteLoginPage() {
         return;
       }
 
-      if (profile.role === "rp" && profile.activo !== true) {
+      if (["rp", "staff", "gerente"].includes(profile.role) && profile.activo !== true) {
         await supabase.auth.signOut();
-        setError("Tu cuenta ha sido desactivada, contacta al antro.");
+        setError(AVISO_CUENTA_DADA_DE_BAJA);
         return;
       }
 

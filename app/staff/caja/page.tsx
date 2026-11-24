@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { cerrarSesionDadoDeBaja } from "@/lib/cuenta-dada-de-baja";
 import { RefreshCw, WifiOff } from "lucide-react";
 import { CuadreNoche } from "@/components/caja/cuadre-noche";
 import { MapaNoche } from "@/components/caja/mapa-noche";
@@ -224,9 +225,13 @@ export default function StaffCajaPage() {
       }
       const { data: perfil, error } = await supabase
         .from("profiles")
-        .select("role, club_id")
+        .select("role, club_id, activo")
         .eq("id", user.id)
         .maybeSingle();
+      if (perfil?.activo === false) {
+        await cerrarSesionDadoDeBaja(supabase, router);
+        return;
+      }
       if (
         error ||
         !perfil ||

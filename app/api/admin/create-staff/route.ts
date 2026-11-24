@@ -47,11 +47,11 @@ export async function POST(request: Request) {
     // 2) Su rol y club, leídos en el servidor (nunca desde el body).
     const { data: quienLlama, error: callerError } = await supabaseAdmin
       .from("profiles")
-      .select("role, club_id")
+      .select("role, club_id, activo")
       .eq("id", user.id)
       .maybeSingle();
 
-    if (callerError || !quienLlama) {
+    if (callerError || !quienLlama || quienLlama.activo === false) {
       return NextResponse.json(
         { error: "No pudimos verificar tu cuenta." },
         { status: 403 },

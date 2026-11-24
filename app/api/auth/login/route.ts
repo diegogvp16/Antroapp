@@ -24,6 +24,7 @@ import {
 // CAPTCHA de Supabase Auth (se activan en su dashboard).
 
 const ERROR_GENERICO = "Email o contraseña incorrectos.";
+const CUENTAS_DE_TRABAJO = ["rp", "staff", "gerente"];
 
 export async function POST(request: Request) {
   let email = "";
@@ -81,10 +82,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: ERROR_GENERICO }, { status: 401 });
   }
 
-  // Un RP dado de baja no entra, aunque su contraseña sea correcta. La
-  // pantalla también lo revisa; aquí no depende de ella.
+  // Un RP, staff o gerente dado de baja no entra, aunque su contraseña sea
+  // correcta. La pantalla también lo revisa; aquí no depende de ella.
   const { data: perfil } = await admin.from("profiles").select("role, activo").eq("id", data.user.id).maybeSingle();
-  if (perfil?.role === "rp" && perfil.activo !== true) {
+  if (perfil && CUENTAS_DE_TRABAJO.includes(perfil.role) && perfil.activo !== true) {
     await supabase.auth.signOut();
     return NextResponse.json({ error: "Tu cuenta ha sido desactivada, contacta al antro." }, { status: 403 });
   }

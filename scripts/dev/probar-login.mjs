@@ -97,9 +97,12 @@ try {
   revisar(!com.error && (com.data ?? []).length === 0, "RP dado de baja con sesión vieja: 0 comisiones");
   const hoy = new Date().toISOString().slice(0, 10);
   const fn = await sesion.rpc("rp_mis_reservas", { p_desde: hoy, p_hasta: hoy });
-  revisar(fn.error?.message === "Tu cuenta está desactivada", "rp_mis_reservas rechaza al RP dado de baja");
+  // Con sql/post-junta/02-baja-personal.sql el perfil dado de baja ya no tiene
+  // rol, así que lo rechaza el primer chequeo ("Solo para RPs"); /rp/panel
+  // cierra su sesión y el login muestra "Tu cuenta ha sido desactivada".
+  revisar(/^(Tu cuenta está desactivada|Solo para RPs)$/.test(fn.error?.message ?? ""), "rp_mis_reservas rechaza al RP dado de baja");
   const cuota = await sesion.rpc("rp_progreso_cuota");
-  revisar(cuota.error?.message === "Tu cuenta está desactivada", "rp_progreso_cuota rechaza al RP dado de baja");
+  revisar(/^(Tu cuenta está desactivada|Solo para RPs)$/.test(cuota.error?.message ?? ""), "rp_progreso_cuota rechaza al RP dado de baja");
 
   const rp = await login(correos.rp, PASS, ipB);
   revisar(rp.status === 403 && /desactivada/.test(rp.cuerpo.error ?? ""), "RP inactivo con contraseña buena → 403");

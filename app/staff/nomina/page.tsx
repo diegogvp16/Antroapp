@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { cerrarSesionDadoDeBaja } from "@/lib/cuenta-dada-de-baja";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ReporteNomina } from "@/components/nomina/reporte-nomina";
@@ -34,9 +35,13 @@ export default function StaffNominaPage() {
       }
       const { data: perfil, error } = await supabase
         .from("profiles")
-        .select("role, club_id")
+        .select("role, club_id, activo")
         .eq("id", user.id)
         .maybeSingle();
+      if (perfil?.activo === false) {
+        await cerrarSesionDadoDeBaja(supabase, router);
+        return;
+      }
       if (error || !perfil || (perfil.role !== "staff" && perfil.role !== "gerente")) {
         router.replace("/cliente/login");
         return;

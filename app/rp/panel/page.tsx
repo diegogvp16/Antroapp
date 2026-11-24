@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { createClient } from "@/lib/supabase/client";
+import { cerrarSesionDadoDeBaja } from "@/lib/cuenta-dada-de-baja";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -172,7 +173,7 @@ export default function RpPanelPage() {
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("id, nombre, role, club_id")
+        .select("id, nombre, role, club_id, activo")
         .eq("id", user.id)
         .maybeSingle();
 
@@ -181,6 +182,10 @@ export default function RpPanelPage() {
       if (profileError) {
         setErrorSesion(mensajeParaUsuario(profileError, "No pudimos cargar tu cuenta. Revisa tu conexión e intenta de nuevo."));
         setCheckingSession(false);
+        return;
+      }
+      if (profile?.activo === false) {
+        await cerrarSesionDadoDeBaja(supabase, router);
         return;
       }
       if (!profile || profile.role !== "rp") {
