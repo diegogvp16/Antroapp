@@ -6,6 +6,12 @@
 > de Production en Vercel. El bloque 6 (pase a producción) espera a que Diego
 > lo pida de forma explícita.
 
+
+> **Después de la junta (24/11/2026)**: el trabajo siguió en la rama
+> `post-junta` (sobre `candidato-pase`). Bitácora por bloque:
+> `docs/avance-post-junta.md`; reporte: `docs/reporte-post-junta.md`;
+> «Pase 2» en `docs/pase-produccion.md`.
+
 ## Cómo probar lo de `desarrollo`
 
 - **Vista previa de Vercel** (rama `desarrollo`, apunta a antroapp-dev, no a

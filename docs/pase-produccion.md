@@ -407,3 +407,112 @@ PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/probar-escaner.mjs     # 9/9 (QR con
 node scripts/dev/ensayo-pase.mjs a-prod | comparar | diagnosticos | paso <n> | rollback <n>
 npx tsc --noEmit && npx eslint . && npx next build
 ```
+
+---
+
+# Pase 2 — rama `post-junta` (NO EJECUTADO)
+
+Escrito el 24/11/2026. Va **después** del pase 1 (todo lo de arriba). Todo
+el SQL está en `sql/post-junta/` (más la fase 2 en `sql/fase2/`, opcional),
+cada archivo con su rollback, probado en dev. La cadena completa (revertir
+todo y volver a aplicar) se ensayó con `node scripts/dev/ensayo-pase2.mjs
+completo`: 13 rollbacks y 13 aplicaciones de ~1.6 s cada una, esquema
+**idéntico** antes y después, sin restos.
+
+## ⚠ Antes que todo: hueco ALTO del pase 1
+
+El SQL del pase 1 tiene un hueco de autorización: en plpgsql,
+`if not (rol = 'admin' or …) then raise` **no rechaza** cuando la condición
+da NULL. Una cuenta de Auth **sin perfil** (cualquiera la crea con `signUp`
+directo a Supabase) puede leer la **nómina** y el **rendimiento por RP** de
+cualquier antro. Probado en dev.
+
+- **Si el pase 1 todavía no se hace**: agrega al pase 1, justo después del
+  paso 7b, `sql/post-junta/10a-pase1-autorizacion-sin-nulos.sql` (rollback:
+  `10a-…-rollback.sql`). Validado en dev sobre el esquema del pase 1.
+- **Si el pase 1 ya se hizo**: aplica el 10a **de inmediato**, sin esperar
+  al pase 2.
+- Prueba: `node scripts/dev/probar-autorizacion-nulos.mjs` (32/32 con todo el
+  pase 2; con solo el 10a sobre el pase 1 fallan los 3 casos de «contraseña
+  temporal», que no existe hasta el 08).
+
+## Orden
+
+Todo SQL es compatible con el código de antes: primero el SQL, luego el merge.
+Ninguna bandera se enciende en el pase; se encienden después, una por una.
+
+| Paso | Qué | Rollback | Tiempo (prod, a mano) |
+|---|---|---|---|
+| P0 | Respaldo del día visible en Supabase; `node scripts/db/extraer-esquema.mjs --origen=prod` y comparar con el esquema esperado del pase 1 | — | 5 min |
+| P1 | `01-alta-club.sql` (alta de antros, bitácora `club_altas`) | `01-…-rollback.sql` (no borra antros) | 1 min |
+| P2 | `02-baja-personal.sql` (sin rol si `activo = false`, baja con motivo) | `02-…-rollback.sql` (no reactiva a nadie) | 1 min |
+| P3 | `03-actividad.sql` | `03-…-rollback.sql` | 1 min |
+| P4 | `04-antiabuso.sql` (límite de registros por IP) | `04-…-rollback.sql` | 1 min |
+| P5 | `05-legales.sql` (constancia de aceptación) | `05-…-rollback.sql` (borra constancias: exportar antes) | 1 min |
+| P6 | `06-mensualidad.sql` (deja `mensualidad_real = false`) | `06-…-rollback.sql` (exportar si hubo cobros) | 1 min |
+| P7 | `07-config-rp.sql` (redefine `caja_liquidar_cuenta` y `rp_progreso_cuota`) | `07-…-rollback.sql` (regresa las del pase 1) | 2 min |
+| P8 | `08-revision-seguridad.sql` | `08-…-rollback.sql` | 1 min |
+| P9 | `10-autorizacion-sin-nulos.sql` (incluye lo del 10a y `personal_historial`) | `10-…-rollback.sql` | 1 min |
+| P10 | `11-alertas.sql` | `11-…-rollback.sql` | 1 min |
+| P11 | *(Opcional, solo si se pasa la fase 2)* `sql/fase2/2026-11-21-inventario-propinas.sql` y luego `09-catalogo-csv.sql` | `09-…-rollback.sql`, luego `sql/fase2/…-rollback.sql` | 3 min |
+| P12 | `12-higiene-permisos.sql` (al final: toca funciones de 05, 06, 07 y 08) | `12-…-rollback.sql` | 1 min |
+| P13 | Merge de `post-junta` a `master` (publica el código; **banderas apagadas**) | Vercel → Instant Rollback | 5 min + build |
+| P14 | Humo (`node scripts/humo-produccion.mjs https://antroapp.vercel.app`), `/api/salud` y recorrido de los 6 roles | — | 30 min |
+
+Después de cada SQL, verificar por introspección (catálogo de producción en
+solo lectura) que quedó, como en el pase 1.
+
+## Merge (P13)
+
+```bash
+git fetch origin
+git checkout master && git pull --ff-only
+git merge --no-ff origin/post-junta -m "Pase 2: post-junta (alta de antros, baja de personal, configuración de RPs, legales, CAPTCHA, mensualidad, monitoreo; banderas apagadas)"
+git push origin master          # publica en producción (Vercel)
+git checkout desarrollo && git merge --ff-only master && git push origin desarrollo
+```
+
+## Banderas (después del pase, una por una, primero en Preview)
+
+| Bandera | Qué enciende | Requiere | Pasos |
+|---|---|---|---|
+| `NEXT_PUBLIC_LEGALES=1` | `/terminos`, `/privacidad` y casillas | **Textos revisados por un abogado**; publicar su versión en `versiones_legales` | `docs/legal/README.md` |
+| `NEXT_PUBLIC_CAPTCHA_TURNSTILE=1` (+ llaves) | CAPTCHA en login y registros | Llaves de Cloudflare | `docs/captcha.md` |
+| `NEXT_PUBLIC_MENSUALIDAD=1` (+ Stripe) | Mensualidad con Stripe | Llaves de prueba primero; `mensualidad_real` solo al cobrar de verdad | `docs/stripe-mensualidad.md` |
+| `ALERTAS_CORREO=1` (+ Resend) | Alertas por correo al admin | Llave de Resend | `docs/operacion.md` |
+| `NEXT_PUBLIC_FASE2=1` | Catálogo, inventario y propinas | P11 aplicado | `docs/fase2.md` |
+
+Apagar cualquiera: quitar la variable y redeploy; la app vuelve a como estaba.
+
+## Criterios para parar y revertir
+
+- Un SQL falla: no seguir; el SQL va en una transacción, así que no quedó a
+  medias. Revisar el mensaje y, si hace falta, revertir los pasos ya
+  aplicados en orden inverso.
+- Después del merge, el humo o el recorrido fallan en algo que antes
+  funcionaba: Instant Rollback del código (el SQL del pase 2 es compatible con
+  el código anterior) y revisar con calma.
+- Un problema con la caja en plena noche: **no** revertir SQL a media noche;
+  Instant Rollback del código y el SQL al día siguiente.
+- Punto de no retorno práctico: la primera baja de personal, el primer
+  antro dado de alta con el asistente o el primer cobro real. Revertir
+  después de eso pierde esa bitácora (los antros y personas se quedan).
+
+## Pruebas en dev del pase 2
+
+```bash
+node scripts/dev/ensayo-pase2.mjs completo                # cadena de SQL y rollbacks, esquema idéntico
+node scripts/dev/probar-alta-club-dominio.mjs             # 47/47
+node scripts/dev/probar-alta-club.mjs [--masivo]          # 54/54 (+1 con --masivo)
+node scripts/dev/probar-baja-personal.mjs                 # 39/39
+node scripts/dev/probar-autorizacion-nulos.mjs            # 32/32
+node scripts/dev/probar-config-rp.mjs                     # 28/28
+node scripts/dev/probar-catalogo-csv.mjs                  # 16/16
+node scripts/dev/probar-fase2.mjs                         # 51/51
+node scripts/dev/probar-monitoreo.mjs                     # 8/8
+node scripts/dev/probar-mensualidad.mjs                   # 60/60 (servidor 3003 con bandera; ver cabecera)
+node scripts/dev/probar-captcha.mjs                       # (servidores de su cabecera)
+node scripts/dev/probar-legales.mjs                       # 22/22 (servidor con bandera)
+PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/recorrido-roles.mjs http://localhost:3002 [--banderas]
+PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/capturas-post-junta.mjs   # contraste y tamaño táctil
+```

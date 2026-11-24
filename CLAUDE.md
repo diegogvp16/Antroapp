@@ -655,6 +655,25 @@ Dragones). Evitar explícitamente el look genérico morado-degradado.
 
 ## 9. Pendientes inmediatos
 
+### Rama `post-junta` (24/11/2026): sobre `candidato-pase`, para el "pase 2"
+
+Alta de antros desde /admin (asistente transaccional), baja de staff y
+gerentes con motivo (un perfil con `activo = false` o con contraseña
+temporal no tiene rol en la base), registro de actividad, configuración por
+antro de lo que ve el RP y de la regla de comisión (vale desde el lunes
+siguiente), linterna del escáner, monitoreo (`/api/salud`, errores sin datos
+personales), restauración de respaldos en dev, tema oscuro en /dueno y
+/admin (punto único `lib/tema-reportes.ts`) y la fase 2 integrada. Detrás de
+banderas **apagadas**: `NEXT_PUBLIC_LEGALES`, `NEXT_PUBLIC_CAPTCHA_TURNSTILE`,
+`NEXT_PUBLIC_MENSUALIDAD` (Stripe, solo llaves de prueba salvo
+`STRIPE_PERMITIR_PRODUCCION=1`), `ALERTAS_CORREO` y `NEXT_PUBLIC_FASE2`.
+SQL en `sql/post-junta/` (01–12, cada uno con rollback; la cadena se ensaya
+con `node scripts/dev/ensayo-pase2.mjs completo`). Orden y banderas:
+`docs/pase-produccion.md`, «Pase 2». Bitácora: `docs/avance-post-junta.md`;
+reporte: `docs/reporte-post-junta.md`.
+**Hallazgo alto del pase 1**: aplicar `sql/post-junta/10a-pase1-autorizacion-sin-nulos.sql`
+junto con el pase 1 (ver el runbook).
+
 ### Rama `candidato-pase` (23/11/2026): lista para el pase
 
 `candidato-pase` = `desarrollo` + `noche2` (sin `fase2`), con tema oscuro en
@@ -817,3 +836,26 @@ Por prioridad:
   Regenerar la noche demo antes de probar.
 - **Antes de un pase, ensayarlo en dev**: rollbacks hasta igualar el
   catálogo de producción, pase paso a paso, comparar esquemas antes y después.
+- **En plpgsql, `if not (x) then raise` NO rechaza si `x` es NULL** (y
+  `rol = admin` es NULL cuando `current_role_name()` lo es: cuenta sin
+  perfil, dada de baja o con contraseña temporal). Los ayudantes de
+  autorización devuelven `coalesce(…, false)` y las condiciones en línea van
+  en `coalesce(…, false)`. Probar siempre con una cuenta de Auth **sin
+  perfil** (`scripts/dev/probar-autorizacion-nulos.mjs`).
+- **Para confirmar que una prueba detecta un hueco hay que correrla sin el
+  arreglo, y esa corrida SÍ cambia datos**: la limpieza de la prueba tiene que
+  deshacer lo que alcance a hacer, no solo borrar lo que creó.
+- **Stripe manda eventos del mismo segundo y en desorden**: el estado se
+  aplica en la base con candado y desempate por estado, no comparando en el
+  servidor.
+- **Turnstile dibuja su casilla en un shadow DOM cerrado**: en pruebas se
+  revisa por las peticiones a challenges.cloudflare.com o por
+  `window.turnstile.getResponse()`.
+- **antroapp-dev tiene la confirmación por correo encendida** y Supabase
+  limita esos correos por hora: las pruebas de registro pueden chocar con el
+  límite (`over_email_send_rate_limit`).
+- **`next dev`/`next build` con otro `NEXT_DIST_DIR` agrega esa carpeta a
+  `tsconfig.json`**: revertirlo (`git checkout tsconfig.json`) antes de
+  commitear; ESLint ignora `.next-*/`.
+- **En JS, `texto.replace(a, b)` interpreta `$$` en `b`** (deja un solo
+  `$`): al generar SQL con reemplazos, usar `replace(a, () => b)`.
