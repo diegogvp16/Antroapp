@@ -38,8 +38,8 @@ Orden pedido: 1 → 5 → 4 → 3 → 2 → 8 → 7 → 6 → 9 → 10.
 | 2. Mensualidad con Stripe (prueba) | ✅ Hecho sin llaves reales (bandera apagada); falta probar con tus llaves de prueba |
 | 8. Qué ve el RP, por antro | ✅ Hecho y probado en dev |
 | 7. Fase 2 | ✅ Integrada (bandera apagada) + CSV y alerta |
-| 6. Monitoreo y operación | ⏳ Siguiente |
-| 9. Tema oscuro y pulido | Pendiente |
+| 6. Monitoreo y operación | ✅ Hecho y probado en dev |
+| 9. Tema oscuro y pulido | ⏳ Siguiente |
 | 10. Cierre | Pendiente |
 
 ---
@@ -395,3 +395,29 @@ encendida y apagada: en el bloque 10.
 `sql/fase2/2026-11-21-inventario-propinas.sql` y luego `09-catalogo-csv.sql`.
 Rollbacks: `09-catalogo-csv-rollback.sql`, `sql/fase2/…-rollback.sql`.
 Decisiones abiertas de la fase 2 en `docs/fase2.md`.
+
+---
+
+## Bloque 6 — Monitoreo y operación ✅
+
+- `GET /api/salud`: 200 con la base (y cuánto tardó), versión y entorno;
+  503 si la base no contesta. Sin datos ni caché. Para un monitor externo.
+- `/api/errores` guarda los errores **sin correos, teléfonos, tokens ni
+  llaves**, y la ruta sin parámetros (`lib/domain/sanitizar.ts`).
+- Los `console.error` de servidor con objetos de error pasan por
+  `registrarError` (`lib/log.ts`): solo código y tipo.
+- «Errores recientes» del admin: últimos 7 días, agrupados, con etiqueta de
+  24 h (verde, ámbar, rojo).
+- Alertas por correo **detrás de bandera apagada** (`ALERTAS_CORREO` +
+  Resend): pico de errores, cobro fallido y antros despublicados; una por
+  tipo por hora (`sql/post-junta/11-alertas.sql`). Sin llaves no se probó el
+  envío real (pendiente con tu llave de Resend).
+- `scripts/dev/restaurar-dev.mjs` (no existía, aunque `respaldar-dev` lo
+  mencionaba): prueba hecha en dev, daño a propósito y restauración de
+  **42 tablas idénticas al respaldo en 14.2 s**; después cuadre, dashboards y
+  caja en verde.
+- `docs/operacion.md`: qué revisar cada día y cada semana, monitor externo,
+  alertas clic a clic, qué hacer si algo se cae (también en plena noche) y
+  cómo restaurar un respaldo en producción paso a paso.
+
+**Cómo probarlo**: `node scripts/dev/probar-monitoreo.mjs` (8/8).
