@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { clienteServicio, hashTexto, ipDe } from "@/lib/supabase/servicio";
+import { registrarError } from "@/lib/log";
+import { revisarPicoErrores } from "@/lib/alertas";
+import { rutaSinParametros, sinDatosPersonales } from "@/lib/domain/sanitizar";
 
 // Aviso de errores de la app: las pantallas de error (app/error.tsx y
 // app/global-error.tsx) mandan aquí lo que falló. Se guarda recortado en
@@ -21,7 +24,9 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
-  const mensaje = texto(cuerpo.mensaje, 1000);
+  // Sin correos, teléfonos ni tokens: se guardan para depurar, no para identificar.
+  const crudoMensaje = texto(cuerpo.mensaje, 1000);
+  const mensaje = crudoMensaje ? sinDatosPersonales(crudoMensaje) : null;
   if (!mensaje) return NextResponse.json({ ok: false }, { status: 400 });
 
   const admin = clienteServicio();
@@ -39,15 +44,20 @@ export async function POST(request: Request) {
 
   const { error } = await admin.from("app_errores").insert({
     mensaje,
-    ruta: texto(cuerpo.ruta, 300),
+    ruta: (() => {
+      const r = texto(cuerpo.ruta, 300);
+      return r ? sinDatosPersonales(rutaSinParametros(r)) : null;
+    })(),
     digest: texto(cuerpo.digest, 100),
     navegador: (request.headers.get("user-agent") ?? "").slice(0, 300),
     usuario_id: user?.id ?? null,
     ip_hash: ipHash,
   });
   if (error) {
-    console.error("Error guardando aviso de error:", error);
+    registrarError("errores: guardar", error);
     return NextResponse.json({ ok: false }, { status: 500 });
   }
+  // Con la bandera de alertas: correo al admin si hay un pico (una vez por hora).
+  await revisarPicoErrores(admin);
   return NextResponse.json({ ok: true });
 }

@@ -13,6 +13,7 @@ import {
 } from "@/lib/domain/login";
 import { captchaActivo, modoCaptcha } from "@/lib/captcha";
 import { verificarTurnstile } from "@/lib/captcha-servidor";
+import { registrarError } from "@/lib/log";
 import {
   DEGRADADO_MAX_FALLOS_POR_CORREO_E_IP,
   DEGRADADO_MAX_FALLOS_POR_IP,
@@ -81,7 +82,7 @@ export async function POST(request: Request) {
       .gte("creado_en", desde).order("creado_en", { ascending: false }).limit(100),
   ]);
   if (porCorreo.error || porIp.error) {
-    console.error("Error leyendo intentos de login:", porCorreo.error ?? porIp.error);
+    registrarError("login: leer intentos", porCorreo.error ?? porIp.error);
     return NextResponse.json({ error: "No pudimos iniciar sesión. Intenta de nuevo." }, { status: 500 });
   }
 
@@ -110,7 +111,7 @@ export async function POST(request: Request) {
   const exito = !error && !!data.session;
 
   const registro = await admin.from("login_intentos").insert({ email_hash: emailHash, ip_hash: ipHash, exito });
-  if (registro.error) console.error("Error registrando intento de login:", registro.error);
+  if (registro.error) registrarError("login: registrar intento", registro.error);
 
   if (!exito) {
     return NextResponse.json({ error: ERROR_GENERICO }, { status: 401 });

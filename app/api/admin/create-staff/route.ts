@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { registrarError } from "@/lib/log";
 
 // Esta ruta crea cuentas con la service role key, así que antes de tocar
 // nada verifica QUIÉN llama (sesión por cookie) y si tiene permiso para
@@ -140,7 +141,7 @@ export async function POST(request: Request) {
     if (createUserError || !userData.user) {
       // El texto de Supabase Auth viene en inglés y con detalles internos:
       // se traduce lo conocido y lo demás va a un mensaje genérico.
-      console.error("create-staff: createUser", createUserError);
+      registrarError("create-staff: createUser", createUserError);
       return NextResponse.json({ error: mensajeAltaCuenta(createUserError) }, { status: 400 });
     }
 
@@ -156,7 +157,7 @@ export async function POST(request: Request) {
     if (profileError) {
       // Si el perfil no se pudo crear, no dejamos la cuenta de auth huérfana.
       await supabaseAdmin.auth.admin.deleteUser(userData.user.id);
-      console.error("create-staff: perfil", profileError);
+      registrarError("create-staff: perfil", profileError);
       return NextResponse.json({ error: "No se pudo crear la cuenta. Intenta de nuevo." }, { status: 400 });
     }
 
@@ -165,7 +166,7 @@ export async function POST(request: Request) {
       profile: { id: userData.user.id, nombre, role, club_id },
     });
   } catch (err) {
-    console.error("Error en /api/admin/create-staff:", err);
+    registrarError("create-staff: inesperado", err);
     return NextResponse.json(
       { error: "Error inesperado del servidor." },
       { status: 500 },

@@ -8,6 +8,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { esUuid, leerFactura, leerSuscripcion } from "@/lib/domain/mensualidad";
+import { enviarAlerta } from "@/lib/alertas";
 
 export type EventoStripe = { id: string; type: string; created: number; livemode: boolean; data: { object: unknown } };
 export type ResultadoEvento = "aplicado" | "repetido" | "ignorado" | "viejo" | "ocupado";
@@ -127,6 +128,12 @@ async function aplicar(svc: SupabaseClient, ev: EventoStripe): Promise<Resultado
       { onConflict: "stripe_invoice_id" },
     );
     if (r.error) throw new Error("factura: " + r.error.code);
+    if (estado === "fallido") {
+      // Con la bandera de alertas: aviso al admin (una vez por hora por antro).
+      const { data: c } = await svc.from("clubs").select("nombre").eq("id", club).maybeSingle();
+      await enviarAlerta(svc, `cobro_fallido:${club}`, `Cobro fallido: ${c?.nombre ?? "un antro"}`,
+        `Stripe no pudo cobrar la mensualidad de ${c?.nombre ?? "un antro"}. Entró en periodo de gracia; revisa /admin/mensualidad.`);
+    }
     return "aplicado";
   }
 

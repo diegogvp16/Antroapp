@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { BUCKET_VERIFICACION, validarMotivoRechazo } from "@/lib/verificacion";
+import { registrarError } from "@/lib/log";
 
 // Rechaza la verificación de un antro. Usa la service role key porque tiene
 // que borrar archivos del bucket privado y filas de verificacion_documentos
@@ -131,7 +132,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("Error en /api/admin/rechazar-verificacion:", err);
+    registrarError("rechazar-verificacion: inesperado", err);
     return NextResponse.json(
       { error: "Error inesperado del servidor." },
       { status: 500 },
