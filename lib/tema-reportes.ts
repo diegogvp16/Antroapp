@@ -1,4 +1,7 @@
-// Tema de las pantallas de números: /staff/nomina, /grupo y /dueno/nomina.
+// Tema de las pantallas de negocio: /staff/nomina, /grupo, todo /dueno/* y
+// todo /admin/* (paneles, equipo, mensualidad, alta de antros, logins).
+// El cliente tiene su propio tema oscuro (.theme-noche); la caja y el panel
+// del RP ya son .theme-caja.
 //
 // ÚNICO punto para elegirlo (bloque 4 de la noche 2, propuesta para Diego):
 //   "actual" -> como hoy (.theme-control: claro gris, solo Inter)
