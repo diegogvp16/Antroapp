@@ -81,6 +81,9 @@ export interface CajaPago {
   anulado_por: string | null;
   anulado_en: string | null;
   motivo_anulacion: string | null;
+  // Fase 2 (bandera NEXT_PUBLIC_FASE2): propina aparte del monto. Sin la
+  // bandera no se lee y queda indefinida.
+  propina_centavos?: number;
 }
 
 export interface CajaCuadre {
@@ -369,6 +372,19 @@ export interface DatosCaja {
   reservasSentables: ReservaSentable[];
   // Nombres de perfiles (RPs y personal) por id.
   nombres: Record<string, string>;
+  // Fase 2: catálogo activo del antro (vacío sin la bandera).
+  productos: Producto[];
+}
+
+// Fase 2: producto del catálogo (tabla productos).
+export interface Producto {
+  id: string;
+  nombre: string;
+  categoria: string;
+  precio_centavos: number;
+  existencias: number;
+  existencias_minimas: number;
+  activo: boolean;
 }
 
 // ---------------------------------------------------------------------------
