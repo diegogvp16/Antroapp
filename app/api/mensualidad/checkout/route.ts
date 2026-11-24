@@ -36,6 +36,12 @@ export async function POST(request: Request) {
       const r = await svc.from("suscripciones").upsert({ club_id: quien.club.id, stripe_customer_id: customer }, { onConflict: "club_id" });
       if (r.error) throw new Error("suscripciones: " + r.error.code);
     }
+    // ¿Ya hay una suscripción viva en Stripe (por ejemplo, un pago abierto en
+    // otra pestaña que ya se completó y el webhook no ha llegado)? No se cobra dos veces.
+    const vivas = await st.stripe.subscriptions.list({ customer, status: "all", limit: 20 });
+    if (vivas.data.some((x) => !["canceled", "incomplete_expired"].includes(x.status))) {
+      return NextResponse.json({ error: "Este antro ya tiene una suscripción en Stripe. Usa «Administrar pago»." }, { status: 409 });
+    }
     const origen = origenDe(request);
     const sesion = await st.stripe.checkout.sessions.create({
       mode: "subscription",

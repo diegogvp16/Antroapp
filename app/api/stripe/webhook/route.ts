@@ -35,6 +35,8 @@ export async function POST(request: Request) {
 
   try {
     const resultado = await procesarEvento(clienteServicio(), evento);
+    // Otro servidor lo está procesando: Stripe lo reintenta más tarde.
+    if (resultado === "ocupado") return NextResponse.json({ resultado }, { status: 503 });
     return NextResponse.json({ recibido: true, resultado });
   } catch (e) {
     console.error("stripe-webhook:", evento.type, evento.id, e instanceof Error ? e.message : "error");

@@ -190,6 +190,29 @@ try {
   await cron();
   revisar((await publicado(club.id)) === false, "después del corte, cancelada → no publicada");
 
+  // ---------- 6b. Arreglos de la revisión ----------
+  // Mismo segundo y en desorden: "updated active" llega antes que "created incomplete".
+  const { data: club2 } = await svc.from("clubs").insert({ nombre: `Mens Orden ${suf}`, direccion: "Calle 4", horario: "Vie", dueno_id: duenoOtro.id, suscripcion_activa: false }).select("id").single();
+  clubs.push(club2.id);
+  const SUB2 = `sub_orden${suf}`;
+  const sub2 = (status) => ({ ...subObj(status), id: SUB2, customer: `cus_orden${suf}`, metadata: { club_id: club2.id } });
+  const t0 = Math.floor(Date.now() / 1000) + 500;
+  await enviar(evento("customer.subscription.updated", sub2("active"), t0));
+  const ri = await enviar(evento("customer.subscription.created", sub2("incomplete"), t0));
+  revisar(ri.cuerpo.resultado === "viejo" && (await sus(club2.id)).estado === "activa", "mismo segundo y en desorden: gana «activa», no «incompleta»", JSON.stringify(ri.cuerpo));
+  // Otra suscripción del mismo antro mientras la vigente sigue activa.
+  const otra = await enviar(evento("customer.subscription.deleted", { ...sub2("canceled"), id: `sub_otra${suf}` }, t0 + 10));
+  revisar(otra.cuerpo.resultado === "ignorado" && (await sus(club2.id)).estado === "activa", "cancelar OTRA suscripción no toca la vigente");
+  // El mismo evento dos veces al mismo tiempo.
+  const doble = evento("customer.subscription.updated", sub2("active"), t0 + 20);
+  const [x1, x2] = await Promise.all([enviar(doble), enviar(doble)]);
+  const res = [x1.cuerpo.resultado, x2.cuerpo.resultado].sort().join(",");
+  revisar(["aplicado,repetido", "aplicado,ocupado"].includes(res) || (x2.status === 503 || x1.status === 503), `dos entregas simultáneas: se aplica una vez (${res})`);
+  // La tarea diaria vuelve a publicar a un antro con suscripción activa que quedó oculto.
+  await svc.from("clubs").update({ suscripcion_activa: false }).eq("id", club2.id);
+  const rp = await cron();
+  revisar(rp.cuerpo.republicados >= 1 && (await publicado(club2.id)) === true, "la tarea diaria vuelve a publicar a un antro pagado que quedó oculto");
+
   // ---------- 7. RLS ----------
   revisar(((await dueno.c.from("suscripciones").select("estado").eq("club_id", club.id)).data ?? []).length === 1, "el dueño ve su suscripción");
   revisar(((await dueno.c.from("pagos_mensualidad").select("id").eq("club_id", club.id)).data ?? []).length === 2, "y su historial");
