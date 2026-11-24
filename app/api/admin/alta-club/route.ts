@@ -92,7 +92,7 @@ export async function POST(request: Request) {
           email: c.correo,
           password,
           email_confirm: true,
-          app_metadata: { alta_club: true, alta_id: altaId },
+          app_metadata: { alta_club: true, alta_id: altaId, debe_cambiar: true },
         });
         if (res.error || !res.data.user) return { c, error: res.error };
         creadas.set(c.correo, res.data.user.id);
