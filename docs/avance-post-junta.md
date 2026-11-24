@@ -23,8 +23,8 @@ Orden pedido: 1 → 5 → 4 → 3 → 2 → 8 → 7 → 6 → 9 → 10.
 | 1. Alta de antro desde /admin | ✅ Hecho y probado en dev |
 | 5. Puerta y equipo | ✅ Hecho y probado en dev |
 | 4. CAPTCHA y antiabuso | ✅ Hecho (bandera apagada); falta probar el registro completo |
-| 3. Legales | ⏳ Siguiente |
-| 2. Mensualidad con Stripe (prueba) | Pendiente |
+| 3. Legales | ✅ Borradores + páginas y casillas (bandera apagada) |
+| 2. Mensualidad con Stripe (prueba) | ⏳ Siguiente |
 | 8. Qué ve el RP, por antro | Pendiente |
 | 7. Fase 2 | Pendiente |
 | 6. Monitoreo y operación | Pendiente |
@@ -218,3 +218,44 @@ prueba públicas de Cloudflare). Resultado: 29 pasan, 0 fallan, 1 saltada.
 **Para producción (pase 2)**: `04-antiabuso.sql` antes del código (sin la
 tabla, el registro por servidor responde «No pudimos crear tu cuenta»; con
 la bandera apagada no se usa). Rollback: `04-antiabuso-rollback.sql`.
+
+---
+
+## Bloque 3 — Legales ✅ (borradores; bandera apagada)
+
+**Qué quedó**
+
+- `docs/legal/` (todos marcados **«BORRADOR: requiere revisión de un
+  abogado»**, no son asesoría legal): `terminos.md`, `privacidad.md` (aviso
+  integral: datos, finalidades, con quién se comparten, ARCO, contacto,
+  conservación), `reservas-y-qr.md` (el QR no garantiza la entrada; derecho
+  de admisión sin discriminación; no se cobra al cliente),
+  `contrato-antro.md` (mensualidad sin cifras, gracia sin bloqueo en plena
+  noche, responsabilidades, datos) e `inventario-datos.md` (tablas y
+  columnas con datos personales, verificado contra el esquema de dev).
+  Preguntas abiertas para el abogado en `docs/legal/README.md`.
+- Bandera `NEXT_PUBLIC_LEGALES=1` (apagada): `/terminos` (incluye la política
+  de reservas) y `/privacidad`, con aviso de «Borrador en revisión»; casilla
+  obligatoria en `/cliente/signup`; en la primera entrada del RP a su panel,
+  pantalla «Antes de empezar» para aceptar. Apagada: 404 y formularios
+  iguales.
+- `sql/post-junta/05-legales.sql`: `aceptaciones_legales` (quién, qué
+  documento, qué versión; la fecha la pone la base). Cada quien inserta y lee
+  lo suyo; el admin lee todo; nadie modifica ni borra.
+- Los textos de las páginas salen de los `.md` con
+  `node scripts/legal-a-paginas.mjs` (`--revisar` avisa si no coinciden).
+  Al cambiar un documento, subir `VERSION_LEGAL` en `lib/legal/version.ts`.
+
+**Cómo probarlo**: `node scripts/dev/probar-legales.mjs` con los servidores
+de su cabecera (3001 sin bandera; 3003 con `NEXT_PUBLIC_LEGALES=1`): 22/22.
+Capturas en `screenshots-post-junta/legales/`.
+
+**Notas**
+- No hay registro público de RPs (los crea el staff): la casilla del RP es
+  en su **primera entrada** al panel.
+- Si el cliente se registra con confirmación por correo encendida (como en
+  dev), no hay sesión para guardar su aceptación en el flujo de siempre; con
+  la bandera del CAPTCHA (registro por servidor) sí se guarda.
+
+**Para producción (pase 2)**: `05-legales.sql` antes de encender la bandera.
+Rollback: `05-legales-rollback.sql` (borra la constancia: exportarla antes).
