@@ -905,9 +905,10 @@ export default function DuenoPanelPage() {
                     onClick={() => handleDeletePhoto(photo)}
                     disabled={deletingPhotoId === photo.id}
                     aria-label="Eliminar foto"
-                    className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-sm bg-black/75 text-sm text-white hover:bg-black/90 disabled:opacity-50"
+                    className="group absolute right-0 top-0 flex h-10 w-10 items-center justify-center disabled:opacity-50"
                   >
-                    ×
+                    {/* Área táctil de 40 px; la marca visible sigue de 24 px. */}
+                    <span className="flex h-6 w-6 items-center justify-center rounded-sm bg-black/75 text-sm text-white group-hover:bg-black/90">×</span>
                   </button>
                 </div>
               ))}
@@ -981,7 +982,7 @@ export default function DuenoPanelPage() {
                         onClick={() => handleDeleteTable(table)}
                         disabled={deletingTableId === table.id}
                         aria-label={`Eliminar mesa ${table.numero}`}
-                        className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                        className="-my-2 -mr-2 flex size-10 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                       >
                         ×
                       </button>

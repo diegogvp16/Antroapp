@@ -123,6 +123,7 @@ export default function ClientePerfilPage() {
             type="button"
             variant="outline"
             size="sm"
+            className="h-10 px-3"
             onClick={handleLogout}
           >
             Cerrar sesión

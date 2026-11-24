@@ -226,7 +226,7 @@ export default function ClientePage() {
           </h1>
           <Link
             href="/cliente/perfil"
-            className="whitespace-nowrap rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
+            className="inline-flex min-h-10 items-center whitespace-nowrap rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-muted"
           >
             Mi perfil
           </Link>

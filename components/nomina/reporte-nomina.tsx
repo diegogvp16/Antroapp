@@ -267,7 +267,7 @@ export function ReporteNomina({ clubId, clubNombre }: { clubId: string; clubNomb
                   <div className="flex flex-col gap-2">
                     <button
                       type="button"
-                      className="w-fit text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                      className="min-h-10 w-fit text-left text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
                       onClick={() => setVerSinMovimiento((v) => !v)}
                       aria-expanded={verSinMovimiento}
                     >

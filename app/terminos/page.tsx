@@ -13,7 +13,7 @@ export default function TerminosPage() {
   if (!legalesActivos()) notFound();
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-5 py-10 sm:px-8">
-      <Link href="/" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
+      <Link href="/" className="inline-flex min-h-10 w-fit items-center text-sm text-muted-foreground underline-offset-4 hover:underline">
         ← AntroApp
       </Link>
       <AvisoBorrador />

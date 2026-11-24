@@ -110,7 +110,7 @@ export default function AltaAntroPage() {
     <div className="flex flex-1 flex-col items-center px-4 py-8 sm:px-6">
       <div className="flex w-full max-w-2xl flex-col gap-5">
         <div className="flex items-center justify-between gap-3">
-          <Link href="/admin" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
+          <Link href="/admin" className="inline-flex min-h-10 w-fit items-center text-sm text-muted-foreground underline-offset-4 hover:underline">
             ← Panel admin
           </Link>
         </div>
@@ -147,7 +147,7 @@ export default function AltaAntroPage() {
                   <li key={nombre}>
                     <button
                       type="button"
-                      className="flex w-full flex-col gap-1 py-2 text-left disabled:cursor-default"
+                      className="flex min-h-11 w-full flex-col justify-center gap-1 py-2 text-left disabled:cursor-default"
                       aria-current={i === paso ? "step" : undefined}
                       aria-label={`Paso ${i + 1}: ${nombre}`}
                       disabled={i > paso}

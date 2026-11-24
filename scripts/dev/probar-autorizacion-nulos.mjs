@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { verificarEnvDev } from "../db/conexion.mjs";
+import { verificarEnvDev, conectarDevEscritura } from "../db/conexion.mjs";
 
 const env = verificarEnvDev();
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -52,7 +52,24 @@ try {
 } catch (e) {
   revisar(false, "error inesperado: " + e.message);
 } finally {
-  await svc.from("productos").delete().eq("club_id", CLUB).eq("nombre", "Nulos");
+  // Si algo SÍ pasó (por ejemplo, corriendo sin el arreglo), se deshace aquí
+  // para no dejar Club Demo Dev cambiado.
+  const db = await conectarDevEscritura();
+  try {
+    await db.q("begin");
+    await db.q("set local antroapp.borrado_pruebas = 'on'");
+    await db.q("delete from public.caja_permisos where actualizado_por = any($1::uuid[])", [ids]);
+    await db.q("delete from public.club_config_rp where actualizado_por = any($1::uuid[])", [ids]);
+    await db.q("delete from public.config_rp_cambios where hecho_por = any($1::uuid[])", [ids]);
+    await db.q("delete from public.producto_movimientos where producto_id in (select id from public.productos where club_id = $1 and nombre = 'Nulos')", [CLUB]);
+    await db.q("delete from public.productos where club_id = $1 and nombre = 'Nulos'", [CLUB]);
+    await db.q("commit");
+  } catch (e) {
+    await db.q("rollback");
+    console.log("Limpieza: " + e.message);
+  } finally {
+    await db.fin();
+  }
   if (ids.length) await svc.from("profiles").delete().in("id", ids);
   for (const id of ids) await svc.auth.admin.deleteUser(id);
   console.log(`\n${pasan} pasan, ${fallan} fallan`);

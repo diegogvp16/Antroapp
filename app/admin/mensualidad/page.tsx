@@ -105,7 +105,7 @@ export default function MensualidadAdminPage() {
   return (
     <div className="flex flex-1 flex-col items-center px-4 py-8 sm:px-6">
       <div className="flex w-full max-w-3xl flex-col gap-6">
-        <Link href="/admin" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
+        <Link href="/admin" className="inline-flex min-h-10 w-fit items-center text-sm text-muted-foreground underline-offset-4 hover:underline">
           ← Panel admin
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight">Mensualidades</h1>

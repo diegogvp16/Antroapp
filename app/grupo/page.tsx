@@ -157,7 +157,7 @@ export default function GrupoPage() {
       <div className="flex w-full max-w-2xl min-w-0 flex-col gap-5">
         <Link
           href={VOLVER[sesion.rol]}
-          className="w-fit text-sm font-medium text-muted-foreground hover:text-foreground"
+          className="inline-flex min-h-10 w-fit items-center text-sm font-medium text-muted-foreground hover:text-foreground"
         >
           ← Volver
         </Link>

@@ -78,7 +78,7 @@ export function SelectorRango({
             disabled={deshabilitado}
             onClick={() => elegir(a)}
             className={cn(
-              "h-8 rounded-md px-2 text-sm font-medium text-muted-foreground disabled:opacity-50",
+              "h-10 rounded-md px-2 text-sm font-medium text-muted-foreground disabled:opacity-50",
               activo === a && "bg-background text-foreground shadow-sm",
             )}
           >

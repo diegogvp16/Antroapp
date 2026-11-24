@@ -48,7 +48,7 @@ export function PantallaEquipo({ para }: { para: "gerente" | "dueno" }) {
   return (
     <div className="flex flex-1 flex-col items-center px-4 py-8 sm:px-6">
       <div className="flex w-full max-w-2xl flex-col gap-6">
-        <Link href={volver} className="text-sm text-muted-foreground underline-offset-4 hover:underline">
+        <Link href={volver} className="inline-flex min-h-10 w-fit items-center text-sm text-muted-foreground underline-offset-4 hover:underline">
           ← Volver al panel
         </Link>
         <header className="flex flex-col gap-1">
