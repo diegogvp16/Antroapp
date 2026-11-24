@@ -18,6 +18,17 @@ probarlo y con qué usuario de dev.
 
 Orden pedido: 1 → 5 → 4 → 3 → 2 → 8 → 7 → 6 → 9 → 10.
 
+> **⚠ Hallazgo ALTO en el SQL del pase 1** (encontrado en el bloque 7,
+> arreglado en `sql/post-junta/10-autorizacion-sin-nulos.sql`, solo dev):
+> varias funciones autorizan con `if not (rol = admin or …) then raise`, y
+> en plpgsql eso **no rechaza** cuando la condición da NULL. Una cuenta de
+> Auth **sin perfil** (cualquiera la crea con `signUp` directo a Supabase)
+> leía en dev la **nómina** y el **rendimiento por RP de cualquier antro** y
+> la actividad. Con perfiles dados de baja o con contraseña temporal,
+> también podía configurar permisos de caja. **Aplicar el 10 en el mismo pase**, justo
+> después del SQL del pase 1. Prueba: `node scripts/dev/probar-autorizacion-nulos.mjs`
+> (sin el arreglo fallan 12 o más; con él 32/32).
+
 | Bloque | Estado |
 |---|---|
 | 1. Alta de antro desde /admin | ✅ Hecho y probado en dev |
@@ -26,8 +37,8 @@ Orden pedido: 1 → 5 → 4 → 3 → 2 → 8 → 7 → 6 → 9 → 10.
 | 3. Legales | ✅ Borradores + páginas y casillas (bandera apagada) |
 | 2. Mensualidad con Stripe (prueba) | ✅ Hecho sin llaves reales (bandera apagada); falta probar con tus llaves de prueba |
 | 8. Qué ve el RP, por antro | ✅ Hecho y probado en dev |
-| 7. Fase 2 | ⏳ Siguiente |
-| 6. Monitoreo y operación | Pendiente |
+| 7. Fase 2 | ✅ Integrada (bandera apagada) + CSV y alerta |
+| 6. Monitoreo y operación | ⏳ Siguiente |
 | 9. Tema oscuro y pulido | Pendiente |
 | 10. Cierre | Pendiente |
 
@@ -356,3 +367,31 @@ y código):
 
 Pruebas: mensualidad 60/60, alta 54/54, legales 22/22, baja 39/39,
 config RP 28/28, caja 167/167, visibilidad 68/68, login 15/15.
+
+---
+
+## Bloque 7 — Fase 2: catálogo, inventario y propinas ✅ (bandera apagada)
+
+**Qué quedó**
+
+- Rama `fase2` fusionada en `post-junta` **sin conflictos** (la rama `fase2`
+  no se tocó) y su SQL (`sql/fase2/2026-11-21-inventario-propinas.sql`)
+  vuelto a aplicar en dev. Ya traía: alerta de existencias bajas en el
+  catálogo y en la hoja de consumo; venta que **no** se bloquea por
+  existencias (queda negativa con aviso); propina aparte del consumo, del
+  saldo y de la comisión del RP; propinas por mesa y «Propinas de la noche»
+  en el cuadre; hoja «Agregar consumo» con catálogo, categorías y buscador;
+  catálogo editable por el gerente.
+- Nuevo: **importar el catálogo desde CSV** (`producto_importar`,
+  `sql/post-junta/09-catalogo-csv.sql`; todo o nada, error con número de
+  fila, no toca existencias de productos que ya existen) y **alerta de
+  existencias bajas en el panel del gerente**.
+
+**Cómo probarlo**: `node scripts/dev/probar-fase2.mjs` (51/51) y
+`node scripts/dev/probar-catalogo-csv.mjs` (16/16). Pantallas con la bandera
+encendida y apagada: en el bloque 10.
+
+**Para producción (pase 2, solo si se decide pasar la fase 2)**:
+`sql/fase2/2026-11-21-inventario-propinas.sql` y luego `09-catalogo-csv.sql`.
+Rollbacks: `09-catalogo-csv-rollback.sql`, `sql/fase2/…-rollback.sql`.
+Decisiones abiertas de la fase 2 en `docs/fase2.md`.
