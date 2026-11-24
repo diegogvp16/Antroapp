@@ -22,8 +22,8 @@ Orden pedido: 1 → 5 → 4 → 3 → 2 → 8 → 7 → 6 → 9 → 10.
 |---|---|
 | 1. Alta de antro desde /admin | ✅ Hecho y probado en dev |
 | 5. Puerta y equipo | ✅ Hecho y probado en dev |
-| 4. CAPTCHA y antiabuso | ⏳ Siguiente |
-| 3. Legales | Pendiente |
+| 4. CAPTCHA y antiabuso | ✅ Hecho (bandera apagada); falta probar el registro completo |
+| 3. Legales | ⏳ Siguiente |
 | 2. Mensualidad con Stripe (prueba) | Pendiente |
 | 8. Qué ve el RP, por antro | Pendiente |
 | 7. Fase 2 | Pendiente |
@@ -117,8 +117,8 @@ ni altos. Arreglado después (commit `97868dd`):
 
 Queda abierto (decisión tuya, en el reporte): las contraseñas temporales no
 expiran y las cuentas nacen confirmadas; un correo mal escrito del dueño
-queda ligado al antro. Se mitiga en el bloque 4 con «cambiar contraseña en
-el primer inicio».
+queda ligado al antro. Mitigado en el bloque 4: el primer inicio obliga a
+elegir contraseña propia (la temporal deja de servir).
 
 **Para producción (pase 2)**: aplicar `sql/post-junta/01-alta-club.sql`
 **antes** de publicar el código (sin la función, el asistente responde «No se
@@ -177,3 +177,44 @@ cuenta está desactivada»; sigue rechazado y el panel lo saca con el aviso).
 pantallas de equipo fallan con «No se pudo guardar»). Rollback en orden
 inverso: `03-actividad-rollback.sql`, `02-baja-personal-rollback.sql`
 (regresa los ayudantes y el trigger; no reactiva a nadie).
+
+---
+
+## Bloque 4 — CAPTCHA y antiabuso ✅ (bandera apagada)
+
+**Qué quedó** (detalle y pasos clic a clic: `docs/captcha.md`)
+
+- Turnstile en `/cliente/login`, `/dueno/login`, `/admin/login`, registros y
+  recuperar contraseña, **solo** con `NEXT_PUBLIC_CAPTCHA_TURNSTILE=1` +
+  `NEXT_PUBLIC_TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY`. Apagada: no se
+  carga nada de Cloudflare y todo funciona como antes (probado).
+- Verificación en el servidor (`lib/captcha-servidor.ts`). **Falla segura**:
+  si la casilla no carga o Cloudflare no responde, se entra en «modo
+  degradado» con límites más estrictos (3 fallos por correo+IP, 8 por IP, 2
+  registros por IP por hora); un token inválido sí se rechaza.
+- Con la bandera, los registros pasan por `POST /api/auth/registro`: CAPTCHA,
+  máximo 5 registros por IP por hora (`sql/post-junta/04-antiabuso.sql`) y
+  sin cuentas a medias (si falla el perfil o el antro, se borra la cuenta).
+- Modo opcional `supabase` (Supabase Auth verifica el token; más estricto,
+  pero si Cloudflare cae nadie entra).
+- **Contraseña temporal del alta**: el primer inicio manda a
+  `/cambiar-contrasena`; la ruta cambia la contraseña y quita la marca en un
+  paso. (Fuera de la bandera: solo afecta a cuentas creadas por el alta.)
+- `lib/supabase/servicio.ts` ahora es `server-only`.
+
+**Cómo probarlo**: `node scripts/dev/probar-captcha.mjs` con los dos
+servidores que indica su cabecera (3001 sin bandera, 3003 con las llaves de
+prueba públicas de Cloudflare). Resultado: 29 pasan, 0 fallan, 1 saltada.
+
+**Pendiente**
+- El registro completo por el servidor (cliente y dueño) quedó **sin
+  probar**: dev tiene la confirmación por correo encendida y se agotó el
+  límite de correos de Supabase. Se repite en el bloque 10.
+- **Por confirmar con Diego**: si producción tiene «Confirm email» encendido,
+  el registro de siempre (sin bandera) no puede crear el perfil.
+- Propuestas de límites (reservas sin cuenta, recuperar contraseña) en
+  `docs/captcha.md`.
+
+**Para producción (pase 2)**: `04-antiabuso.sql` antes del código (sin la
+tabla, el registro por servidor responde «No pudimos crear tu cuenta»; con
+la bandera apagada no se usa). Rollback: `04-antiabuso-rollback.sql`.
