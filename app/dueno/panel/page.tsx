@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { EquipoPersonal } from "@/components/equipo/equipo-personal";
+import { mensualidadActiva } from "@/lib/mensualidad/bandera";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -593,7 +594,13 @@ export default function DuenoPanelPage() {
               </Badge>
             )}
           </div>
-          {!club.suscripcion_activa && (
+          {/* Con la mensualidad real (bandera), el pago vive en /dueno/mensualidad. */}
+          {mensualidadActiva() && (
+            <Button render={<Link href="/dueno/mensualidad" />} nativeButton={false} variant="outline" className="h-10 self-start">
+              Mi mensualidad: plan, pagos y tarjeta
+            </Button>
+          )}
+          {!mensualidadActiva() && !club.suscripcion_activa && (
             <Card>
               <CardContent className="flex flex-col gap-3 px-6 py-6">
                 <p className="text-sm text-muted-foreground">

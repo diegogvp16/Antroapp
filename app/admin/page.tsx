@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/card";
 import { VerificacionesPendientes } from "@/components/verificaciones-pendientes";
 import { ErroresRecientes } from "@/components/errores-recientes";
+import { mensualidadActiva } from "@/lib/mensualidad/bandera";
 import type { Club } from "@/types";
 
 interface ConsumoBucket {
@@ -360,6 +361,12 @@ export default function AdminPage() {
             Cerrar sesión
           </Button>
         </div>
+
+        {mensualidadActiva() && (
+          <Button variant="outline" className="h-10 self-start" render={<Link href="/admin/mensualidad" />} nativeButton={false}>
+            Mensualidades y planes
+          </Button>
+        )}
 
         <VerificacionesPendientes onCambio={fetchClubs} />
 
