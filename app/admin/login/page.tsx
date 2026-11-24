@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { iniciarSesion } from "@/lib/login";
+import { Turnstile, type TurnstileRef } from "@/components/turnstile";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,6 +22,8 @@ export default function AdminLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const captcha = useRef<TurnstileRef>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent) {
@@ -35,7 +38,9 @@ export default function AdminLoginPage() {
     setSubmitting(true);
     try {
       // Pasa por /api/auth/login: límite de intentos en el servidor.
-      const resultado = await iniciarSesion(email.trim(), password);
+      const resultado = await iniciarSesion(email.trim(), password, captchaToken);
+      // El token del CAPTCHA es de un solo uso.
+      captcha.current?.reiniciar();
       if (!resultado.ok) {
         setError(resultado.error);
         return;
@@ -54,6 +59,10 @@ export default function AdminLoginPage() {
         return;
       }
 
+      if (resultado.debeCambiar) {
+        router.push("/cambiar-contrasena");
+        return;
+      }
       router.push("/admin");
     } catch (err) {
       console.error(err);
@@ -98,6 +107,8 @@ export default function AdminLoginPage() {
                 {error}
               </p>
             )}
+
+            <Turnstile ref={captcha} onToken={setCaptchaToken} accion="login" />
 
             <Button
               type="submit"

@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { captchaActivo, modoCaptcha } from "@/lib/captcha";
+import { Turnstile, type TurnstileRef } from "@/components/turnstile";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +20,8 @@ export default function RecuperarContrasenaPage() {
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const captcha = useRef<TurnstileRef>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -28,7 +32,11 @@ export default function RecuperarContrasenaPage() {
       const supabase = createClient();
       const { error } = await supabase.auth.resetPasswordForEmail(
         email.trim(),
-        { redirectTo: `${window.location.origin}/actualizar-contrasena` },
+        {
+          redirectTo: `${window.location.origin}/actualizar-contrasena`,
+          // Modo "supabase" del CAPTCHA: Supabase Auth exige el token aquí.
+          ...(captchaActivo() && modoCaptcha() === "supabase" && captchaToken ? { captchaToken } : {}),
+        },
       );
       if (error) {
         console.error("Error solicitando reset de contraseña:", error);
@@ -88,6 +96,8 @@ export default function RecuperarContrasenaPage() {
                 required
               />
             </div>
+
+            <Turnstile ref={captcha} onToken={setCaptchaToken} accion="recuperar" />
 
             <Button
               type="submit"

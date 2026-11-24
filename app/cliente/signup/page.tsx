@@ -1,9 +1,12 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { captchaActivo } from "@/lib/captcha";
+import { registrarEnServidor } from "@/lib/registro";
+import { Turnstile, type TurnstileRef } from "@/components/turnstile";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +27,8 @@ export default function ClienteSignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const captcha = useRef<TurnstileRef>(null);
   const [error, setError] = useState<string | null>(null);
   const [emailTaken, setEmailTaken] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState(false);
@@ -45,6 +50,22 @@ export default function ClienteSignupPage() {
     }
 
     setSubmitting(true);
+    // Con la bandera del CAPTCHA encendida, el registro pasa por el servidor
+    // (CAPTCHA, límite por IP y sin cuentas a medias). Apagada: como siempre.
+    if (captchaActivo()) {
+      const r = await registrarEnServidor({ tipo: "cliente", nombre: nombre.trim(), telefono: telefono.trim(), email: email.trim(), password, captchaToken });
+      captcha.current?.reiniciar();
+      setSubmitting(false);
+      if (r.ok) {
+        if (r.sesion) router.push("/cliente");
+        else setPendingConfirmation(true);
+      } else if (r.emailTaken) {
+        setEmailTaken(true);
+      } else {
+        setError(r.error);
+      }
+      return;
+    }
     try {
       const supabase = createClient();
       const { data: signUpData, error: signUpError } =
@@ -179,6 +200,8 @@ export default function ClienteSignupPage() {
                 </Link>
               </p>
             )}
+
+            <Turnstile ref={captcha} onToken={setCaptchaToken} accion="registro" />
 
             <Button
               type="submit"

@@ -11,6 +11,14 @@ import {
   minutosDeBloqueo,
   type Intento,
 } from "@/lib/domain/login";
+import { captchaActivo, modoCaptcha } from "@/lib/captcha";
+import { verificarTurnstile } from "@/lib/captcha-servidor";
+import {
+  DEGRADADO_MAX_FALLOS_POR_CORREO_E_IP,
+  DEGRADADO_MAX_FALLOS_POR_IP,
+  MENSAJE_CAPTCHA_INVALIDO,
+  decidirCaptcha,
+} from "@/lib/domain/captcha";
 
 // Login con límite de intentos. Los formularios de login (cliente, dueño y
 // admin) entran por aquí: la ruta revisa los fallos recientes de ese correo
@@ -22,6 +30,11 @@ import {
 // Esto limita los formularios de la app. Quien llame a Supabase Auth directo
 // con la anon key se salta esta ruta: para eso están los límites por IP y el
 // CAPTCHA de Supabase Auth (se activan en su dashboard).
+//
+// CAPTCHA (lib/captcha.ts, apagado por defecto): con la bandera encendida en
+// modo "app" se verifica aquí el token de Turnstile; si no llega o Cloudflare
+// no responde, se deja pasar con límites más estrictos (modo degradado). En
+// modo "supabase" el token se le pasa a Supabase Auth, que lo verifica.
 
 const ERROR_GENERICO = "Email o contraseña incorrectos.";
 const CUENTAS_DE_TRABAJO = ["rp", "staff", "gerente"];
@@ -29,12 +42,14 @@ const CUENTAS_DE_TRABAJO = ["rp", "staff", "gerente"];
 export async function POST(request: Request) {
   let email = "";
   let password = "";
+  let captchaToken: unknown = null;
   try {
     const cuerpo: unknown = await request.json();
     if (typeof cuerpo === "object" && cuerpo !== null) {
       const c = cuerpo as Record<string, unknown>;
       email = typeof c.email === "string" ? c.email.trim().toLowerCase() : "";
       password = typeof c.password === "string" ? c.password : "";
+      captchaToken = c.captchaToken;
     }
   } catch {
     // Cuerpo inválido: se trata como datos vacíos.
@@ -42,6 +57,17 @@ export async function POST(request: Request) {
   if (!email || !password || email.length > 254 || password.length > 200) {
     return NextResponse.json({ error: "Ingresa tu email y contraseña." }, { status: 400 });
   }
+
+  // CAPTCHA (solo con la bandera encendida).
+  let degradado = false;
+  const conCaptcha = captchaActivo();
+  if (conCaptcha && modoCaptcha() === "app") {
+    const decision = decidirCaptcha(await verificarTurnstile(captchaToken, ipDe(request)));
+    if (!decision.permitir) return NextResponse.json({ error: decision.error, captcha: true }, { status: 400 });
+    degradado = decision.degradado;
+  }
+  const maxIp = degradado ? DEGRADADO_MAX_FALLOS_POR_IP : MAX_FALLOS_POR_IP;
+  const maxCorreoIp = degradado ? DEGRADADO_MAX_FALLOS_POR_CORREO_E_IP : MAX_FALLOS_POR_CORREO_E_IP;
 
   const admin = clienteServicio();
   const emailHash = hashTexto(email);
@@ -61,18 +87,26 @@ export async function POST(request: Request) {
 
   const bloqueo = Math.max(
     minutosDeBloqueo(fallosDesdeUltimoExito((porCorreo.data ?? []) as Intento[]), MAX_FALLOS_POR_CORREO),
-    minutosDeBloqueo(((porIp.data ?? []) as Intento[]).filter((i) => !i.exito), MAX_FALLOS_POR_IP),
+    minutosDeBloqueo(((porIp.data ?? []) as Intento[]).filter((i) => !i.exito), maxIp),
   );
   const fallosParCorreoIp = fallosDesdeUltimoExito(
     ((porCorreo.data ?? []) as (Intento & { ip_hash: string })[]).filter((i) => i.ip_hash === ipHash),
   );
-  const bloqueoTotal = Math.max(bloqueo, minutosDeBloqueo(fallosParCorreoIp, MAX_FALLOS_POR_CORREO_E_IP));
+  const bloqueoTotal = Math.max(bloqueo, minutosDeBloqueo(fallosParCorreoIp, maxCorreoIp));
   if (bloqueoTotal > 0) {
     return NextResponse.json({ error: mensajeBloqueo(bloqueoTotal), bloqueadoMinutos: bloqueoTotal }, { status: 429 });
   }
 
   const supabase = await createClient();
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+    // Modo "supabase": Supabase Auth verifica el token.
+    ...(conCaptcha && modoCaptcha() === "supabase" && typeof captchaToken === "string" ? { options: { captchaToken } } : {}),
+  });
+  if (error?.code === "captcha_failed") {
+    return NextResponse.json({ error: MENSAJE_CAPTCHA_INVALIDO, captcha: true }, { status: 400 });
+  }
   const exito = !error && !!data.session;
 
   const registro = await admin.from("login_intentos").insert({ email_hash: emailHash, ip_hash: ipHash, exito });
@@ -89,5 +123,7 @@ export async function POST(request: Request) {
     await supabase.auth.signOut();
     return NextResponse.json({ error: "Tu cuenta ha sido desactivada, contacta al antro." }, { status: 403 });
   }
-  return NextResponse.json({ ok: true, userId: data.user.id });
+  // Cuenta creada con contraseña temporal (alta de antros): que la cambie.
+  const debeCambiar = data.user.app_metadata?.debe_cambiar === true;
+  return NextResponse.json({ ok: true, userId: data.user.id, ...(debeCambiar ? { debeCambiar: true } : {}) });
 }

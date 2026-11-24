@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { iniciarSesion } from "@/lib/login";
+import { Turnstile, type TurnstileRef } from "@/components/turnstile";
 import { AVISO_CUENTA_DADA_DE_BAJA } from "@/lib/cuenta-dada-de-baja";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +23,8 @@ export default function ClienteLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const captcha = useRef<TurnstileRef>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Llegó aquí porque lo dieron de baja con la sesión abierta.
@@ -41,7 +44,9 @@ export default function ClienteLoginPage() {
     setSubmitting(true);
     try {
       // Pasa por /api/auth/login: límite de intentos en el servidor.
-      const resultado = await iniciarSesion(email.trim(), password);
+      const resultado = await iniciarSesion(email.trim(), password, captchaToken);
+      // El token del CAPTCHA es de un solo uso.
+      captcha.current?.reiniciar();
       if (!resultado.ok) {
         setError(resultado.error);
         return;
@@ -63,6 +68,11 @@ export default function ClienteLoginPage() {
       if (["rp", "staff", "gerente"].includes(profile.role) && profile.activo !== true) {
         await supabase.auth.signOut();
         setError(AVISO_CUENTA_DADA_DE_BAJA);
+        return;
+      }
+
+      if (resultado.debeCambiar) {
+        router.push("/cambiar-contrasena");
         return;
       }
 
@@ -130,6 +140,8 @@ export default function ClienteLoginPage() {
                 {error}
               </p>
             )}
+
+            <Turnstile ref={captcha} onToken={setCaptchaToken} accion="login" />
 
             <Button
               type="submit"

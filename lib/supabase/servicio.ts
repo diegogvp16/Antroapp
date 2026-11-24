@@ -1,3 +1,4 @@
+import "server-only";
 // Cliente con la service role key. SOLO para rutas de servidor (app/api):
 // nunca importarlo desde un componente "use client" (la llave no lleva
 // NEXT_PUBLIC_, así que en el navegador quedaría vacía y fallaría).
