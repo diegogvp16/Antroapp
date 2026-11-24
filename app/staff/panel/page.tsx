@@ -29,6 +29,7 @@ import {
 import { nocheOperativaMexico, semanaMexico } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
 import { FASE2_ACTIVA } from "@/lib/fase2";
+import { AvisoExistencias } from "@/components/inventario/aviso-existencias";
 import { esErrorDeRed, mensajeParaUsuario, MENSAJE_SIN_CONEXION, type ErrorBase } from "@/lib/errores-base";
 import type { Club, ClubTable, Profile, Reservation } from "@/types";
 
@@ -1307,13 +1308,14 @@ export default function StaffPanelPage() {
                 render={<Link href="/staff/catalogo" />}
                 nativeButton={false}
                 variant="outline"
-                className="col-span-2 w-full"
+                className="w-full"
               >
                 Catálogo e inventario
               </Button>
             )}
           </div>
         )}
+        {staffRole === "gerente" && clubId && <AvisoExistencias clubId={clubId} />}
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
           <Card size="sm">

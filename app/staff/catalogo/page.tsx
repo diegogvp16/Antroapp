@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AjusteExistencias, FormularioProducto } from "@/components/inventario/formulario-producto";
+import { ImportarCsv } from "@/components/inventario/importar-csv";
 import { formatearCentavos, type Producto } from "@/lib/domain/caja";
 import { bajoStock, categorias, textoExistencias } from "@/lib/domain/inventario";
 import { mensajeParaUsuario } from "@/lib/errores-base";
@@ -110,6 +111,8 @@ export default function CatalogoPage() {
                 <FormularioProducto clubId={clubId} categoriasExistentes={listaCategorias} onGuardado={cargar} />
               </CardContent>
             </Card>
+
+            <ImportarCsv clubId={clubId} onListo={cargar} />
 
             {errorLista && (
               <div className="flex flex-col gap-2" role="alert">

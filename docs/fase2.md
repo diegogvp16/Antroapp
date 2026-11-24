@@ -62,3 +62,17 @@ la bandera apagada en esta rama).
 - Catálogo desde el panel del dueño.
 - La firma de la noche no incluye cambios del catálogo: si el gerente cambia
   un precio, la caja lo ve al siguiente movimiento o al recargar.
+
+## Integración en `post-junta` (24/11/2026)
+
+- La rama `fase2` se fusionó en `post-junta` sin conflictos (la rama `fase2`
+  no se tocó). Su SQL (`sql/fase2/…`) se volvió a aplicar en dev.
+- **Importar el catálogo desde CSV** (`/staff/catalogo`, «Importar desde
+  CSV»): «nombre, categoría, precio, mínimo, existencias», encabezado
+  opcional, coma, punto y coma o tabulador. Primero «Revisar» (vista previa y
+  errores por línea) y luego «Importar». Todo o nada
+  (`producto_importar`, `sql/post-junta/09-catalogo-csv.sql`). Un producto
+  que ya existe actualiza precio, categoría y mínimo, **no** sus existencias.
+- **Alerta de existencias bajas** también en el panel del gerente (enlaza al
+  catálogo). La venta sigue sin bloquearse por existencias.
+- Pruebas: `probar-fase2.mjs` 51/51 y `probar-catalogo-csv.mjs` 16/16.
