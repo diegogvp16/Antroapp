@@ -5,6 +5,11 @@
 //   PLAYWRIGHT_DESDE=<carpeta con node_modules/playwright y qrcode> \
 //     node scripts/dev/probar-escaner.mjs [http://localhost:3001]
 //
+// Linterna: con luz "normal" la cámara falsa dice que SÍ tiene linterna
+// (se simula getCapabilities/applyConstraints): el botón aparece, se prende y
+// el QR se sigue leyendo. Con las otras luces la cámara falsa no tiene
+// linterna: el botón no aparece y el escáner funciona igual.
+//
 // Crea sus propias reservas de esta noche en Club Demo Dev (no gasta las de
 // la demo) y las borra al final. Capturas en screenshots-escaner/.
 
@@ -80,6 +85,21 @@ try {
     const nav = await chromium.launch({ args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-video-capture=${video}`] });
     try {
       const ctx = await nav.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, permissions: ["camera"] });
+      const conLinterna = luz.nombre === "normal";
+      if (conLinterna) {
+        await ctx.addInitScript(() => {
+          const T = MediaStreamTrack.prototype;
+          const cap = T.getCapabilities;
+          const apl = T.applyConstraints;
+          window.__linterna = [];
+          T.getCapabilities = function () { return { ...(cap ? cap.call(this) : {}), torch: true }; };
+          T.applyConstraints = function (c) {
+            const adv = c && c.advanced && c.advanced.find((x) => "torch" in x);
+            if (adv) { window.__linterna.push(adv.torch); return Promise.resolve(); }
+            return apl.call(this, c);
+          };
+        });
+      }
       const p = await ctx.newPage();
       await p.goto(BASE + "/cliente/login");
       await p.fill("#email", cred.usuarios.staff);
@@ -88,10 +108,24 @@ try {
       await p.waitForURL(/staff\/panel/, { timeout: 90000 });
       await p.getByRole("button", { name: "Escanear QR" }).first().click();
       const t0 = Date.now();
+      const boton = p.getByRole("button", { name: /linterna/ });
+      if (conLinterna) {
+        const aparece = await boton.waitFor({ timeout: 15000 }).then(() => true, () => false);
+        nota(`${luz.nombre}: con linterna, aparece el botón «Prender linterna»`, aparece);
+        if (aparece) {
+          await boton.click();
+          await p.getByRole("button", { name: "Apagar linterna" }).waitFor({ timeout: 5000 }).catch(() => {});
+          const llamadas = await p.evaluate(() => window.__linterna);
+          const presionado = await p.getByRole("button", { name: "Apagar linterna" }).getAttribute("aria-pressed").catch(() => null);
+          nota(`${luz.nombre}: al tocarlo pide torch=true a la cámara y queda «Apagar linterna»`, llamadas.includes(true) && presionado === "true", JSON.stringify(llamadas));
+          await p.screenshot({ path: SHOTS + `${luz.nombre}-0-linterna.png` });
+        }
+      }
       const leyo = await p.getByRole("button", { name: "Confirmar entrada" }).waitFor({ timeout: 25000 }).then(() => true, () => false);
       const segundos = ((Date.now() - t0) / 1000).toFixed(1);
       await p.screenshot({ path: SHOTS + `${luz.nombre}-1-escaneo.png` });
-      nota(`${luz.nombre}: lee el QR en vertical`, leyo, leyo ? `${segundos} s` : "no lo leyó en 25 s");
+      nota(`${luz.nombre}: lee el QR en vertical${conLinterna ? " (con la linterna prendida)" : ""}`, leyo, leyo ? `${segundos} s` : "no lo leyó en 25 s");
+      if (!conLinterna) nota(`${luz.nombre}: sin linterna en la cámara, el botón no aparece`, (await p.getByRole("button", { name: /linterna/ }).count()) === 0);
       if (leyo) {
         const texto = await p.locator("body").innerText();
         nota(`${luz.nombre}: la ficha muestra al cliente y el aviso del QR`, texto.includes(r.cliente_nombre) && /no garantiza la entrada/i.test(texto));

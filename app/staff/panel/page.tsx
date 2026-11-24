@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Html5Qrcode } from "html5-qrcode";
+import { BotonLinterna } from "@/components/boton-linterna";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -158,6 +159,7 @@ export default function StaffPanelPage() {
   const [scanState, setScanState] = useState<ScanState>({ status: "scanning" });
   const [checkingIn, setCheckingIn] = useState(false);
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const [camaraLista, setCamaraLista] = useState(false);
   const scanLockRef = useRef(false);
 
   // Solo para mostrar el número de la mesa donde la caja sentó a alguien.
@@ -208,6 +210,7 @@ export default function StaffPanelPage() {
   const [attendanceScanState, setAttendanceScanState] =
     useState<AttendanceScanState>({ status: "scanning" });
   const html5QrCodeAttendanceRef = useRef<Html5Qrcode | null>(null);
+  const [camaraAsistenciaLista, setCamaraAsistenciaLista] = useState(false);
   const attendanceScanLockRef = useRef(false);
 
   useEffect(() => {
@@ -892,6 +895,9 @@ export default function StaffPanelPage() {
         },
         undefined,
       )
+      .then(() => {
+        if (!cancelled) setCamaraLista(true);
+      })
       .catch((err) => {
         console.error("Error iniciando la cámara:", err);
         if (!cancelled) {
@@ -910,6 +916,7 @@ export default function StaffPanelPage() {
         .then(() => html5QrCode.clear())
         .catch(() => {});
       html5QrCodeRef.current = null;
+      setCamaraLista(false);
     };
   }, [scannerOpen]);
 
@@ -929,6 +936,9 @@ export default function StaffPanelPage() {
         },
         undefined,
       )
+      .then(() => {
+        if (!cancelled) setCamaraAsistenciaLista(true);
+      })
       .catch((err) => {
         console.error("Error iniciando la cámara:", err);
         if (!cancelled) {
@@ -947,6 +957,7 @@ export default function StaffPanelPage() {
         .then(() => html5QrCode.clear())
         .catch(() => {});
       html5QrCodeAttendanceRef.current = null;
+      setCamaraAsistenciaLista(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attendanceScannerOpen]);
@@ -977,10 +988,13 @@ export default function StaffPanelPage() {
             </CardHeader>
             <CardContent className="flex flex-col gap-4 px-6 pb-6">
               {scanState.status === "scanning" && (
-                <div
-                  id={QR_READER_ELEMENT_ID}
-                  className="w-full overflow-hidden rounded-lg"
-                />
+                <>
+                  <div
+                    id={QR_READER_ELEMENT_ID}
+                    className="w-full overflow-hidden rounded-lg"
+                  />
+                  <BotonLinterna escaner={html5QrCodeRef} listo={camaraLista} />
+                </>
               )}
 
               {scanState.status === "camera-error" && (
@@ -1086,10 +1100,13 @@ export default function StaffPanelPage() {
             </CardHeader>
             <CardContent className="flex flex-col gap-4 px-6 pb-6">
               {attendanceScanState.status === "scanning" && (
-                <div
-                  id={QR_READER_ATTENDANCE_ELEMENT_ID}
-                  className="w-full overflow-hidden rounded-lg"
-                />
+                <>
+                  <div
+                    id={QR_READER_ATTENDANCE_ELEMENT_ID}
+                    className="w-full overflow-hidden rounded-lg"
+                  />
+                  <BotonLinterna escaner={html5QrCodeAttendanceRef} listo={camaraAsistenciaLista} />
+                </>
               )}
 
               {attendanceScanState.status === "camera-error" && (
