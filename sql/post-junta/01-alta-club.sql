@@ -18,9 +18,14 @@
 -- ============================================================================
 
 -- Bitácora: quién dio de alta cada antro y con qué (sin correos ni contraseñas).
+-- alta_id: clave de idempotencia que genera la ruta. Si la respuesta se
+-- pierde después del commit, la ruta la busca antes de deshacer nada, y un
+-- reintento con la misma clave no crea un segundo antro.
+-- club_id queda nulo si algún día se borra el antro: la bitácora se conserva.
 create table public.club_altas (
   id          uuid primary key default gen_random_uuid(),
-  club_id     uuid not null unique references public.clubs (id) on delete cascade,
+  alta_id     uuid not null unique,
+  club_id     uuid unique references public.clubs (id) on delete set null,
   creado_por  uuid not null references public.profiles (id),
   creado_en   timestamptz not null default now(),
   publicado   boolean not null,
@@ -45,7 +50,8 @@ create policy club_altas_select_admin on public.club_altas for select to authent
 --   usuarios: [ { id, nombre, rol } ]   -- rol: gerente | staff | rp | dueno | dueno_grupo
 --                                        -- (ids de auth.users recién creados, sin perfil)
 --   grupo:    { modo: ninguno | nuevo | existente, nombre?, grupo_id?,
---               dueno_antro_es_dueno_grupo: bool }
+--               dueno_antro_es_dueno_grupo: bool },
+--   alta_id:  uuid (idempotencia)
 -- }
 create or replace function public.admin_alta_club(p jsonb)
 returns jsonb
@@ -68,6 +74,7 @@ declare
   v_rol      text;
   v_cuenta   jsonb := '{}'::jsonb;
   v_mesas    int := 0;
+  v_alta     uuid;
 begin
   if v_yo is null or public.current_role_name() is distinct from 'admin' then
     raise exception 'Solo el admin da de alta antros.' using errcode = 'P0001';
@@ -90,6 +97,30 @@ begin
   end if;
   if v_modo not in ('ninguno', 'nuevo', 'existente') then
     raise exception 'Modo de grupo inválido.' using errcode = 'P0001';
+  end if;
+  begin
+    v_alta := (p ->> 'alta_id')::uuid;
+  exception when invalid_text_representation then
+    v_alta := null;
+  end;
+  if v_alta is null then
+    raise exception 'Falta la clave del alta.' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from public.club_altas a where a.alta_id = v_alta) then
+    raise exception 'Esta alta ya se hizo.' using errcode = 'P0001';
+  end if;
+  -- Rangos de lo informativo (zod los revisa antes; aquí por si llaman directo).
+  if nullif(v_club ->> 'edad_minima', '') is not null
+     and (v_club ->> 'edad_minima')::int not between 18 and 99 then
+    raise exception 'La edad mínima va de 18 a 99.' using errcode = 'P0001';
+  end if;
+  if coalesce(nullif(v_club ->> 'deposito_monto', '')::numeric, 0) not between 0 and 100000 then
+    raise exception 'El depósito va de $0 a $100,000.' using errcode = 'P0001';
+  end if;
+  if char_length(coalesce(v_club ->> 'ambiente', '')) > 500
+     or char_length(coalesce(v_club ->> 'tipo_musica', '')) > 200
+     or char_length(coalesce(v_club ->> 'codigo_vestimenta', '')) > 200 then
+    raise exception 'Ambiente, música o vestimenta son muy largos.' using errcode = 'P0001';
   end if;
 
   insert into public.clubs (
@@ -139,8 +170,15 @@ begin
     if char_length(trim(coalesce(v_u ->> 'nombre', ''))) not between 2 and 120 then
       raise exception 'Falta el nombre de un usuario.' using errcode = 'P0001';
     end if;
-    -- Solo cuentas recién creadas: existe en Auth y todavía no tiene perfil.
-    if not exists (select 1 from auth.users a where a.id = (v_u ->> 'id')::uuid)
+    -- Solo cuentas que acaba de crear el alta (marcadas por la ruta, de los
+    -- últimos 30 minutos, sin borrar ni bloquear) y que todavía no tienen
+    -- perfil: ninguna cuenta ajena se puede ligar al antro.
+    if not exists (select 1 from auth.users a
+                   where a.id = (v_u ->> 'id')::uuid
+                     and a.raw_app_meta_data ->> 'alta_club' = 'true'
+                     and a.created_at > now() - interval '30 minutes'
+                     and a.deleted_at is null
+                     and (a.banned_until is null or a.banned_until < now()))
        or exists (select 1 from public.profiles pr where pr.id = (v_u ->> 'id')::uuid) then
       raise exception 'Una de las cuentas no es nueva.' using errcode = 'P0001';
     end if;
@@ -197,8 +235,8 @@ begin
     raise exception 'Un dueño de grupo necesita un grupo.' using errcode = 'P0001';
   end if;
 
-  insert into public.club_altas (club_id, creado_por, publicado, resumen)
-  values (v_club_id, v_yo, v_publicar,
+  insert into public.club_altas (alta_id, club_id, creado_por, publicado, resumen)
+  values (v_alta, v_club_id, v_yo, v_publicar,
           jsonb_build_object('mesas', v_mesas, 'usuarios', v_cuenta, 'grupo', v_modo, 'grupo_id', v_grupo_id));
 
   return jsonb_build_object('club_id', v_club_id, 'grupo_id', v_grupo_id, 'mesas', v_mesas, 'usuarios', v_cuenta);

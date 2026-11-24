@@ -1,70 +1,87 @@
 import { NextResponse } from "next/server";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { clienteServicio } from "@/lib/supabase/servicio";
 import { cuentasNuevas, esquemaAltaClub, erroresPorCampo, payloadSql, type CuentaNueva } from "@/lib/domain/alta-club";
 
 // Alta de un antro nuevo con su equipo, desde /admin/alta-antro. SOLO admin.
 //
-//   1. ¿Quién llama? Sesión por cookie; su rol se lee de la base.
+//   1. ¿Quién llama? Sesión por cookie; rol y estado se leen de la base.
 //   2. Valida todo con el mismo esquema que el asistente.
 //   3. Crea las cuentas de Auth (no pueden ir dentro de una transacción de
-//      Postgres) con contraseñas temporales generadas aquí.
+//      Postgres) con contraseña temporal generada aquí y marcadas con
+//      app_metadata.alta_club (la base solo acepta cuentas así y recientes).
 //   4. admin_alta_club() con la sesión del admin: antro, mesas, perfiles,
-//      grupo y bitácora en UNA transacción. La función vuelve a exigir admin.
-//   5. Si 3 o 4 fallan, borra las cuentas que había creado: no queda nada a
-//      medias. Si el proceso muere entre 3 y 4 quedan cuentas de Auth sin
-//      perfil (no entran a ningún panel); llevan app_metadata.alta_club
-//      para encontrarlas.
+//      grupo y bitácora en UNA transacción, con una clave de idempotencia
+//      (alta_id). La función vuelve a exigir admin.
+//   5. Si 3 o 4 fallan, borra las cuentas que había creado. Antes de borrar
+//      por un error que no es de validación (por ejemplo, se perdió la
+//      respuesta), revisa con la clave si la base sí guardó: en ese caso
+//      responde como éxito y no borra nada.
+//   Si el proceso muere entre 3 y 4 quedan cuentas de Auth sin perfil (no
+//   entran a ningún panel): scripts/limpiar-altas-huerfanas.mjs las
+//   encuentra y las borra.
 //
-// Las contraseñas temporales se devuelven UNA vez, para que el admin las
-// entregue; no se guardan en ningún lado.
+// Las contraseñas temporales se devuelven UNA vez (sin caché), para que el
+// admin las entregue; no se guardan en ningún lado.
 
 export const maxDuration = 60;
 
 const CONCURRENCIA = 6;
+const SIN_CACHE = { "Cache-Control": "no-store" };
+const responder = (cuerpo: object, status = 200) => NextResponse.json(cuerpo, { status, headers: SIN_CACHE });
 
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Necesitas iniciar sesión." }, { status: 401 });
+  if (!user) return responder({ error: "Necesitas iniciar sesión." }, 401);
 
   const admin = clienteServicio();
   const { data: perfil } = await admin.from("profiles").select("role, activo").eq("id", user.id).maybeSingle();
   if (perfil?.role !== "admin" || perfil.activo === false) {
-    return NextResponse.json({ error: "Solo el admin puede dar de alta antros." }, { status: 403 });
+    return responder({ error: "Solo el admin puede dar de alta antros." }, 403);
   }
 
   let cuerpo: unknown;
   try {
     cuerpo = await request.json();
   } catch {
-    return NextResponse.json({ error: "Datos inválidos." }, { status: 400 });
+    return responder({ error: "Datos inválidos." }, 400);
   }
   const r = esquemaAltaClub.safeParse(cuerpo);
   if (!r.success) {
     const campos = erroresPorCampo(r.error);
-    return NextResponse.json({ error: Object.values(campos)[0] ?? "Revisa los datos.", campos }, { status: 400 });
+    return responder({ error: Object.values(campos)[0] ?? "Revisa los datos.", campos }, 400);
   }
   const alta = r.data;
+  const altaId = randomUUID();
 
   if (alta.grupo.modo === "existente") {
     const { data: g } = await admin.from("grupos").select("id").eq("id", alta.grupo.grupo_id).maybeSingle();
-    if (!g) return NextResponse.json({ error: "El grupo elegido no existe." }, { status: 400 });
+    if (!g) return responder({ error: "El grupo elegido no existe." }, 400);
   }
 
   // 3. Cuentas de Auth.
   const cuentas = cuentasNuevas(alta);
   const creadas = new Map<string, string>(); // correo → id
   const credenciales: (CuentaNueva & { password: string })[] = [];
-  const borrarCreadas = async () => {
-    const ids = [...creadas.values()];
-    for (let i = 0; i < ids.length; i += CONCURRENCIA) {
-      await Promise.all(ids.slice(i, i + CONCURRENCIA).map((id) => admin.auth.admin.deleteUser(id)));
+
+  // Deshace las cuentas creadas. Si alguna no se puede borrar se registra
+  // (solo cuántas, sin correos) y se avisa: la limpia el script.
+  const borrarCreadas = async (): Promise<number> => {
+    const lista = [...creadas.values()];
+    let fallidas = 0;
+    for (let i = 0; i < lista.length; i += CONCURRENCIA) {
+      const res = await Promise.all(lista.slice(i, i + CONCURRENCIA).map((id) => admin.auth.admin.deleteUser(id)));
+      fallidas += res.filter((x) => x.error).length;
     }
+    if (fallidas) console.error(`alta-club ${altaId}: ${fallidas} cuentas sin borrar`);
+    return fallidas;
   };
+  const avisoHuerfanas = (n: number) =>
+    n ? ` Quedaron ${n} cuentas sin perfil (no entran a nada); se limpian con scripts/limpiar-altas-huerfanas.mjs.` : "";
 
   for (let i = 0; i < cuentas.length; i += CONCURRENCIA) {
     const tanda = cuentas.slice(i, i + CONCURRENCIA);
@@ -75,7 +92,7 @@ export async function POST(request: Request) {
           email: c.correo,
           password,
           email_confirm: true,
-          app_metadata: { alta_club: true },
+          app_metadata: { alta_club: true, alta_id: altaId },
         });
         if (res.error || !res.data.user) return { c, error: res.error };
         creadas.set(c.correo, res.data.user.id);
@@ -85,24 +102,31 @@ export async function POST(request: Request) {
     );
     const fallo = resultados.find((x) => x.error);
     if (fallo) {
-      await borrarCreadas();
-      console.error("alta-club: createUser", fallo.error?.code ?? fallo.error?.message);
-      return NextResponse.json({ error: mensajeCuenta(fallo.c.correo, fallo.error) }, { status: 400 });
+      const sinBorrar = await borrarCreadas();
+      console.error(`alta-club ${altaId}: createUser`, fallo.error?.code ?? fallo.error?.status);
+      return responder({ error: mensajeCuenta(fallo.c.correo, fallo.error) + avisoHuerfanas(sinBorrar) }, 400);
     }
   }
 
-  // 4. Todo lo de la base, en una transacción, con la sesión del admin.
-  const { data, error } = await supabase.rpc("admin_alta_club", { p: payloadSql(alta, creadas) });
-  if (error) {
-    await borrarCreadas();
-    console.error("alta-club: admin_alta_club", error.code);
-    const mensaje = error.code === "P0001" ? error.message : "No se pudo dar de alta el antro. No se guardó nada; intenta de nuevo.";
-    return NextResponse.json({ error: mensaje }, { status: 400 });
-  }
-
   const orden = new Map(cuentas.map((c, i) => [c.correo, i]));
-  credenciales.sort((a, b) => (orden.get(a.correo) ?? 0) - (orden.get(b.correo) ?? 0));
-  return NextResponse.json({ ok: true, resultado: data, credenciales });
+  const exito = (resultado: unknown) => {
+    credenciales.sort((a, b) => (orden.get(a.correo) ?? 0) - (orden.get(b.correo) ?? 0));
+    return responder({ ok: true, resultado, credenciales });
+  };
+
+  // 4. Todo lo de la base, en una transacción, con la sesión del admin.
+  const { data, error } = await supabase.rpc("admin_alta_club", { p: payloadSql(alta, creadas, altaId) });
+  if (!error) return exito(data);
+
+  if (error.code !== "P0001") {
+    // ¿Se guardó y solo se perdió la respuesta? Entonces no se deshace nada.
+    const { data: guardada } = await admin.from("club_altas").select("club_id").eq("alta_id", altaId).maybeSingle();
+    if (guardada) return exito({ club_id: guardada.club_id });
+  }
+  const sinBorrar = await borrarCreadas();
+  console.error(`alta-club ${altaId}: admin_alta_club`, error.code);
+  const mensaje = error.code === "P0001" ? error.message : "No se pudo dar de alta el antro. No se guardó nada; intenta de nuevo.";
+  return responder({ error: mensaje + avisoHuerfanas(sinBorrar) }, 400);
 }
 
 // 14 caracteres legibles: sin 0/O ni 1/l/I, con mayúscula, minúscula y número.

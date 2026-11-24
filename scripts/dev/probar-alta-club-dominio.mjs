@@ -41,10 +41,11 @@ const mensajes = (r) => (r.success ? {} : erroresPorCampo(r.error));
   const c = cuentasNuevas(r.data);
   revisar(c.length === 3 && c[0].rol === "dueno", "3 cuentas nuevas, primero el dueño");
   const ids = new Map(c.map((x, i) => [x.correo, `00000000-0000-4000-8000-00000000000${i}`]));
-  const p = payloadSql(r.data, ids);
+  const p = payloadSql(r.data, ids, "11111111-1111-4111-8111-111111111111");
   revisar(p.usuarios.length === 3 && p.usuarios.every((u) => u.id), "payload con id para cada cuenta");
   revisar(p.club.ambiente === null && p.club.tipo_musica === null, "textos vacíos van como null");
   revisar(p.grupo.modo === "ninguno", "sin grupo");
+  revisar(p.alta_id === "11111111-1111-4111-8111-111111111111", "el payload lleva la clave de idempotencia");
 }
 
 // 2. Datos y políticas inválidos.
@@ -132,7 +133,7 @@ const mensajes = (r) => (r.success ? {} : erroresPorCampo(r.error));
   const r = valida(x);
   revisar(r.success, "grupo nuevo con el dueño del antro");
   const ids = new Map(cuentasNuevas(r.data).map((c, i) => [c.correo, "id" + i]));
-  revisar(payloadSql(r.data, ids).grupo.dueno_antro_es_dueno_grupo === true, "payload marca al dueño como dueño del grupo");
+  revisar(payloadSql(r.data, ids, "11111111-1111-4111-8111-111111111111").grupo.dueno_antro_es_dueno_grupo === true, "payload marca al dueño como dueño del grupo");
   x.dueno = null;
   revisar(!!mensajes(valida(x))["grupo.dueno_grupo"], "dueño del antro como dueño de grupo exige dueño");
 }
@@ -157,6 +158,10 @@ const mensajes = (r) => (r.success ? {} : erroresPorCampo(r.error));
   revisar(!valida(null).success && !valida("x").success && !valida({}).success, "cuerpo vacío o no objeto se rechaza");
   const x = base(); x.personal = Array.from({ length: 401 }, (_, i) => ({ nombre: "RP " + i, correo: `rp${i}@example.com`, rol: "rp" }));
   revisar(!valida(x).success, "más de 400 personas se rechaza");
+  x.personal = x.personal.slice(0, 400);
+  revisar(!valida(x).success && mensajes(valida(x)).personal?.includes("contando dueños"), "400 personas + dueño = 401 cuentas: se rechaza");
+  x.personal = x.personal.slice(0, 399);
+  revisar(valida(x).success, "399 personas + dueño = 400 cuentas: válido");
   const y = base(); y.club_id = "otro"; y.datos.estado_verificacion = "verificado";
   const r = valida(y);
   revisar(r.success && !("club_id" in r.data) && !("estado_verificacion" in r.data.datos), "campos extra se descartan");

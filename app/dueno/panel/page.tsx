@@ -135,7 +135,7 @@ export default function DuenoPanelPage() {
           .eq("profile_id", user.id)
           .limit(1);
         if (membresia?.length) {
-          router.replace("/grupo");
+          window.location.replace("/grupo");
           return;
         }
       }

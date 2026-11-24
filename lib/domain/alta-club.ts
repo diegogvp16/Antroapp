@@ -163,9 +163,14 @@ export const esquemaAltaClub = z
         ctx.addIssue({ code: "custom", path: ["grupo", "cuenta"], message: "Escribe nombre y correo del dueño del grupo." });
       }
     }
-    // Un correo, una cuenta.
+    // Un correo, una cuenta; y no más de MAX_PERSONAL cuentas en total
+    // (contando dueño y dueño de grupo), igual que la base.
+    const todas = cuentasNuevas(a);
+    if (todas.length > MAX_PERSONAL) {
+      ctx.addIssue({ code: "custom", path: ["personal"], message: `Máximo ${MAX_PERSONAL} cuentas en un alta (contando dueños).` });
+    }
     const vistos = new Map<string, string>();
-    for (const c of cuentasNuevas(a)) {
+    for (const c of todas) {
       if (vistos.has(c.correo)) {
         ctx.addIssue({ code: "custom", path: ["personal"], message: `El correo ${c.correo} está dos veces.` });
       }
@@ -190,8 +195,10 @@ export function cuentasNuevas(a: Pick<AltaClub, "dueno" | "personal" | "grupo">)
 }
 
 // Lo que recibe admin_alta_club(p jsonb). ids: correo → id de Auth.
-export function payloadSql(a: AltaClub, ids: ReadonlyMap<string, string>) {
+// altaId: clave de idempotencia (la genera la ruta).
+export function payloadSql(a: AltaClub, ids: ReadonlyMap<string, string>, altaId: string) {
   return {
+    alta_id: altaId,
     club: {
       ...a.datos,
       ...a.politicas,

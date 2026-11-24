@@ -204,11 +204,12 @@ try {
   // Falla a la mitad de la transacción: el antro y las mesas ya se insertaron
   // cuando la segunda cuenta resulta no ser nueva.
   const ca = await clienteDe("dev_admin@example.com", PASS_DEV);
-  const nueva = await svc.auth.admin.createUser({ email: `alta_mitad_${sufijo}@example.com`, password: "Prueba-" + randomUUID(), email_confirm: true });
+  const nueva = await svc.auth.admin.createUser({ email: `alta_mitad_${sufijo}@example.com`, password: "Prueba-" + randomUUID(), email_confirm: true, app_metadata: { alta_club: true } });
   const { data: staffDev } = await svc.from("profiles").select("id").eq("role", "staff").eq("nombre", "Staff Dev").maybeSingle();
   const nombre4 = `${NOMBRE_PREFIJO} a medias`;
   const r4 = await ca.rpc("admin_alta_club", {
     p: {
+      alta_id: randomUUID(),
       club: { nombre: nombre4, direccion: "Calle 1", ciudad: "Querétaro", horario: "Vie 10pm" },
       mesas: [{ numero: "1", capacidad: 4 }],
       usuarios: [{ id: nueva.data.user.id, nombre: "Nueva", rol: "rp" }, { id: staffDev.id, nombre: "Robada", rol: "gerente" }],
@@ -220,9 +221,36 @@ try {
   const { data: perfilNueva } = await svc.from("profiles").select("id").eq("id", nueva.data.user.id);
   const { data: staffIntacto } = await svc.from("profiles").select("role, club_id").eq("id", staffDev.id).maybeSingle();
   revisar((perfilNueva ?? []).length === 0 && staffIntacto?.role === "staff", "…ni el perfil de la primera cuenta; el staff existente sigue igual");
+
+  // Una cuenta de Auth sin perfil que NO creó el alta (registro público,
+  // cuenta vieja) no se puede ligar al antro aunque el admin lo pida directo.
+  const ajena = await svc.auth.admin.createUser({ email: `alta_ajena_${sufijo}@example.com`, password: "Prueba-" + randomUUID(), email_confirm: true });
+  const rAjena = await ca.rpc("admin_alta_club", { p: { alta_id: randomUUID(), club: { nombre: `${NOMBRE_PREFIJO} ajena`, direccion: "Calle 1", ciudad: "Querétaro", horario: "Vie 10pm" }, usuarios: [{ id: ajena.data.user.id, nombre: "Ajena", rol: "dueno" }] } });
+  revisar(!!rAjena.error && /no es nueva/.test(rAjena.error.message) && (await clubPorNombre(`${NOMBRE_PREFIJO} ajena`)).length === 0, "una cuenta de Auth que no creó el alta no se puede ligar");
+  await svc.auth.admin.deleteUser(ajena.data.user.id);
   await svc.auth.admin.deleteUser(nueva.data.user.id);
 
-  const r5 = await ca.rpc("admin_alta_club", { p: { club: { nombre: `${NOMBRE_PREFIJO} zona`, direccion: "Calle 1", ciudad: "QRO", horario: "Vie 10pm", zona_horaria: "Marte/Olympus" } } });
+  // Idempotencia: la misma clave dos veces no crea dos antros.
+  const clave = randomUUID();
+  const pIdem = { alta_id: clave, club: { nombre: `${NOMBRE_PREFIJO} idem`, direccion: "Calle 1", ciudad: "Querétaro", horario: "Vie 10pm" } };
+  const i1 = await ca.rpc("admin_alta_club", { p: pIdem });
+  const i2 = await ca.rpc("admin_alta_club", { p: pIdem });
+  const idem = await clubPorNombre(`${NOMBRE_PREFIJO} idem`);
+  idem.forEach((c) => clubsCreados.push(c.id));
+  revisar(!i1.error && /ya se hizo/.test(i2.error?.message ?? "") && idem.length === 1, "la misma clave de alta dos veces: un solo antro");
+  revisar(/Falta la clave/.test((await ca.rpc("admin_alta_club", { p: { club: pIdem.club } })).error?.message ?? ""), "sin clave de alta se rechaza");
+  const rangos = await ca.rpc("admin_alta_club", { p: { alta_id: randomUUID(), club: { ...pIdem.club, nombre: `${NOMBRE_PREFIJO} rangos`, edad_minima: 15, deposito_monto: -5 } } });
+  revisar(!!rangos.error && (await clubPorNombre(`${NOMBRE_PREFIJO} rangos`)).length === 0, "la base rechaza edad o depósito fuera de rango");
+
+  // La bitácora sobrevive si se borra el antro.
+  if (idem[0]) {
+    await svc.from("clubs").delete().eq("id", idem[0].id);
+    const { data: queda } = await svc.from("club_altas").select("club_id").eq("alta_id", clave).maybeSingle();
+    revisar(queda && queda.club_id === null, "borrar el antro conserva su registro de alta");
+    await svc.from("club_altas").delete().eq("alta_id", clave);
+  }
+
+  const r5 = await ca.rpc("admin_alta_club", { p: { alta_id: randomUUID(), club: { nombre: `${NOMBRE_PREFIJO} zona`, direccion: "Calle 1", ciudad: "QRO", horario: "Vie 10pm", zona_horaria: "Marte/Olympus" } } });
   revisar(!!r5.error && (await clubPorNombre(`${NOMBRE_PREFIJO} zona`)).length === 0, "zona horaria inválida → la base lo rechaza y no queda nada");
 
   // ---------- 5. Alta masiva (opcional: --masivo) ----------
@@ -250,6 +278,7 @@ try {
   const { data: sobrantes } = await svc.from("clubs").select("id").like("nombre", `${NOMBRE_PREFIJO}%`);
   const todos = [...new Set([...clubsCreados, ...(sobrantes ?? []).map((c) => c.id)])];
   if (ids.length) await svc.from("profiles").delete().in("id", ids);
+  if (todos.length) await svc.from("club_altas").delete().in("club_id", todos);
   if (todos.length) await svc.from("clubs").delete().in("id", todos);
   for (const id of ids) await svc.auth.admin.deleteUser(id);
   const quedan = (await usuariosConSufijo()).length + ((await svc.from("clubs").select("id").like("nombre", `${NOMBRE_PREFIJO}%`)).data ?? []).length;
