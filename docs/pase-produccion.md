@@ -511,6 +511,12 @@ npx tsc --noEmit && npx eslint . && npx next build
 
 # Pase 2 — rama `post-junta` (NO EJECUTADO)
 
+> **Actualizado el 25/11/2026:** el pase 2 ahora sale de `post-junta-2` (que
+> incluye `post-junta`) y suma el SQL de `sql/post-junta-2/`. El orden
+> completo, los pasos Q1–Q24 y R1, y los cuidados del rollback están en
+> **`docs/pase-2.md`**. El rollback del P9 se corrigió (ya no reabre el hueco
+> del 10a).
+
 Escrito el 24/11/2026. Va **después** del pase 1 (todo lo de arriba). Todo
 el SQL está en `sql/post-junta/` (más la fase 2 en `sql/fase2/`, opcional),
 cada archivo con su rollback, probado en dev. La cadena completa (revertir
