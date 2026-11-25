@@ -169,14 +169,20 @@ export default function GrupoPage() {
               {etiquetaRango(rango)}
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => consultar(rango)}
-            disabled={cargando}
-          >
-            {cargando ? "Actualizando..." : "Actualizar"}
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10"
+              onClick={() => consultar(rango)}
+              disabled={cargando}
+            >
+              {cargando ? "Actualizando..." : "Actualizar"}
+            </Button>
+            <Button render={<Link href="/grupo/exportar" />} nativeButton={false} variant="outline" className="h-10">
+              Descargar CSV
+            </Button>
+          </div>
         </div>
 
         <SelectorRango

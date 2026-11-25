@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RendimientoPorRp } from "@/components/grupo/rendimiento-rp";
@@ -133,6 +134,15 @@ export function TarjetaAntro({
           <Cifras n={antro} grande={false} />
         </div>
         <RendimientoPorRp clubId={antro.club_id} rango={rango} abiertoAlInicio={rendimientoAbierto} />
+        <Link
+          href={`/grupo/noche?club=${antro.club_id}${rango.desde === rango.hasta ? `&fecha=${rango.hasta}` : ""}`}
+          className="flex min-h-11 items-center justify-between gap-2 border-t border-border pt-3 text-sm font-medium"
+        >
+          Cierre de la noche
+          <span aria-hidden="true" className="text-muted-foreground">
+            →
+          </span>
+        </Link>
       </CardContent>
     </Card>
   );

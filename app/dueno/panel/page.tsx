@@ -575,6 +575,14 @@ export default function DuenoPanelPage() {
           >
             Resumen y grupo
           </Button>
+          <Button
+            render={<Link href="/dueno/exportar" />}
+            nativeButton={false}
+            variant="outline"
+            className="col-span-2 w-full"
+          >
+            Descargar reportes (CSV)
+          </Button>
         </div>
 
         <VerificacionAntro club={club} onCambioEstado={fetchClub} />
