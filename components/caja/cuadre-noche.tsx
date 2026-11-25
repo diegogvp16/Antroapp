@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,26 +36,54 @@ import { propinas } from "@/lib/domain/inventario";
 export function CuadreNoche({
   datos,
   onCambio,
+  enlaceCierre,
 }: {
   datos: DatosCaja;
   onCambio: () => Promise<void>;
+  // Solo para quien puede ver sueldos (gerente): el reporte trae comisiones.
+  enlaceCierre?: string;
 }) {
   const { noche } = datos;
 
+  const enlace = enlaceCierre ? (
+    <Link
+      href={enlaceCierre}
+      className="flex min-h-11 items-center justify-between gap-2 rounded-lg border border-border px-3 text-sm font-medium"
+    >
+      {noche?.estado === "cerrada" ? "Ver el cierre de la noche" : "Ver el reporte de la noche (en curso)"}
+      <span aria-hidden="true" className="text-muted-foreground">
+        →
+      </span>
+    </Link>
+  ) : null;
+
   if (!noche) {
     return (
-      <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-        Todavía no se abre ninguna mesa esta noche: no hay nada que cuadrar.
-      </p>
+      <div className="flex flex-col gap-3">
+        <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+          Todavía no se abre ninguna mesa esta noche: no hay nada que cuadrar.
+        </p>
+        {enlace}
+      </div>
     );
   }
 
   if (noche.estado === "cerrada") {
     const cuadre = datos.cuadres.find((c) => c.tipo === "noche");
-    return <CuadreGuardado cuadre={cuadre ?? null} nombres={datos.nombres} />;
+    return (
+      <div className="flex flex-col gap-3">
+        <CuadreGuardado cuadre={cuadre ?? null} nombres={datos.nombres} />
+        {enlace}
+      </div>
+    );
   }
 
-  return <CuadreEnVivo nocheId={noche.id} datos={datos} onCambio={onCambio} />;
+  return (
+    <div className="flex flex-col gap-3">
+      {enlace}
+      <CuadreEnVivo nocheId={noche.id} datos={datos} onCambio={onCambio} />
+    </div>
+  );
 }
 
 function CuadreEnVivo({

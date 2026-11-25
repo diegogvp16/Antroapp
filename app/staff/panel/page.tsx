@@ -1303,6 +1303,14 @@ export default function StaffPanelPage() {
             >
               Resumen de mi antro
             </Button>
+            <Button
+              render={<Link href="/staff/exportar" />}
+              nativeButton={false}
+              variant="outline"
+              className="w-full"
+            >
+              Descargar reportes
+            </Button>
             {FASE2_ACTIVA && (
               <Button
                 render={<Link href="/staff/catalogo" />}

@@ -404,3 +404,42 @@ body:has(.theme-caja) {
 body:has(.theme-caja-claro) {
   background-color: #f6f3ec;
 }
+
+/*
+ * Vista imprimible de los reportes (/grupo/noche): al imprimir o guardar en
+ * PDF, papel blanco y texto negro aunque la pantalla use el tema oscuro (el
+ * navegador no imprime fondos y el texto claro quedaría invisible). Va en el
+ * mismo elemento que .theme-caja, así que re-mapea sus tokens.
+ */
+@media print {
+  .reporte-imprimible {
+    --caja-fondo: #ffffff;
+    --caja-superficie: #ffffff;
+    --caja-borde: #c9c4ba;
+    --caja-texto: #111111;
+    --caja-secundario: #4a453e;
+    --caja-ok: #2f7a4a;
+    --caja-aviso: #8a5d00;
+    --caja-rojo: #b4483a;
+    --caja-control: #8c8478;
+    --background: #ffffff;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #f1efea;
+    --muted-foreground: #4a453e;
+    --secondary: #f1efea;
+    --accent: #f1efea;
+    --border: #c9c4ba;
+    --status-ok: #2f7a4a;
+    --status-warn: #8a5d00;
+    --status-err: #b4483a;
+    --destructive: #b4483a;
+    background-color: #ffffff;
+    color: #111111;
+    color-scheme: light;
+  }
+  body:has(.reporte-imprimible) {
+    background-color: #ffffff;
+  }
+}

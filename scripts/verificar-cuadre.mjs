@@ -16,6 +16,8 @@
 //      y, si existen, conversión (por venir, consumieron, consumo con reserva)
 //      y rendimiento por RP (grupo_rendimiento_rp) = conteos directos y nómina.
 //   6. Panel del RP (rp_mis_reservas) = caja: consumo y comisión por reserva.
+//   7. Cierre de la noche (reporte_cierre_noche, si existe) = caja, cuadre
+//      guardado y /grupo de esa noche.
 //
 //   node scripts/verificar-cuadre.mjs [--club=<uuid>] [--desde=AAAA-MM-DD] [--hasta=AAAA-MM-DD]
 //
@@ -151,7 +153,12 @@ try {
      order by 2, 3`,
     [DESDE, HASTA, CLUB],
   );
-  const adminId = (await db.q(`select id from public.profiles where role = 'admin' and activo is not false limit 1`))[0]?.id;
+  // El admin fijo de dev primero: un admin de otra prueba puede borrarse a media revisión.
+  const adminId = (await db.q(
+    `select p.id from public.profiles p left join auth.users u on u.id = p.id
+     where p.role = 'admin' and p.activo is not false
+     order by (u.email = 'dev_admin@example.com') desc nulls last, p.id limit 1`,
+  ))[0]?.id;
   for (const s of semanas) {
     const donde = `${s.nombre} semana del ${s.lunes}`;
     cobertura.semanas++;
@@ -309,6 +316,65 @@ try {
     for (const f of filas) {
       if (f.consumo_centavos !== null) comparar(`Panel RP ${rp.nombre} reserva ${f.reservation_id.slice(0, 8)}`, "consumo en el panel vs caja", f.consumo_centavos, f.caja);
       if (f.comision !== null) comparar(`Panel RP ${rp.nombre} reserva ${f.reservation_id.slice(0, 8)}`, "comisión en el panel vs nómina", f.comision_centavos ?? 0, f.comision);
+    }
+  }
+
+  // ---------- 7. Cierre de la noche (reporte_cierre_noche), si existe ----------
+  // sql/post-junta-2/30-cierre-noche.sql. Mismas cifras que la caja, el
+  // cuadre guardado y /grupo de esa noche, como admin.
+  const [hayCierre] = await db.q(`select to_regprocedure('public.reporte_cierre_noche(uuid, date)') is not null as hay`);
+  if (hayCierre.hay && adminId) {
+    await db.q(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub: adminId, role: "authenticated" })]);
+    cobertura.cierres = 0;
+    for (const n of noches) {
+      const donde = `${n.nombre} ${n.fecha} (cierre de la noche)`;
+      // Con savepoint: si otra prueba borró su antro a media revisión, se
+      // salta esa noche en lugar de abortar toda la transacción.
+      await db.q("savepoint cierre");
+      let rep;
+      try {
+        [{ j: rep }] = await db.q(`select public.reporte_cierre_noche($1, $2::date) as j`, [n.club_id, n.fecha]);
+        await db.q("release savepoint cierre");
+      } catch (e) {
+        await db.q("rollback to savepoint cierre");
+        if (!/no encontramos ese antro/i.test(e.message)) diferencias.push(`${donde} · el reporte falló: ${e.message}`);
+        continue;
+      }
+      cobertura.cierres++;
+      const [caja] = await db.q(
+        `select coalesce(sum(monto_centavos), 0)::bigint as cent, count(distinct cuenta_id)::int as cuentas,
+                coalesce(sum(monto_centavos) filter (where reservation_id is not null), 0)::bigint as con_reserva
+         from public.caja_consumos where noche_id = $1 and not anulado`,
+        [n.id],
+      );
+      const [cobros] = await db.q(
+        `select coalesce(sum(monto_centavos) filter (where metodo = 'efectivo'), 0)::bigint as efectivo,
+                coalesce(sum(monto_centavos) filter (where metodo = 'tarjeta'), 0)::bigint as tarjeta,
+                coalesce(sum(monto_centavos) filter (where metodo = 'otro'), 0)::bigint as otro
+         from public.caja_pagos where noche_id = $1 and not anulado`,
+        [n.id],
+      );
+      comparar(donde, "consumo vs caja", rep.consumo.total_centavos, caja.cent);
+      comparar(donde, "cuentas con consumo vs caja", rep.consumo.cuentas_con_consumo, caja.cuentas);
+      comparar(donde, "consumo con reserva vs caja", rep.consumo.con_reserva_centavos, caja.con_reserva);
+      comparar(donde, "efectivo vs cobros", rep.cobros.efectivo_centavos, cobros.efectivo);
+      comparar(donde, "tarjeta vs cobros", rep.cobros.tarjeta_centavos, cobros.tarjeta);
+      comparar(donde, "otro vs cobros", rep.cobros.otro_centavos, cobros.otro);
+      const [q] = await db.q(`select * from public.caja_cuadres where noche_id = $1 and tipo = 'noche'`, [n.id]);
+      comparar(donde, "trae cuadre solo si hay cuadre guardado", rep.cuadre ? 1 : 0, q ? 1 : 0);
+      if (q && rep.cuadre) {
+        comparar(donde, "cuadre: registrado", rep.cuadre.registrado_centavos, q.registrado_centavos);
+        comparar(donde, "cuadre: diferencia", rep.cuadre.diferencia_centavos, q.diferencia_centavos);
+      }
+      const [g] = await db.q(`select * from public.grupo_resumen($1::date, $1::date) where club_id = $2`, [n.fecha, n.club_id]);
+      if (g) {
+        comparar(donde, "reservas vs /grupo", rep.reservas.reservas, g.reservas);
+        comparar(donde, "entraron vs /grupo", rep.reservas.entraron, g.entraron);
+        comparar(donde, "ticket promedio vs /grupo", rep.consumo.ticket_promedio_centavos, g.ticket_promedio_centavos);
+        comparar(donde, "comisiones y pagos vs /grupo", rep.comisiones.total_centavos, g.comisiones_centavos);
+        if ("reservas_con_consumo" in g) comparar(donde, "consumieron vs /grupo", rep.reservas.consumieron, g.reservas_con_consumo);
+      }
+      comparar(donde, "comisiones de los RPs = total", rep.rps.reduce((a, x) => a + Number(x.comisiones_centavos), 0), rep.comisiones.total_centavos);
     }
   }
   await db.q("rollback");

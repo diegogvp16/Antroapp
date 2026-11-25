@@ -426,7 +426,11 @@ export default function StaffCajaPage() {
         {!datos ? (
           !errorCarga && <p className="text-sm text-caja-secundario">Cargando la caja...</p>
         ) : vista === "cuadre" && permisos.cerrar_noche && !actual ? (
-          <CuadreNoche datos={datos} onCambio={recargar} />
+          <CuadreNoche
+            datos={datos}
+            onCambio={recargar}
+            enlaceCierre={esGerente && clubId && fecha ? `/grupo/noche?club=${clubId}&fecha=${fecha}&desde=caja` : undefined}
+          />
         ) : actual ? (
           <DetalleMesa
             key={actual.mesa.id}
