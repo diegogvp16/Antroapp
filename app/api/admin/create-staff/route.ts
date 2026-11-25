@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { registrarError } from "@/lib/log";
+import { AVISO_CONTRASENA_TEMPORAL, tieneContrasenaTemporal } from "@/lib/contrasena-temporal";
 
 // Esta ruta crea cuentas con la service role key, así que antes de tocar
 // nada verifica QUIÉN llama (sesión por cookie) y si tiene permiso para
@@ -43,6 +44,10 @@ export async function POST(request: Request) {
         { error: "Necesitas iniciar sesión." },
         { status: 401 },
       );
+    }
+    // Con contraseña temporal sin cambiar no tiene rol (igual que en la base).
+    if (tieneContrasenaTemporal(user)) {
+      return NextResponse.json({ error: AVISO_CONTRASENA_TEMPORAL }, { status: 403 });
     }
 
     // Con contraseña temporal (alta de antros) todavía no tiene rol en la

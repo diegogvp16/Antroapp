@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { clienteServicio } from "@/lib/supabase/servicio";
+import { AVISO_CONTRASENA_TEMPORAL, tieneContrasenaTemporal } from "@/lib/contrasena-temporal";
 import { cuentasNuevas, esquemaAltaClub, erroresPorCampo, payloadSql, type CuentaNueva } from "@/lib/domain/alta-club";
 
 // Alta de un antro nuevo con su equipo, desde /admin/alta-antro. SOLO admin.
@@ -37,6 +38,7 @@ export async function POST(request: Request) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return responder({ error: "Necesitas iniciar sesión." }, 401);
+  if (tieneContrasenaTemporal(user)) return responder({ error: AVISO_CONTRASENA_TEMPORAL }, 403);
 
   const admin = clienteServicio();
   const { data: perfil } = await admin.from("profiles").select("role, activo").eq("id", user.id).maybeSingle();

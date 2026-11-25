@@ -3,6 +3,7 @@ import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { BUCKET_VERIFICACION, validarMotivoRechazo } from "@/lib/verificacion";
 import { registrarError } from "@/lib/log";
+import { tieneContrasenaTemporal } from "@/lib/contrasena-temporal";
 
 // Rechaza la verificación de un antro. Usa la service role key porque tiene
 // que borrar archivos del bucket privado y filas de verificacion_documentos
@@ -36,14 +37,16 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2) Su rol, leído en el servidor (nunca desde el body).
+    // 2) Su rol, leído en el servidor (nunca desde el body). Un admin dado de
+    // baja o con contraseña temporal sin cambiar no tiene rol (igual que en
+    // la base, current_role_name()).
     const { data: quienLlama, error: callerError } = await supabaseAdmin
       .from("profiles")
-      .select("role")
+      .select("role, activo")
       .eq("id", user.id)
       .maybeSingle();
 
-    if (callerError || !quienLlama || quienLlama.role !== "admin") {
+    if (callerError || !quienLlama || quienLlama.role !== "admin" || quienLlama.activo === false || tieneContrasenaTemporal(user)) {
       return NextResponse.json(
         { error: "Solo AntroApp puede rechazar una verificación." },
         { status: 403 },

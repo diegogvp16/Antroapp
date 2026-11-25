@@ -25,6 +25,13 @@ import type { Club, ClubPhoto, ClubTable, CoverModo, Profile } from "@/types";
 import { formatearFechaLarga } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
 import { coverMontoATexto, validarCover } from "@/lib/cover";
+import { mensajeParaUsuario, type ErrorBase } from "@/lib/errores-base";
+import {
+  FOTO_CLUB_ACCEPT,
+  mensajeErrorStorageFoto,
+  problemaFotoClub,
+  tipoFotoClub,
+} from "@/lib/fotos-club";
 
 // Mesas visibles antes de "Ver todas": la lista completa puede tener decenas.
 const MESAS_VISIBLES = 12;
@@ -394,17 +401,33 @@ export default function DuenoPanelPage() {
     if (!files || files.length === 0 || !club) return;
 
     setPhotoError(null);
+    // Mismos límites que el bucket (10 MB, solo fotos): lo que no pasa se
+    // avisa con su motivo y no se intenta subir.
+    const lista = Array.from(files);
+    const rechazadas = lista
+      .map((f) => problemaFotoClub(f))
+      .filter((m): m is string => m !== null);
+    const validas = lista.filter((f) => problemaFotoClub(f) === null);
+    if (validas.length === 0) {
+      setPhotoError(rechazadas.join(" "));
+      e.target.value = "";
+      return;
+    }
+
     setUploadingPhotos(true);
+    let subidas = 0;
     try {
       const supabase = createClient();
       let nextOrden =
         photos.length > 0 ? Math.max(...photos.map((p) => p.orden)) + 1 : 0;
 
-      for (const file of Array.from(files)) {
+      for (const file of validas) {
         const storagePath = `${club.id}/${crypto.randomUUID()}-${file.name}`;
         const { error: uploadError } = await supabase.storage
           .from("club-photos")
-          .upload(storagePath, file);
+          .upload(storagePath, file, {
+            contentType: tipoFotoClub(file) ?? undefined,
+          });
 
         if (uploadError) throw uploadError;
 
@@ -424,12 +447,26 @@ export default function DuenoPanelPage() {
         if (insertError) throw insertError;
 
         nextOrden += 1;
+        subidas += 1;
       }
 
       await fetchPhotos(club.id);
+      if (rechazadas.length > 0) setPhotoError(rechazadas.join(" "));
     } catch (err) {
       console.error("Error subiendo fotos:", err);
-      setPhotoError("No pudimos subir una o más fotos. Intenta de nuevo.");
+      const motivo =
+        mensajeErrorStorageFoto(err) ??
+        mensajeParaUsuario(
+          err as ErrorBase,
+          "No pudimos subir la foto. Intenta de nuevo.",
+        );
+      const avance =
+        subidas > 0
+          ? `Se subieron ${subidas} de ${validas.length} fotos; las demás no. `
+          : "";
+      setPhotoError([avance + motivo, ...rechazadas].join(" "));
+      // Lo que sí se subió aparece en la galería.
+      if (subidas > 0) await fetchPhotos(club.id);
     } finally {
       setUploadingPhotos(false);
       e.target.value = "";
@@ -864,15 +901,16 @@ export default function DuenoPanelPage() {
             <CardContent className="flex flex-col gap-3 px-6 py-6">
               <div className="flex flex-col gap-2">
                 <p className="text-sm text-muted-foreground">
-                  JPG o WebP horizontales, de preferencia 1600 × 1200. La
-                  primera foto es la portada del listado.
+                  JPG o WebP horizontales, de preferencia 1600 × 1200, de
+                  hasta 10 MB cada una. La primera foto es la portada del
+                  listado.
                 </p>
                 {/* El input nativo dice "Choose Files" en inglés: se oculta y
                     se usa una etiqueta con estilo de botón. */}
                 <input
                   id="photos"
                   type="file"
-                  accept="image/*"
+                  accept={FOTO_CLUB_ACCEPT}
                   multiple
                   onChange={handleUploadPhotos}
                   disabled={uploadingPhotos}
