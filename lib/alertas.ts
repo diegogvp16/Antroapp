@@ -1,25 +1,33 @@
 // Alertas por correo al admin (picos de errores, cobros fallidos), detrás
-// de una bandera APAGADA por defecto. Se encienden solo con:
+// de una bandera APAGADA por defecto. Se generan solo con:
 //   ALERTAS_CORREO=1
-//   RESEND_API_KEY=<llave de Resend>        (solo servidor)
 //   ALERTAS_PARA=<correo del admin>
-//   ALERTAS_DE=<remitente verificado en Resend, p. ej. alertas@tu-dominio>
-// Pasos: docs/operacion.md. Sin la bandera no se manda nada.
+// y salen por el punto único de correos (lib/correo.ts): con CORREO_MODO
+// "archivo" (por defecto) se quedan en /admin/correos sin mandarse; para
+// que lleguen hace falta además CORREO_MODO=enviar, RESEND_API_KEY y
+// CORREO_DE (o ALERTAS_DE), y solo en producción. Pasos: docs/operacion.md.
 //
-// Cada tipo de alerta se manda como máximo una vez por hora (alertas_enviadas),
+// Cada tipo de alerta sale como máximo una vez por hora (alertas_enviadas),
 // y una falla al mandar nunca rompe lo que la provocó. Los correos no llevan
 // datos personales: solo conteos, rutas y el nombre del antro.
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { enviarCorreo } from "@/lib/correo";
 import { registrarError } from "@/lib/log";
 
 const UNA_HORA_MS = 3_600_000;
 
 export function alertasActivas(): boolean {
-  return process.env.ALERTAS_CORREO === "1" && !!process.env.RESEND_API_KEY && !!process.env.ALERTAS_PARA && !!process.env.ALERTAS_DE;
+  return process.env.ALERTAS_CORREO === "1" && !!process.env.ALERTAS_PARA;
 }
 
-export async function enviarAlerta(svc: SupabaseClient, tipo: string, asunto: string, texto: string): Promise<"enviada" | "omitida" | "fallo"> {
+export async function enviarAlerta(
+  svc: SupabaseClient,
+  tipo: string,
+  asunto: string,
+  texto: string,
+  clubId?: string | null,
+): Promise<"enviada" | "archivada" | "omitida" | "fallo"> {
   if (!alertasActivas()) return "omitida";
   try {
     // Una por tipo por hora: se reserva el turno insertando; si ya hay una
@@ -34,17 +42,17 @@ export async function enviarAlerta(svc: SupabaseClient, tipo: string, asunto: st
     const ins = await svc.from("alertas_enviadas").insert({ tipo });
     if (ins.error) return "omitida";
 
-    const r = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: process.env.ALERTAS_DE, to: [process.env.ALERTAS_PARA], subject: `[AntroApp] ${asunto}`, text: texto }),
-      signal: AbortSignal.timeout(5000),
+    const r = await enviarCorreo(svc, {
+      plantilla: `alerta:${tipo.split(":")[0]}`,
+      para: process.env.ALERTAS_PARA ?? "",
+      asunto: `[AntroApp] ${asunto}`,
+      texto,
+      clubId,
     });
-    if (!r.ok) {
-      registrarError("alertas: Resend", { status: r.status });
-      return "fallo";
-    }
-    return "enviada";
+    if (r.estado === "enviado") return "enviada";
+    if (r.estado === "archivado") return "archivada";
+    if (r.estado === "apagado") return "omitida";
+    return "fallo";
   } catch (e) {
     registrarError("alertas: envío", e);
     return "fallo";

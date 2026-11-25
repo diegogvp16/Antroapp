@@ -840,7 +840,7 @@ export default function DuenoPanelPage() {
             variant="outline"
             className="h-10 self-start"
           >
-            Ver actividad del antro
+            Invitar por correo, permisos y actividad
           </Button>
         </section>
 

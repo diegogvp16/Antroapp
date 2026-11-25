@@ -62,6 +62,7 @@
 | `registro_intentos.ip_hash` | IP con hash | Límite de registros |
 | `app_errores.usuario_id`, `ip_hash`, `navegador`, `ruta`, `mensaje` | Errores de pantalla | Arreglar fallas |
 | `aceptaciones_legales` (con la bandera de legales) | Qué versión de términos y aviso aceptó y cuándo | Constancia del consentimiento |
+| `correos_salida.destinatario`, `asunto`, `cuerpo` | Correo del destinatario y texto de cada correo que la app mandó o archivó (sin los secretos que el remitente pidió ocultar) | Revisar qué salió (`/admin/correos`); solo el admin la lee; se borra a los 30 días |
 
 ## Lo que la app NO guarda
 

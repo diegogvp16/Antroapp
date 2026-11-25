@@ -45,6 +45,15 @@ export async function POST(request: Request) {
       );
     }
 
+    // Con contraseña temporal (alta de antros) todavía no tiene rol en la
+    // base (current_role_name es nulo): tampoco aquí, hasta que la cambie.
+    if (user.app_metadata?.debe_cambiar === true) {
+      return NextResponse.json(
+        { error: "Primero cambia tu contraseña temporal." },
+        { status: 403 },
+      );
+    }
+
     // 2) Su rol y club, leídos en el servidor (nunca desde el body).
     const { data: quienLlama, error: callerError } = await supabaseAdmin
       .from("profiles")

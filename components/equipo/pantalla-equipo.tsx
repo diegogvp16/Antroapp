@@ -7,10 +7,14 @@ import { createClient } from "@/lib/supabase/client";
 import { cerrarSesionDadoDeBaja } from "@/lib/cuenta-dada-de-baja";
 import { EquipoPersonal } from "@/components/equipo/equipo-personal";
 import { RegistroActividad } from "@/components/equipo/registro-actividad";
+import { InvitarPersonal } from "@/components/equipo/invitar-personal";
+import { PermisosCaja } from "@/components/equipo/permisos-caja";
 
-// "Equipo y actividad": para el gerente (/staff/equipo) y el dueño
-// (/dueno/equipo). La pantalla solo decide qué mostrar; quién puede qué lo
-// hacen cumplir personal_cambiar_estado y actividad_club en la base.
+// "Equipo": para el gerente (/staff/equipo) y el dueño (/dueno/equipo).
+// Invitar por correo, personal actual, permisos de caja y actividad. La
+// pantalla solo decide qué mostrar; quién puede qué lo hacen cumplir en la
+// base invitacion_puede, personal_cambiar_estado, caja_configurar_permiso y
+// actividad_club.
 
 type Sesion = { miId: string; clubId: string; nombreClub: string; esDueno: boolean };
 
@@ -52,7 +56,7 @@ export function PantallaEquipo({ para }: { para: "gerente" | "dueno" }) {
           ← Volver al panel
         </Link>
         <header className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Equipo y actividad</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Equipo</h1>
           {s?.nombreClub && <p className="text-sm text-muted-foreground">{s.nombreClub}</p>}
         </header>
         {error && (
@@ -63,6 +67,10 @@ export function PantallaEquipo({ para }: { para: "gerente" | "dueno" }) {
         {s && (
           <>
             <section className="flex flex-col gap-3">
+              <h2 className="text-lg font-semibold">Invitar por correo</h2>
+              <InvitarPersonal clubId={s.clubId} miRol={s.esDueno ? "dueno" : "gerente"} />
+            </section>
+            <section className="flex flex-col gap-3">
               <h2 className="text-lg font-semibold">{s.esDueno ? "Staff y gerentes" : "Staff"}</h2>
               <p className="text-xs text-muted-foreground">
                 {s.esDueno
@@ -70,6 +78,10 @@ export function PantallaEquipo({ para }: { para: "gerente" | "dueno" }) {
                   : "Puedes dar de baja o reactivar al staff. A otros gerentes solo los cambia el dueño."}
               </p>
               <EquipoPersonal clubId={s.clubId} miId={s.miId} puedeGerentes={s.esDueno} />
+            </section>
+            <section className="flex flex-col gap-3">
+              <h2 className="text-lg font-semibold">Permisos de caja</h2>
+              <PermisosCaja clubId={s.clubId} editable={s.esDueno} />
             </section>
             <section className="flex flex-col gap-3">
               <h2 className="text-lg font-semibold">Actividad</h2>

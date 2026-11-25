@@ -362,11 +362,16 @@ export default function AdminPage() {
           </Button>
         </div>
 
-        {mensualidadActiva() && (
-          <Button variant="outline" className="h-10 self-start" render={<Link href="/admin/mensualidad" />} nativeButton={false}>
-            Mensualidades y planes
+        <div className="flex flex-wrap gap-2">
+          {mensualidadActiva() && (
+            <Button variant="outline" className="h-10" render={<Link href="/admin/mensualidad" />} nativeButton={false}>
+              Mensualidades y planes
+            </Button>
+          )}
+          <Button variant="outline" className="h-10" render={<Link href="/admin/correos" />} nativeButton={false}>
+            Bandeja de correos
           </Button>
-        )}
+        </div>
 
         <VerificacionesPendientes onCambio={fetchClubs} />
 
