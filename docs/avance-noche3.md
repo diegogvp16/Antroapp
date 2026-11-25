@@ -53,8 +53,43 @@ Reglas: nada se escribe en producción; nada de merge ni push a `master`.
 - **C8** (`post-junta-2`): el QR del boleto ya no se guarda en `app_errores`, y la consola ya no muestra filas completas (10/10, monitoreo 8/8).
 - **Workflow de la parte B, C1 y C5:** corriendo en 6 worktrees (`AntroApp-wt/b-*`, `c-rls`).
 
+## Corte por límite de uso (23:40 → 09:28)
+
+Los workflows se detuvieron a las 23:40 por el límite de 5 horas. La sesión se
+reanudó a las 09:28 del 25/11, con la compu en batería (100%).
+
+- Terminó la primera etapa de 5 carriles: B5, B7, B11, B6 y B9.
+- Lo demás quedó a medias. Se commiteó como checkpoint "PARCIAL" en cada carril y se reanudó el workflow con su caché.
+
+Mientras tanto, en `post-junta-2`:
+
+- **C3:** límites a las reservas sin cuenta, en la base (`72`, 14/14).
+- **C7 parte 2:** políticas de caja con un conjunto calculado una vez por consulta (`71`, 28/28; consumos de la noche de 31.6 ms a 0.43 ms). Todavía no se aplica en dev.
+
+## demo-datos en PRODUCCIÓN (autorizado por Diego, 25/11, 10:00)
+
+Es el único cambio en producción autorizado hoy.
+
+1. **Revisión previa (solo lectura):**
+   - fecha operativa 2026-11-25, Club Demo publicado, `staff.demo` activo y en Club Demo;
+   - línea base: 127 reservas demo (40 del 25/11, **creadas el 19/11** por la corrida anterior, que ya traía esa noche), 0 no-demo, caja vacía, 0 reservas y 0 caja en otros antros, 78 comisiones, 180 consumos viejos;
+   - en resumen: `demo-datos` no había corrido hoy.
+2. **Respaldo:** `backups/prod-2026-11-25-antes-demo-datos/`, solo local. Trae reservas, consumos y comisiones de Club Demo, la caja de Club Demo, las tablas de RP de las cuentas `demo_*`, sus perfiles y la fila del antro.
+3. **Corrida:**
+   - simulación idéntica a la de dev;
+   - `node scripts/demo-datos.mjs --fecha=2026-11-25 --si`, de 10:00:28 a 10:01:55;
+   - resultado: 4 noches, 35 mesas, 173 consumos, 66 comisiones, cada noche "✓ coincide con la base".
+4. **Verificación de solo lectura:**
+   - **cuadre:** `verificar-cuadre` sin diferencias, 651 revisiones (copia temporal contra producción con sesión de solo lectura; el script del repo solo corre en dev);
+   - **antes contra después:** solo cambió Club Demo. Otros antros: 0 y 0. Grupos y antros, iguales. `staff.demo` abrió 4 noches y registró 173 consumos;
+   - **humo:** 84/84;
+   - **ensayo del guion:** 24 OK, 4 AVISO conocidos, 0 FALLA, sin escrituras.
+5. **Capturas:** `C:\Users\diego\Proyectos\AntroApp\screenshots-presentacion\`, 23 en móvil y 23 en escritorio, con `INDICE.md`.
+6. **Rollback** (no hizo falta):
+   - primero `sql/limpiar-demo-caja.sql` en el SQL Editor, porque la caja no se borra por la API;
+   - después, reponer reservas, consumos, comisiones y tablas de RP desde el respaldo.
+
 ## Sigue
 
-- Integrar los 6 carriles en `post-junta-2`.
-- Después: C3 (límites y zod en endpoints públicos), C4 (suite E2E), C6 (360 px), C7 parte 2 (políticas de caja con InitPlan y `caja_firma_noche`).
-- D3 (`pase-2.md`) y D4 (`avance.md`).
+- Integrar los 6 carriles en `post-junta-2`, con prioridad en B10, B11 y B4.
+- Después: C1/C5, C4, C6, aplicar C7 parte 2 en dev, D3 (`pase-2.md`) y D4 (`avance.md`).
