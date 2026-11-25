@@ -228,9 +228,9 @@ export async function correrFlujos(c) {
       afirmar(nombre === u.cliente.nombre, `nombre precargado «${nombre}», se esperaba «${u.cliente.nombre}»`);
       afirmar(telefono === u.cliente.telefono, `teléfono precargado «${telefono}»`);
       await p.fill("#fecha", esc.noche);
-      await p.getByRole("button", { name: "Confirmar reserva" }).click();
-      await p.getByText("¡Reserva confirmada!").waitFor();
-      const card = tarjeta(p, "¡Reserva confirmada!");
+      await p.getByRole("button", { name: "Apartar lugar" }).click();
+      await p.getByText("Lugar apartado").waitFor();
+      const card = tarjeta(p, "Lugar apartado");
       const qr = await qrEnPantalla(c, f, card, "cliente");
       const enlace = await codigoDelEnlace(card);
       afirmar(qr.texto === enlace, `el QR dice «${qr.texto}» y el enlace «${enlace}»`);
@@ -254,13 +254,13 @@ export async function correrFlujos(c) {
       await anon.fill("#telefono", telAnon);
       await anon.fill("#fecha", esc.noche);
       const t1 = Date.now();
-      await anon.getByRole("button", { name: "Confirmar reserva" }).click();
-      await anon.getByText(/¡Reserva confirmada!|No pudimos crear tu reserva/).first().waitFor();
+      await anon.getByRole("button", { name: "Apartar lugar" }).click();
+      await anon.getByText(/Lugar apartado|No pudimos crear tu reserva/).first().waitFor();
       const tEnvio = Date.now() - t1;
-      if (!(await anon.getByText("¡Reserva confirmada!").count())) {
+      if (!(await anon.getByText("Lugar apartado").count())) {
         throw new Error("la página dijo: " + (await anon.locator("form [role=alert]").first().innerText({ timeout: 2000 }).catch(() => "?")));
       }
-      const card = tarjeta(anon, "¡Reserva confirmada!");
+      const card = tarjeta(anon, "Lugar apartado");
       const qr = await qrEnPantalla(c, f, card, "sin-cuenta");
       const enlace = await codigoDelEnlace(card);
       afirmar(qr.texto === enlace, `el QR dice «${qr.texto}» y el enlace «${enlace}»`);
@@ -301,7 +301,7 @@ export async function correrFlujos(c) {
       await anon.fill("#telefono", telLimite);
       await anon.fill("#fecha", esc.noche);
       const respuesta = anon.waitForResponse((r) => r.request().method() === "POST" && r.url().includes("/rest/v1/reservations"));
-      await anon.getByRole("button", { name: "Confirmar reserva" }).click();
+      await anon.getByRole("button", { name: "Apartar lugar" }).click();
       const res = await respuesta;
       const cuerpo = await res.json().catch(() => ({}));
       rechazo = { estado: res.status(), code: cuerpo.code ?? null, message: cuerpo.message ?? null };
