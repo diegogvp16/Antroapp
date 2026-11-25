@@ -191,7 +191,9 @@ export function DetalleMesa({
             sesionId: sesion.id,
             tipo: "pago",
             montoCentavos: centavos,
-            descripcion: metodo === "efectivo" ? "Cobro en efectivo" : metodo === "tarjeta" ? "Cobro con tarjeta" : "Cobro",
+            descripcion:
+              (metodo === "efectivo" ? "Cobro en efectivo" : metodo === "tarjeta" ? "Cobro con tarjeta" : "Cobro") +
+              (FASE2_ACTIVA && propina > 0 ? ` · propina ${formatearCentavos(propina)}` : ""),
             args: {
               p_sesion_id: sesion.id,
               p_cuenta_id: null,

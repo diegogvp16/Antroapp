@@ -18,7 +18,11 @@
 // falle. No toca Club Demo Dev.
 //
 //   PLAYWRIGHT_DESDE=<carpeta con node_modules/playwright> \
-//     node scripts/dev/probar-caja-sin-red.mjs [http://localhost:3001]
+//     node scripts/dev/probar-caja-sin-red.mjs [http://localhost:3001] [--fase2]
+//
+// --fase2: el servidor corre con NEXT_PUBLIC_FASE2=1; además prueba sin red
+// un consumo del catálogo (descuenta existencias una vez) y un cobro con
+// propina.
 //
 // Capturas en screenshots-b-caja/ (ignorada por Git).
 
@@ -45,7 +49,8 @@ async function cargarPlaywright() {
 }
 const { chromium } = await cargarPlaywright();
 const { createClient } = req("@supabase/supabase-js");
-const BASE = process.argv[2] ?? "http://localhost:3001";
+const BASE = process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "http://localhost:3001";
+const FASE2 = process.argv.includes("--fase2");
 const SHOTS = path.join(RAIZ, "screenshots-b-caja") + path.sep;
 mkdirSync(SHOTS, { recursive: true });
 const opciones = { auth: { persistSession: false, autoRefreshToken: false } };
@@ -83,7 +88,8 @@ async function limpiar() {
     await db.q("begin");
     await db.q("set local antroapp.borrado_pruebas = 'on'");
     if (clubId) {
-      for (const t of ["caja_eventos", "caja_cuadres", "caja_pagos", "caja_consumos", "mesa_cuentas", "mesa_sesiones", "caja_noches", "caja_permisos"])
+      // producto_movimientos (fase 2) apunta a caja_consumos: va primero.
+      for (const t of ["producto_movimientos", "caja_eventos", "caja_cuadres", "caja_pagos", "caja_consumos", "mesa_cuentas", "mesa_sesiones", "caja_noches", "caja_permisos", "productos"])
         await db.q(`delete from public.${t} where club_id = $1`, [clubId]);
       await db.q("delete from public.commissions where reservation_id in (select id from public.reservations where club_id = $1)", [clubId]);
       await db.q("delete from public.reservations where club_id = $1", [clubId]);
@@ -226,7 +232,7 @@ try {
   await usuario("staffB", "staff");
   await usuario("staffC", "staff");
   await usuario("gerente", "gerente");
-  const mesas = ok(await svc.from("club_tables").insert([1, 2, 3, 4, 5].map((n) => ({ club_id: clubId, numero: String(n), capacidad: 8 }))).select("id, numero"), "mesas");
+  const mesas = ok(await svc.from("club_tables").insert([1, 2, 3, 4, 5, 6].map((n) => ({ club_id: clubId, numero: String(n), capacidad: 8 }))).select("id, numero"), "mesas");
   const S = {};
   for (const m of mesas) {
     S[m.numero] = ok(await U.staffA.api.rpc("caja_abrir_mesa", { p_mesa_id: m.id }), "abrir mesa " + m.numero);
@@ -286,6 +292,10 @@ try {
   await devA.setOffline(false);
   t = await esperarBase(S[1], (x) => x.consumos === 2 && x.pagos === 1, 40000);
   cola = await esperarCola(A, (x) => x.length === 0);
+  if (cola.length) {
+    console.log("  (diagnóstico) URL:", A.url());
+    await A.screenshot({ path: SHOTS + "diag-vuelve-red.png", fullPage: true }).catch(() => {});
+  }
   nota("vuelve la red: se aplica UNA vez (2 consumos y 1 cobro en la base) y la cola queda vacía",
     t.consumos === 2 && t.consumo === 60000 && t.pagos === 1 && t.cobrado === 60000 && cola.length === 0,
     `${t.consumos} consumos ${pesos(t.consumo)}, ${t.pagos} cobros ${pesos(t.cobrado)}, cola ${cola.length}`);
@@ -486,6 +496,41 @@ try {
   t = await esperarBase(S[5], (x) => x.consumos >= 2, 30000);
   cola = await esperarCola(A, (x) => x.length === 0);
   nota("cuando la primera vuelve a entrar, lo suyo se manda una vez", t.consumos === 2 && t.consumo === 3500 && cola.length === 0, `${t.consumos} consumos ${pesos(t.consumo)}`);
+
+  // ---------- 8. Fase 2: catálogo y propina sin red ----------
+  if (FASE2) {
+    const prod = ok(
+      await svc.from("productos").insert({ club_id: clubId, nombre: "Cerveza T", categoria: "Cerveza", precio_centavos: 8000, existencias: 10, existencias_minimas: 0 }).select("id").single(),
+      "producto",
+    );
+    await A.getByRole("button", { name: /^Mesa 6,/ }).waitFor({ timeout: 30000 });
+    await A.reload();
+    await A.getByRole("button", { name: /^Mesa 6,/ }).waitFor({ timeout: 60000 });
+    await abrirMesa(A, 6);
+    await devA.setOffline(true);
+    await A.getByRole("button", { name: /Agregar consumo/ }).first().click();
+    const hoja = A.getByRole("dialog", { name: "Agregar consumo" });
+    await hoja.getByRole("button", { name: "Agregar uno: Cerveza T" }).click();
+    await hoja.getByRole("button", { name: "Agregar uno: Cerveza T" }).click();
+    await hoja.getByRole("button", { name: /Guardar en el teléfono · \$160/ }).click();
+    await hojaCerrada(A, "Agregar consumo");
+    await A.getByRole("button", { name: /^Cobrar \$160/ }).click();
+    const cobro = A.getByRole("dialog", { name: "Cobrar" });
+    await cobro.getByLabel(/Propina/).fill("50");
+    await cobro.getByRole("button", { name: /^Guardar cobro \$160/ }).click();
+    await hojaCerrada(A, "Cobrar");
+    await A.screenshot({ path: SHOTS + "08-fase2-sin-red-390.png", fullPage: true });
+    await devA.setOffline(false);
+    t = await esperarBase(S[6], (x) => x.consumos >= 1 && x.pagos >= 1, 30000);
+    await esperarCola(A, (x) => x.length === 0);
+    await esperar(3000);
+    t = await totales(S[6]);
+    const p6 = ok(await svc.from("caja_pagos").select("propina_centavos").eq("sesion_id", S[6]), "propina");
+    const ex = ok(await svc.from("productos").select("existencias").eq("id", prod.id).single(), "existencias");
+    nota("fase 2 sin red: consumo del catálogo y cobro con propina, una vez cada uno; existencias bajan una vez",
+      t.consumos === 1 && t.consumo === 16000 && t.pagos === 1 && Number(p6[0]?.propina_centavos) === 5000 && ex.existencias === 8,
+      `${t.consumos} consumos ${pesos(t.consumo)}, ${t.pagos} cobros, propina ${p6[0]?.propina_centavos}, existencias ${ex.existencias}`);
+  }
 
   for (const ctx of [devA, devB, devC]) await ctx.close();
 } catch (e) {
