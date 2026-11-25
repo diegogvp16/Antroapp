@@ -44,6 +44,9 @@ export interface MovimientoPendiente {
   capturadoEn: string; // ISO
   orden: number; // FIFO: los consumos de una mesa van antes que su cobro
   intentos: number;
+  // Envíos que volvieron con un error dudoso (ver clasificar). Opcional: las
+  // filas guardadas antes de este campo no lo traen.
+  intentosDudosos?: number;
   estado: EstadoPendiente;
   motivo: string | null; // por qué la base lo rechazó
   rechazadoEn: string | null;
@@ -141,7 +144,7 @@ export function conLimite<T>(p: Promise<T>, ms: number, alVencer: T): Promise<T>
 
 export type Clasificacion =
   | { tipo: "aplicado" }
-  | { tipo: "reintentar" } // red caída o servidor sin responder: se intenta después
+  | { tipo: "reintentar"; dudoso?: boolean } // red caída o servidor sin responder: se intenta después (dudoso: cuenta para MAX_INTENTOS_DUDOSOS)
   | { tipo: "sin_sesion" } // la sesión venció: se espera a renovarla
   | { tipo: "rechazado"; motivo: string }; // la base dijo que no: se muestra y no se reintenta
 
@@ -152,19 +155,59 @@ export interface RespuestaLlamada {
 
 export const MOTIVO_GENERICO = "La base no aceptó este movimiento. Revisa la mesa con tu gerente.";
 
+// Errores pasajeros con código: la base o PostgREST no pudo atender en ese
+// momento (justo lo que pasa en una noche cargada). Reintentar es seguro por
+// la clave (p_clave): si sí entró, la base devuelve el mismo movimiento.
+//  PGRST000-003: PostgREST sin conexión a la base, sin caché del esquema o
+//  sin conexión libre en el pool (503/504). 53000/53300: la base sin
+//  recursos o sin conexiones. 55P03: candado ocupado. 57014: tiempo agotado.
+//  57P01-57P03: la base se reinicia. 40001/40P01: serialización y deadlock.
+//  08xxx (abajo): conexión caída entre PostgREST y la base.
+const PASAJEROS = new Set([
+  "PGRST000",
+  "PGRST001",
+  "PGRST002",
+  "PGRST003",
+  "53000",
+  "53300",
+  "55P03",
+  "57014",
+  "57P01",
+  "57P02",
+  "57P03",
+  "40001",
+  "40P01",
+]);
+
+// Un 5xx con código que no está en la lista (por ejemplo XX000), o la base
+// sin la función (PGRST202, pasa unos segundos mientras PostgREST recarga
+// el esquema en un pase): se reintenta, pero no para siempre, porque la cola
+// se forma detrás y nada más saldría. Con la espera creciente, 10 intentos
+// son unos 5 minutos; después se rechaza y se avisa.
+export const MAX_INTENTOS_DUDOSOS = 10;
+
 // esRed: lo decide quien llama con esErrorDeRed (lib/errores-base.ts).
-export function clasificar(r: RespuestaLlamada, esRed: boolean): Clasificacion {
+// dudososPrevios: cuántas veces ya volvió con un error dudoso (5xx con código
+// desconocido o PGRST202). Los fallos de red no cuentan.
+export function clasificar(r: RespuestaLlamada, esRed: boolean, dudososPrevios = 0): Clasificacion {
   if (!r.error) return { tipo: "aplicado" };
   const code = r.error.code ?? "";
+  const status = r.status;
+  // Rechazos de verdad: la base dijo que no (aviso de la función o permiso).
   if (code === "P0001") return { tipo: "rechazado", motivo: motivoRechazo(r.error.message) };
-  if (code === "PGRST301" || r.status === 401) return { tipo: "sin_sesion" };
+  if (code === "PGRST301" || status === 401) return { tipo: "sin_sesion" };
   if (esRed) return { tipo: "reintentar" };
-  if (code === "42501" || r.status === 403) return { tipo: "rechazado", motivo: "No tienes permiso para hacer esto." };
-  // Sin código y con error del servidor (502, 503, 504) o límite (408, 429):
-  // la petición pudo no llegar. Reintentar es seguro por la clave.
-  if (!code && (r.status === undefined || r.status === 0 || r.status >= 500 || r.status === 408 || r.status === 429))
-    return { tipo: "reintentar" };
-  if (code === "57014" || code === "40001" || code === "40P01") return { tipo: "reintentar" }; // timeout, serialización, deadlock
+  if (code === "42501" || status === 403) return { tipo: "rechazado", motivo: "No tienes permiso para hacer esto." };
+  // Pasajeros conocidos: siempre se reintentan (como la red).
+  if (PASAJEROS.has(code) || code.startsWith("08")) return { tipo: "reintentar" };
+  // Sin respuesta del servidor, límite (408, 429) o error del servidor (5xx):
+  // la petición pudo no llegar o no atenderse. Sin código, siempre; con un
+  // código desconocido, hasta MAX_INTENTOS_DUDOSOS.
+  const servidor = status === undefined || status === 0 || status >= 500 || status === 408 || status === 429;
+  if (servidor && !code) return { tipo: "reintentar" };
+  if (servidor || code === "PGRST202")
+    return dudososPrevios + 1 < MAX_INTENTOS_DUDOSOS ? { tipo: "reintentar", dudoso: true } : { tipo: "rechazado", motivo: MOTIVO_GENERICO };
+  // Cualquier otro 4xx: la base no lo acepta y no lo va a aceptar.
   return { tipo: "rechazado", motivo: MOTIVO_GENERICO };
 }
 
@@ -260,10 +303,31 @@ export function textoDeOtraCuenta(n: number): string {
 
 // Lo rechazado se queda a la vista hasta que alguien toque "Entendido".
 // Pasadas 72 h ya no sirve de nada (la noche cerró) y se limpia. Lo pendiente
-// NUNCA se borra solo.
+// NUNCA se borra solo: a lo más pasa a rechazado (con su motivo) en los dos
+// casos de abajo, y desde ahí corre su propia vigencia de 72 h.
 export const VIGENCIA_RECHAZADO_MS = 72 * 3600 * 1000;
 export function vencido(x: MovimientoPendiente, ahora: Date): boolean {
   if (x.estado !== "rechazado") return false;
   const t = Date.parse(x.rechazadoEn ?? x.capturadoEn);
   return Number.isFinite(t) && ahora.getTime() - t > VIGENCIA_RECHAZADO_MS;
+}
+
+// Pendientes de OTRA cuenta que nadie va a mandar: quien los capturó no ha
+// vuelto a entrar en este teléfono en 72 h (para entonces la noche ya
+// cerró). Pasan a rechazado con este motivo: dejan de anunciarse a la
+// persona de ahora como "se envían cuando esa persona vuelva a entrar", y si
+// quien los capturó vuelve en las 72 h siguientes, los ve con el motivo.
+export const VIGENCIA_PENDIENTE_AJENO_MS = 72 * 3600 * 1000;
+export const MOTIVO_AJENO_VENCIDO = "No se envió: pasaron más de 72 horas sin que volvieras a entrar en este teléfono.";
+// Cuenta dada de baja: la base ya no le acepta nada (lib/cuenta-dada-de-baja.ts).
+export const MOTIVO_CUENTA_BAJA = "No se envió: tu cuenta fue dada de baja.";
+
+export function pendienteAjenoVencido(x: MovimientoPendiente, usuarioActual: string, ahora: Date): boolean {
+  if (x.estado !== "pendiente" || x.usuarioId === usuarioActual) return false;
+  const t = Date.parse(x.capturadoEn);
+  return Number.isFinite(t) && ahora.getTime() - t > VIGENCIA_PENDIENTE_AJENO_MS;
+}
+
+export function comoRechazado(x: MovimientoPendiente, motivo: string, ahora: Date): MovimientoPendiente {
+  return { ...x, estado: "rechazado", motivo, rechazadoEn: ahora.toISOString() };
 }

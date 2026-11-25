@@ -138,7 +138,14 @@ export function useColaCaja({
   // Lo que se está mandando desde una hoja abierta: si la base lo rechaza, el
   // error se muestra en la hoja y no en la lista de rechazados.
   const enHoja = useRef(new Set<string>());
+  const firmaVista = useRef("");
   const fallos = useRef(0);
+  // Mientras una pasada de esta pestaña manda la cola, sus propios avisos de
+  // cambio no refrescan la vista: si lo hicieran, lo enviado saldría de la
+  // vista ANTES de que la caja vuelva a leer la base, y por un momento la
+  // mesa mostraría montos sin eso (la hoja de cuadrar decía $500 cuando la
+  // base ya tenía $700). La pasada refresca al final, después de onCambio.
+  const pasando = useRef(false);
   const temporizador = useRef<number | null>(null);
   const cadena = useRef<Promise<void>>(Promise.resolve());
   // La pasada se reprograma a sí misma (espera creciente) a través de este ref.
@@ -150,13 +157,24 @@ export function useColaCaja({
 
   const refrescar = useCallback(async () => {
     if (!usuarioId) {
+      firmaVista.current = "";
       setMovimientos([]);
       setDeOtraCuenta(0);
       return;
     }
     try {
-      const [lista, todos] = await Promise.all([leerCola(usuarioId), contarPendientes()]);
-      setMovimientos(lista.filter((x) => !(x.estado === "rechazado" && enHoja.current.has(x.clave))));
+      // En orden: leerCola pasa a rechazado lo ajeno vencido antes de contarlo.
+      const lista = await leerCola(usuarioId);
+      const todos = await contarPendientes();
+      const visibles = lista.filter((x) => !(x.estado === "rechazado" && enHoja.current.has(x.clave)));
+      // Cada reintento fallido vuelve a escribir la cola (intentos + 1): si no
+      // cambió nada de lo que se ve, se conserva el mismo arreglo para no
+      // volver a pintar las 50 mesas en cada reintento con mala señal.
+      const firma = visibles.map((x) => `${x.clave}:${x.estado}:${x.motivo ?? ""}`).join("|");
+      if (firma !== firmaVista.current) {
+        firmaVista.current = firma;
+        setMovimientos(visibles);
+      }
       setDeOtraCuenta(Math.max(0, todos - lista.filter((x) => x.estado === "pendiente").length));
     } catch (e) {
       console.error("No se pudo leer la cola de caja:", e);
@@ -189,6 +207,7 @@ export function useColaCaja({
     if (estado === "desconocida") return programarReintento();
     if (estado !== "ok" || !s.token) return; // vencida u otra cuenta: hasta que vuelva a entrar
     setEnviando(true);
+    pasando.current = true;
     try {
       const cliente = clienteConToken(s.token);
       const llamar: Llamar = async (funcion, args) => {
@@ -224,6 +243,7 @@ export function useColaCaja({
     } catch (e) {
       console.error("Error mandando la cola de caja:", e);
     } finally {
+      pasando.current = false;
       setEnviando(false);
       await refrescar();
     }
@@ -254,7 +274,7 @@ export function useColaCaja({
     () =>
       suscribirCola((origen) => {
         if (origen === "otra") void (onCambio.current?.() ?? Promise.resolve()).catch(() => {}).then(refrescar);
-        else void refrescar();
+        else if (!pasando.current) void refrescar();
       }),
     [refrescar],
   );
@@ -281,11 +301,18 @@ export function useColaCaja({
     const alVolver = () => {
       if (document.visibilityState === "visible") sincronizar();
     };
+    // pageshow: la página volvió del caché de "atrás/adelante". resume:
+    // Chrome en Android la descongela (con batería baja congela las pestañas
+    // en segundo plano y los temporizadores no corren mientras tanto).
     window.addEventListener("online", sincronizar);
+    window.addEventListener("pageshow", alVolver);
     document.addEventListener("visibilitychange", alVolver);
+    document.addEventListener("resume", alVolver);
     return () => {
       window.removeEventListener("online", sincronizar);
+      window.removeEventListener("pageshow", alVolver);
       document.removeEventListener("visibilitychange", alVolver);
+      document.removeEventListener("resume", alVolver);
     };
   }, [sincronizar]);
   useEffect(() => {

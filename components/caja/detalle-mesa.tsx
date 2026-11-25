@@ -10,7 +10,7 @@ import { BotonPrincipal } from "@/components/caja/hoja";
 import { MensajeError, useAccion } from "@/components/caja/accion";
 import { HojaCobro, HojaConsumo, HojaCuadrar, HojaMotivo, HojaRecibir, type RenglonNuevo } from "@/components/caja/hojas-mesa";
 import { AvisoColaMesa } from "@/components/caja/cola-caja";
-import type { MovimientoPendiente, NuevoMovimiento } from "@/lib/domain/caja-cola";
+import { textoPorEnviar, type MovimientoPendiente, type NuevoMovimiento } from "@/lib/domain/caja-cola";
 import type { ResultadoEnvio } from "@/lib/use-cola-caja";
 import {
   armarConcepto,
@@ -49,6 +49,8 @@ export function DetalleMesa({
   movimientos = [],
   onEnviar,
   onDescartar,
+  onEnviarAhora,
+  enviandoCola = false,
   onVolver,
   onCambio,
 }: {
@@ -64,6 +66,10 @@ export function DetalleMesa({
   // Guarda en el teléfono y manda a la base (lib/use-cola-caja.ts).
   onEnviar: (nuevos: Omit<NuevoMovimiento, "clubId">[]) => Promise<ResultadoEnvio>;
   onDescartar: (claves: string[]) => void;
+  // Mandar ya lo que esté en la cola (sin esperar el siguiente reintento).
+  onEnviarAhora?: () => void;
+  // La cola se está mandando en este momento.
+  enviandoCola?: boolean;
   onVolver: () => void;
   onCambio: () => Promise<void>;
 }) {
@@ -86,6 +92,18 @@ export function DetalleMesa({
   // Lo capturado de este grupo que todavía no llega a la base.
   const porEnviarConsumos = sesion ? movimientos.filter((x) => x.estado === "pendiente" && x.sesionId === sesion.id && x.tipo !== "pago") : [];
   const porEnviarPagos = sesion ? movimientos.filter((x) => x.estado === "pendiente" && x.sesionId === sesion.id && x.tipo === "pago") : [];
+  // Cerrar o cuadrar con algo de este grupo todavía en el teléfono: la base
+  // cerraría la mesa sin eso y al llegar lo rechazaría ("la mesa ya está
+  // cerrada"): un consumo que nunca se cobra o un cobro que no aparece. Por
+  // eso primero se envía y después se cierra.
+  const pendientesGrupo = porEnviarConsumos.length + porEnviarPagos.length;
+  // m trae lo pendiente sumado; esto es lo que ya está en la base, que es lo
+  // que de verdad se cierra y se cuadra.
+  const consumoEnBase = m.consumo - porEnviarConsumos.reduce((s, x) => s + x.montoCentavos, 0);
+  const cobradoEnBase = m.cobrado - porEnviarPagos.reduce((s, x) => s + x.montoCentavos, 0);
+  const avisoPrimeroEnviar = `Para cerrar o cuadrar, primero tiene${pendientesGrupo === 1 ? "" : "n"} que llegar a la base ${
+    pendientesGrupo === 1 ? "el movimiento de esta mesa que sigue" : `los ${pendientesGrupo} movimientos de esta mesa que siguen`
+  } en este teléfono.`;
   const abierta = m.estado === "abierta" && !nocheCerrada;
   const puedeRecibir = (m.estado === "libre" || m.estado === "cuadrada") && permisos.abrir_mesa && !nocheCerrada;
 
@@ -215,6 +233,7 @@ export function DetalleMesa({
 
   function cerrarMesa() {
     if (!sesion) return;
+    if (pendientesGrupo > 0) return accion.fallar(avisoPrimeroEnviar);
     return accion.correr(async (paso) => {
       const r = await paso(() => rpc.rpc("caja_cerrar_mesa", { p_sesion_id: sesion.id }));
       if (!r.ok && (await estadoEnBase(sesion.id)) !== "cerrada") {
@@ -229,6 +248,7 @@ export function DetalleMesa({
 
   function cuadrar(notas: string) {
     if (!sesion) return;
+    if (pendientesGrupo > 0) return accion.fallar(avisoPrimeroEnviar);
     return accion.correr(async (paso) => {
       // Se parte del estado real en la base, no del de la pantalla: un
       // reintento después de perder la respuesta continúa donde se quedó.
@@ -281,7 +301,8 @@ export function DetalleMesa({
 
   // ---------- Botón principal según el paso ----------
   // sinRed: la acción se puede hacer sin señal (va a la cola de caja).
-  let principal: { texto: string; accion: () => void; tono?: "dorado" | "aviso"; sinRed?: boolean } | null = null;
+  // cierra: cerrar o cuadrar (esperan a que se envíe lo pendiente del grupo).
+  let principal: { texto: string; accion: () => void; tono?: "dorado" | "aviso"; sinRed?: boolean; cierra?: boolean } | null = null;
   let nota: string | null = null;
   if (nocheCerrada) nota = "La noche ya está cerrada.";
   else if (puedeRecibir) principal = { texto: m.estado === "cuadrada" ? "Recibir nuevo grupo" : "Recibir grupo", accion: () => setHoja("recibir") };
@@ -292,10 +313,10 @@ export function DetalleMesa({
     // Grupo recién sentado: lo siguiente es consumir, no cuadrar.
     if (permisos.registrar_consumo) principal = { texto: "Agregar consumo", accion: () => setHoja("consumo"), sinRed: true };
   } else if (m.estado === "abierta") {
-    if (permisos.cuadrar_mesa) principal = { texto: "Cuadrar mesa", accion: () => setHoja("cuadrar") };
-    else if (permisos.cerrar_mesa) principal = { texto: "Cerrar mesa", accion: () => void cerrarMesa() };
+    if (permisos.cuadrar_mesa) principal = { texto: "Cuadrar mesa", accion: () => setHoja("cuadrar"), cierra: true };
+    else if (permisos.cerrar_mesa) principal = { texto: "Cerrar mesa", accion: () => void cerrarMesa(), cierra: true };
   } else if (m.estado === "por_cuadrar") {
-    if (permisos.cuadrar_mesa) principal = { texto: "Cuadrar mesa", tono: "aviso", accion: () => setHoja("cuadrar") };
+    if (permisos.cuadrar_mesa) principal = { texto: "Cuadrar mesa", tono: "aviso", accion: () => setHoja("cuadrar"), cierra: true };
     else nota = "Pagada y cerrada. Falta que el gerente la cuadre.";
   }
 
@@ -303,7 +324,7 @@ export function DetalleMesa({
   const totalMetodo = (metodo: MetodoPago) => porMetodo(metodo).filter((p) => !p.anulado).reduce((s, p) => s + p.monto_centavos, 0);
   const acciones = [
     abierta && permisos.abrir_mesa && m.cuentas.length > 0 && { texto: "Sentar a otro cliente", hacer: () => setHoja("recibir") },
-    abierta && permisos.cerrar_mesa && m.saldo <= 0 && permisos.cuadrar_mesa && { texto: "Solo cerrar (cuadrar después)", hacer: () => void cerrarMesa() },
+    abierta && permisos.cerrar_mesa && m.saldo <= 0 && permisos.cuadrar_mesa && pendientesGrupo === 0 && { texto: "Solo cerrar (cuadrar después)", hacer: () => void cerrarMesa() },
     m.estado === "por_cuadrar" && esGerente && permisos.reabrir_mesa && !nocheCerrada && { texto: "Abrir otra vez…", hacer: () => setHoja("reabrir") },
   ].filter(Boolean) as { texto: string; hacer: () => void }[];
 
@@ -517,7 +538,21 @@ export function DetalleMesa({
             {avisoCola}
           </p>
         )}
-        {principal ? (
+        {principal?.cierra && pendientesGrupo > 0 ? (
+          <div role="status" className="flex flex-col gap-2">
+            <p className="flex items-start gap-2 text-sm text-caja-aviso">
+              <CloudUpload className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              {avisoPrimeroEnviar}
+            </p>
+            <BotonPrincipal disabled={sinConexion || enviandoCola || !onEnviarAhora} onClick={() => onEnviarAhora?.()}>
+              {sinConexion
+                ? `Sin conexión · ${textoPorEnviar(pendientesGrupo)}`
+                : enviandoCola
+                  ? `Enviando · ${textoPorEnviar(pendientesGrupo)}`
+                  : `Enviar ahora · ${textoPorEnviar(pendientesGrupo)}`}
+            </BotonPrincipal>
+          </div>
+        ) : principal ? (
           <BotonPrincipal tono={principal.tono} disabled={accion.ocupado || (sinConexion && !principal.sinRed)} onClick={principal.accion}>
             {sinConexion && !principal.sinRed ? "Sin conexión" : accion.ocupado && hoja === null ? "Guardando..." : principal.texto}
           </BotonPrincipal>
@@ -567,8 +602,9 @@ export function DetalleMesa({
         <HojaCuadrar
           abierta
           onCerrar={cerrarHoja}
-          consumo={m.consumo}
-          cobrado={m.cobrado}
+          consumo={consumoEnBase}
+          cobrado={cobradoEnBase}
+          bloqueo={pendientesGrupo > 0 ? avisoPrimeroEnviar : null}
           propinas={propinasMesa}
           cerrarAntes={m.estado === "abierta"}
           ocupado={accion.ocupado}

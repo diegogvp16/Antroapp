@@ -23,7 +23,7 @@
   <h1>Sin conexión</h1>
   <p>AntroApp necesita internet para abrir esta pantalla. Revisa la señal o el wifi y vuelve a intentar.</p>
   <button type="button" onclick="location.reload()">Reintentar</button>
-  <small id="caja">Los consumos y cobros que capturaste en la caja se quedan guardados en este teléfono y se envían solos al volver la señal.</small>
+  <small id="caja">Los consumos y cobros que capturaste en la caja se quedan guardados en este teléfono. Se envían solos cuando vuelva la señal y la app de staff esté abierta con tu cuenta.</small>
 </main>
 <script>
 window.addEventListener("online", function () { location.reload(); });
@@ -40,7 +40,7 @@ window.addEventListener("online", function () { location.reload(); });
       g.onsuccess = function () {
         var n = g.result.filter(function (x) { return x.estado === "pendiente"; }).length;
         db.close();
-        if (n > 0) document.getElementById("caja").textContent = (n === 1 ? "Hay 1 movimiento de caja guardado" : "Hay " + n + " movimientos de caja guardados") + " en este teléfono. Se envían solos en cuanto vuelva la señal; no los captures otra vez.";
+        if (n > 0) document.getElementById("caja").textContent = (n === 1 ? "Hay 1 movimiento de caja guardado" : "Hay " + n + " movimientos de caja guardados") + " en este teléfono. Se envían solos cuando vuelva la señal y la app de staff esté abierta con la cuenta que los capturó; no los captures otra vez.";
       };
     };
   } catch (e) {}

@@ -11,7 +11,10 @@
 //     permiso retirado y cuenta dada de baja. Se muestran con motivo, no se
 //     reintentan en bucle y no se guardan;
 //  6. otra persona en el mismo teléfono no manda lo de la primera;
-//  7. en el teléfono no se guardan nombres de clientes ni tokens.
+//  7. con movimientos de la mesa en la cola no se deja cerrar ni cuadrar:
+//     primero "Enviar ahora", y el cuadre sale con todo;
+//  en el teléfono no se guardan nombres de clientes ni tokens. Los "una vez"
+//  se comprueban contando las peticiones, no solo las filas de la base.
 //
 // Contra el servidor local de dev y antroapp-dev. Arma su propio antro
 // ("T caja …", cuentas t_caja_…@example.com) y lo borra al final, aunque
@@ -59,23 +62,60 @@ const opciones = { auth: { persistSession: false, autoRefreshToken: false } };
 const svc = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, opciones);
 
 // Restos de una corrida interrumpida (Ctrl+C, proceso muerto): sin el
-// finally no se borró nada. Solo toca el prefijo de esta prueba.
+// finally no se borró nada. Solo toca el prefijo de esta prueba y NUNCA lo
+// de una corrida en curso (las pruebas del carril corren a la vez):
+//   --tag=<TAG>       solo esa corrida ("T caja <TAG>", t_caja_*_<TAG>@example.com);
+//   sin --tag         solo corridas cuyas cuentas tienen más de --minutos=N
+//                     (120 por omisión): el TAG sale del correo.
 if (process.argv.includes("--limpiar-restos")) {
+  const argTag = process.argv.find((a) => a.startsWith("--tag="))?.slice(6);
+  const minutos = Number(process.argv.find((a) => a.startsWith("--minutos="))?.slice(10) ?? 120);
+  if (argTag !== undefined && !/^[0-9a-z]{4,12}$/i.test(argTag)) {
+    console.log("--tag inválido.");
+    process.exit(1);
+  }
+  if (!Number.isFinite(minutos) || minutos < 30) {
+    console.log("--minutos debe ser 30 o más (para no tocar una corrida en curso).");
+    process.exit(1);
+  }
   const db = await conectarDevEscritura();
-  const clubs = (await db.q("select id from public.clubs where nombre like 'T caja %'")).map((r) => r.id);
-  const users = (await db.q("select id, email from auth.users where email like 't\\_caja\\_%@example.com'"));
-  await db.q("begin");
-  await db.q("set local antroapp.borrado_pruebas = 'on'");
-  for (const c of clubs)
-    for (const t of ["producto_movimientos", "caja_eventos", "caja_cuadres", "caja_pagos", "caja_consumos", "mesa_cuentas", "mesa_sesiones", "caja_noches", "caja_permisos", "productos", "club_tables"])
-      await db.q(`delete from public.${t} where club_id = $1`, [c]);
-  if (users.length) await db.q("delete from public.profiles where id = any($1::uuid[])", [users.map((u) => u.id)]);
-  for (const c of clubs) await db.q("delete from public.clubs where id = $1", [c]);
-  await db.q("commit");
+  let users;
+  if (argTag) {
+    users = await db.q("select id, email from auth.users where email like $1", [`t\\_caja\\_%\\_${argTag}@example.com`]);
+  } else {
+    users = await db.q(
+      "select id, email from auth.users where email like 't\\_caja\\_%@example.com' and created_at < now() - make_interval(mins => $1)",
+      [minutos],
+    );
+  }
+  const tags = argTag ? [argTag] : [...new Set(users.map((u) => /_([0-9a-z]+)@example\.com$/i.exec(u.email)?.[1]).filter(Boolean))];
+  const clubs = tags.length
+    ? (await db.q("select id from public.clubs where nombre like any($1::text[])", [tags.map((t) => `T caja ${t}%`)])).map((r) => r.id)
+    : [];
+  try {
+    await db.q("begin");
+    await db.q("set local antroapp.borrado_pruebas = 'on'");
+    // Mismo orden que limpiar().
+    for (const c of clubs) {
+      for (const t of ["producto_movimientos", "caja_eventos", "caja_cuadres", "caja_pagos", "caja_consumos", "mesa_cuentas", "mesa_sesiones", "caja_noches", "caja_permisos", "productos"])
+        await db.q(`delete from public.${t} where club_id = $1`, [c]);
+      await db.q("delete from public.commissions where reservation_id in (select id from public.reservations where club_id = $1)", [c]);
+      await db.q("delete from public.reservations where club_id = $1", [c]);
+      await db.q("delete from public.club_tables where club_id = $1", [c]);
+    }
+    if (users.length) await db.q("delete from public.profiles where id = any($1::uuid[])", [users.map((u) => u.id)]);
+    for (const c of clubs) await db.q("delete from public.clubs where id = $1", [c]);
+    await db.q("commit");
+  } catch (e) {
+    await db.q("rollback").catch(() => {});
+    console.log("Error borrando restos:", e.message);
+    await db.fin();
+    process.exit(1);
+  }
   await db.fin();
   for (const u of users) await svc.auth.admin.deleteUser(u.id);
   if (users.length) await svc.from("login_intentos").delete().in("email_hash", users.map((u) => createHash("sha256").update(u.email.toLowerCase()).digest("hex")));
-  console.log(`Restos borrados: ${clubs.length} antros, ${users.length} cuentas.`);
+  console.log(`Restos borrados: ${clubs.length} antros, ${users.length} cuentas (${argTag ? `TAG ${argTag}` : `corridas de hace más de ${minutos} min`}).`);
   process.exit(0);
 }
 
@@ -254,8 +294,9 @@ try {
   await usuario("staffA", "staff");
   await usuario("staffB", "staff");
   await usuario("staffC", "staff");
+  await usuario("staffE", "staff");
   await usuario("gerente", "gerente");
-  const mesas = ok(await svc.from("club_tables").insert([1, 2, 3, 4, 5, 6].map((n) => ({ club_id: clubId, numero: String(n), capacidad: 8 }))).select("id, numero"), "mesas");
+  const mesas = ok(await svc.from("club_tables").insert([1, 2, 3, 4, 5, 6, 7].map((n) => ({ club_id: clubId, numero: String(n), capacidad: 8 }))).select("id, numero"), "mesas");
   const S = {};
   for (const m of mesas) {
     S[m.numero] = ok(await U.staffA.api.rpc("caja_abrir_mesa", { p_mesa_id: m.id }), "abrir mesa " + m.numero);
@@ -268,6 +309,8 @@ try {
   const devA = await dispositivo("A");
   const A = await entrar(devA, "staffA");
   const llamadasConsumoA = contador(devA, "caja_registrar_consumo");
+  // Todas las llamadas de la cola (consumo, consumo del catálogo y cobro).
+  const llamadasColaA = contador(devA, "caja_registrar_");
 
   // ---------- 1. Capturar sin red, recargar sin red, volver la red ----------
   await abrirMesa(A, 1);
@@ -322,9 +365,13 @@ try {
   nota("vuelve la red: se aplica UNA vez (2 consumos y 1 cobro en la base) y la cola queda vacía",
     t.consumos === 2 && t.consumo === 60000 && t.pagos === 1 && t.cobrado === 60000 && cola.length === 0,
     `${t.consumos} consumos ${pesos(t.consumo)}, ${t.pagos} cobros ${pesos(t.cobrado)}, cola ${cola.length}`);
+  // Con la cola vacía no debe salir ninguna llamada más: se cuentan las
+  // peticiones (la base no duplicaría aunque hubiera reenvíos, por la clave).
+  const antesVentana = llamadasColaA.n;
   await esperar(5000);
   t = await totales(S[1]);
-  nota("5 s después sigue igual (no hay reenvíos que dupliquen)", t.consumos === 2 && t.pagos === 1);
+  const reenvios = llamadasColaA.n - antesVentana;
+  nota("5 s después: 0 envíos más a caja_registrar_* y la base sigue igual", reenvios === 0 && t.consumos === 2 && t.pagos === 1, `${reenvios} envíos en la ventana`);
   await A.getByText(/por enviar/).first().waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
   nota("el aviso de pendientes desaparece", (await A.getByText(/movimientos? por enviar/).count()) === 0);
 
@@ -376,7 +423,11 @@ try {
   await esperarCola(A, (x) => x.length === 0);
   await esperar(4000);
   t = await totales(S[2]);
-  nota("dos pestañas vaciando la misma cola: entra una vez", t.consumos === 2 && t.consumo === 11500, `${t.consumos} consumos; ${llamadasConsumoA.n - antes} envíos`);
+  const enviosDosPestanas = llamadasConsumoA.n - antes;
+  // El candado (Web Locks) forma a las dos pestañas: la segunda encuentra la
+  // cola vacía. Se compara el número de envíos, no solo las filas (la clave
+  // absorbería un reenvío y la prueba seguiría en verde).
+  nota("dos pestañas vaciando la misma cola: entra una vez y sale UN solo envío", t.consumos === 2 && t.consumo === 11500 && enviosDosPestanas === 1, `${t.consumos} consumos; ${enviosDosPestanas} envíos`);
   await A2.close();
   await volver(A);
 
@@ -519,6 +570,125 @@ try {
   t = await esperarBase(S[5], (x) => x.consumos >= 2, 30000);
   cola = await esperarCola(A, (x) => x.length === 0);
   nota("cuando la primera vuelve a entrar, lo suyo se manda una vez", t.consumos === 2 && t.consumo === 3500 && cola.length === 0, `${t.consumos} consumos ${pesos(t.consumo)}`);
+
+  // ---------- 5e. Dado de baja con pendientes, con la caja cerrada ----------
+  // La baja llega mientras la caja no está abierta: al volver a abrirla se le
+  // cierra la sesión. Sus pendientes no se quedan para siempre como "de otra
+  // cuenta… se envían cuando vuelva a entrar" (nunca va a poder): pasan a
+  // rechazados con el motivo, y desde ahí vencen a las 72 h.
+  const devE = await dispositivo("E");
+  const E = await entrar(devE, "staffE");
+  await abrirMesa(E, 5);
+  await devE.setOffline(true);
+  await agregarConsumo(E, "Baja sin caja", "60");
+  await E.close();
+  await devE.setOffline(false);
+  ok(await svc.from("profiles").update({ activo: false }).eq("id", U.staffE.id), "baja de E");
+  const E2 = await devE.newPage();
+  await E2.goto(BASE + "/staff/caja");
+  await E2.waitForURL(/cliente\/login\?baja=1/, { timeout: 60000 }).catch(() => {});
+  cola = await esperarCola(E2, (x) => x.length === 1 && x[0].estado === "rechazado", 10000);
+  t = await totales(S[5]);
+  nota("dado de baja que vuelve a abrir la caja: sale al login y su pendiente pasa a rechazado ('tu cuenta fue dada de baja'); no entra",
+    /baja=1/.test(E2.url()) && cola.length === 1 && cola[0].estado === "rechazado" && /dada de baja/.test(cola[0].motivo ?? "") && t.consumos === 2,
+    `${E2.url().replace(BASE, "")}, cola ${cola.map((x) => `${x.estado}: ${x.motivo}`)}, ${t.consumos} consumos`);
+  await devE.close();
+
+  // ---------- 7. Cerrar o cuadrar con movimientos de la mesa en la cola ----------
+  // La base cierra y cuadra solo con lo que ya tiene: si se dejara cuadrar
+  // con algo en el teléfono, el cuadre y la comisión saldrían sin eso y al
+  // llegar lo rechazaría ("la mesa ya está cuadrada").
+  ok(await U.staffA.api.rpc("caja_registrar_consumo", { p_cuenta_id: await cuenta(S[7]), p_monto_centavos: 50000, p_concepto: "Botella", p_clave: randomUUID() }), "consumo mesa 7");
+  ok(await U.gerente.api.rpc("caja_registrar_pago", { p_sesion_id: S[7], p_cuenta_id: null, p_metodo: "efectivo", p_monto_centavos: 50000, p_referencia: null, p_clave: randomUUID(), p_saldo_esperado: 50000 }), "cobro mesa 7");
+  const devG = await dispositivo("G");
+  const G = await entrar(devG, "gerente");
+  await abrirMesa(G, 7);
+  await G.getByRole("button", { name: /^Cuadrar mesa$/ }).waitFor({ timeout: 15000 });
+  // Hay red, pero la base no recibe nada de la cola (como con señal mala).
+  await devG.route("**/rest/v1/rpc/caja_registrar_*", (route) => route.abort("failed"));
+  await agregarConsumo(G, "Pendiente al cuadrar", "200");
+  await cobrarSaldo(G);
+  cola = await esperarCola(G, (x) => x.filter((y) => y.estado === "pendiente").length === 2, 15000);
+  await G.getByRole("button", { name: /^Enviar ahora · 2 movimientos por enviar/ }).waitFor({ timeout: 15000 }).catch(() => {});
+  const ofreceCuadrar = await G.getByRole("button", { name: /^Cuadrar mesa/ }).count();
+  const ofreceEnviar = await G.getByRole("button", { name: /^Enviar ahora · 2 movimientos por enviar/ }).count();
+  await G.getByRole("button", { name: "Más acciones" }).click();
+  const ofreceSoloCerrar = await G.getByText("Solo cerrar (cuadrar después)").count();
+  await G.getByRole("button", { name: "Más acciones" }).click();
+  nota("con 2 movimientos de la mesa en la cola no se ofrece cuadrar ni 'Solo cerrar': se ofrece 'Enviar ahora'",
+    cola.length === 2 && ofreceCuadrar === 0 && ofreceSoloCerrar === 0 && ofreceEnviar === 1,
+    `cola ${cola.length}, cuadrar ${ofreceCuadrar}, solo cerrar ${ofreceSoloCerrar}, enviar ahora ${ofreceEnviar}`);
+  await G.screenshot({ path: SHOTS + "09-cuadrar-espera-envio-390.png", fullPage: true });
+  await G.setViewportSize({ width: 360, height: 740 });
+  await G.screenshot({ path: SHOTS + "09b-cuadrar-espera-envio-360.png", fullPage: true });
+  await G.setViewportSize({ width: 390, height: 844 });
+  const s7 = ok(await svc.from("mesa_sesiones").select("estado").eq("id", S[7]).single(), "estado mesa 7");
+  t = await totales(S[7]);
+  nota("…la mesa sigue abierta en la base, con $500 y $500", s7.estado === "abierta" && t.consumo === 50000 && t.cobrado === 50000, `${s7.estado}, ${pesos(t.consumo)} / ${pesos(t.cobrado)}`);
+  await devG.unroute("**/rest/v1/rpc/caja_registrar_*");
+  await G.getByRole("button", { name: /^Enviar ahora/ }).click();
+  t = await esperarBase(S[7], (x) => x.consumos === 2 && x.pagos === 2, 30000);
+  cola = await esperarCola(G, (x) => x.length === 0);
+  await G.getByRole("button", { name: /^Cuadrar mesa$/ }).waitFor({ timeout: 20000 }).catch(() => {});
+  let textoCuadre = "";
+  if ((await G.getByRole("button", { name: /^Cuadrar mesa$/ }).count()) === 1) {
+    await G.getByRole("button", { name: /^Cuadrar mesa$/ }).click();
+    const hoja = G.getByRole("dialog", { name: "Cuadrar mesa" });
+    await hoja.waitFor();
+    textoCuadre = (await hoja.getByRole("button", { name: /^Cuadrar mesa · / }).textContent()) ?? "";
+    await hoja.getByRole("button", { name: /^Cuadrar mesa · / }).click();
+    await hojaCerrada(G, "Cuadrar mesa");
+  }
+  const s7b = ok(await svc.from("mesa_sesiones").select("estado").eq("id", S[7]).single(), "estado mesa 7");
+  t = await totales(S[7]);
+  nota("'Enviar ahora' los manda, vuelve 'Cuadrar mesa' y se cuadra con TODO ($700 consumo y $700 cobrado)",
+    s7b.estado === "cuadrada" && t.consumo === 70000 && t.cobrado === 70000 && cola.length === 0 && /\$700/.test(textoCuadre),
+    `${s7b.estado}, ${pesos(t.consumo)} / ${pesos(t.cobrado)}, hoja "${textoCuadre.trim()}"`);
+  await devG.close();
+
+  // ---------- 7b. Fuera de la caja (la app instalada abre en /staff/panel) ----------
+  // Sin red en la caja, el staff se va al panel (sale /offline.html) y la
+  // señal vuelve ahí: la cola tiene que salir sin entrar a la Caja.
+  await A.getByRole("button", { name: /^Mesa 5,/ }).waitFor({ timeout: 30000 });
+  await abrirMesa(A, 5);
+  await devA.setOffline(true);
+  await agregarConsumo(A, "Desde el panel", "35");
+  await A.goto(BASE + "/staff/panel").catch(() => {});
+  await A.getByText("Sin conexión", { exact: true }).waitFor({ timeout: 15000 });
+  const textoOffline = (await A.locator("#caja").textContent().catch(() => "")) ?? "";
+  const antesPanel = llamadasColaA.n;
+  await devA.setOffline(false); // /offline.html recarga /staff/panel
+  t = await esperarBase(S[5], (x) => x.consumos >= 3, 40000);
+  cola = await esperarCola(A, (x) => x.length === 0);
+  await esperar(3000);
+  t = await totales(S[5]);
+  const enviosPanel = llamadasColaA.n - antesPanel;
+  nota("sin entrar a la caja: al volver la señal en /staff/panel lo pendiente entra UNA vez",
+    t.consumos === 3 && t.consumo === 7000 && cola.length === 0 && /staff\/panel/.test(A.url()) && enviosPanel === 1,
+    `${t.consumos} consumos ${pesos(t.consumo)}, cola ${cola.length}, ${enviosPanel} envíos, ${A.url().replace(BASE, "")}`);
+  nota("la página sin conexión ya no promete de más ('con la app de staff abierta')", /app de staff/.test(textoOffline), textoOffline.slice(0, 80));
+  // Con señal pero sin que la base reciba: el panel avisa y lleva a la Caja.
+  await devA.route("**/rest/v1/rpc/caja_registrar_*", (route) => route.abort("failed"));
+  await A.goto(BASE + "/staff/caja");
+  await A.getByRole("button", { name: /^Mesa 5,/ }).waitFor({ timeout: 60000 });
+  await abrirMesa(A, 5);
+  await agregarConsumo(A, "Aviso en el panel", "15");
+  await A.goto(BASE + "/staff/panel");
+  const avisoPanel = await A.getByText("Caja: 1 movimiento por enviar").waitFor({ timeout: 30000 }).then(() => true, () => false);
+  const enlaceCaja = await A.getByRole("link", { name: "Abrir caja" }).count();
+  await A.getByRole("button", { name: "Cerrar sesión" }).waitFor({ timeout: 60000 }).catch(() => {});
+  await A.screenshot({ path: SHOTS + "21-panel-aviso-cola-390.png" });
+  await A.setViewportSize({ width: 360, height: 740 });
+  await A.screenshot({ path: SHOTS + "21b-panel-aviso-cola-360.png" });
+  await A.setViewportSize({ width: 390, height: 844 });
+  nota("en el panel se ve 'Caja: 1 movimiento por enviar' con 'Abrir caja'", avisoPanel && enlaceCaja === 1, `aviso ${avisoPanel}, enlace ${enlaceCaja}`);
+  await devA.unroute("**/rest/v1/rpc/caja_registrar_*");
+  await A.evaluate(() => window.dispatchEvent(new Event("online")));
+  t = await esperarBase(S[5], (x) => x.consumos >= 4, 30000);
+  await A.getByText("Caja: 1 movimiento por enviar").waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
+  nota("…se manda desde el panel y el aviso se va", t.consumos === 4 && t.consumo === 8500 && (await A.getByText(/Caja: \d+ movimientos? por enviar/).count()) === 0, `${t.consumos} consumos ${pesos(t.consumo)}`);
+  await A.goto(BASE + "/staff/caja");
+  await A.getByRole("button", { name: /^Mesa 1,/ }).waitFor({ timeout: 60000 });
 
   // ---------- 8. Fase 2: catálogo y propina sin red ----------
   if (FASE2) {

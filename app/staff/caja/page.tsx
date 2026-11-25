@@ -9,7 +9,7 @@ import { RefreshCw, WifiOff } from "lucide-react";
 import { CuadreNoche } from "@/components/caja/cuadre-noche";
 import { MapaNoche } from "@/components/caja/mapa-noche";
 import { DetalleMesa } from "@/components/caja/detalle-mesa";
-import { AvisoCola } from "@/components/caja/cola-caja";
+import { AvisoCola, AvisoSesionCaja } from "@/components/caja/cola-caja";
 import { useColaCaja } from "@/lib/use-cola-caja";
 import { conPendientes, conteoPorMesa, sinLoYaGuardado, type NuevoMovimiento } from "@/lib/domain/caja-cola";
 import { etiquetaNoche } from "@/lib/fechas";
@@ -244,7 +244,7 @@ export default function StaffCajaPage() {
         .eq("id", user.id)
         .maybeSingle();
       if (perfil?.activo === false) {
-        await cerrarSesionDadoDeBaja(supabase, router);
+        await cerrarSesionDadoDeBaja(supabase, router, { colaCaja: true });
         return;
       }
       if (
@@ -342,6 +342,10 @@ export default function StaffCajaPage() {
     return datos ? sinLoYaGuardado(delClub, [...datos.consumos, ...datos.pagos]) : { quedan: delClub, yaGuardados: [] as string[] };
   }, [cola.movimientos, clubId, datos]);
   const { descartar } = cola;
+  // La sesión del teléfono dejó de ser la de quien abrió la caja (se cerró o
+  // entró otra cuenta en otra pestaña): la caja se tapa. Sus lecturas y
+  // botones irían con la sesión de otra persona o con ninguna.
+  const sesionAjena = cola.sesion === "ok" ? null : cola.sesion;
   useEffect(() => {
     if (yaGuardados.length) void descartar(yaGuardados);
   }, [yaGuardados, descartar]);
@@ -396,24 +400,28 @@ export default function StaffCajaPage() {
     [datos],
   );
   const actual = mesaId ? resumenes.find((r) => r.mesa.id === mesaId) : undefined;
-  // Totales de la noche con lo pendiente de enviar (igual que las mesas).
+  // Totales de la noche con lo pendiente de enviar, con la MISMA regla que las
+  // mesas: solo lo de una sesión abierta de esta noche. Lo pendiente de una
+  // mesa ya cerrada o cuadrada, o de otra noche, no suma (la base lo va a
+  // rechazar) y así "Por cobrar" cuadra con la suma de las mesas.
   const totales = useMemo(() => {
     if (!datos) return null;
     const t = totalesNoche(datos);
+    const abiertas = new Set(resumenes.filter((r) => r.estado === "abierta" && r.sesion).map((r) => r.sesion!.id));
     let consumo = t.consumo;
     let cobrado = t.cobrado;
     for (const x of movimientos) {
-      if (x.estado !== "pendiente") continue;
+      if (x.estado !== "pendiente" || !abiertas.has(x.sesionId)) continue;
       if (x.tipo === "pago") cobrado += x.montoCentavos;
       else consumo += x.montoCentavos;
     }
     return { consumo, cobrado, porCobrar: Math.max(0, consumo - cobrado) };
-  }, [datos, movimientos]);
+  }, [datos, movimientos, resumenes]);
 
   return (
     <div className="theme-caja flex flex-1 flex-col items-center px-4 pt-3 pb-4 font-sans">
       <div className="flex w-full max-w-md min-w-0 flex-col gap-3">
-        {!actual && (
+        {!actual && !sesionAjena && (
           <header className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
               <Link href="/staff/panel" className="-ml-2 flex h-11 items-center px-2 text-sm text-caja-secundario hover:text-caja-texto">
@@ -471,7 +479,7 @@ export default function StaffCajaPage() {
           </div>
         )}
 
-        {!actual && (
+        {!actual && !sesionAjena && (
           <AvisoCola
             movimientos={movimientos}
             persistente={cola.persistente}
@@ -484,17 +492,24 @@ export default function StaffCajaPage() {
             }}
             onDescartar={(c) => void cola.descartar(c)}
             onEnviarAhora={cola.sincronizar}
+            deOtraCuenta={cola.deOtraCuenta}
           />
         )}
 
-        {errorCarga && !(datos && sinConexion) && (
+        {errorCarga && !sesionAjena && !(datos && sinConexion) && (
           <div className="flex flex-col gap-2 rounded-lg border border-caja-borde p-3">
             <p className="text-sm text-destructive" role="alert">No pudimos cargar la caja. {errorCarga}</p>
             <button type="button" onClick={recargar} className="h-11 w-fit rounded-md border border-caja-borde px-3 text-sm">Reintentar</button>
           </div>
         )}
 
-        {!datos ? (
+        {sesionAjena ? (
+          <AvisoSesionCaja
+            estado={sesionAjena}
+            pendientes={cola.movimientos.filter((x) => x.estado === "pendiente").length}
+            onReabrir={() => window.location.reload()}
+          />
+        ) : !datos ? (
           !errorCarga && <p className="text-sm text-caja-secundario">Cargando la caja...</p>
         ) : vista === "cuadre" && permisos.cerrar_noche && !actual ? (
           <CuadreNoche datos={datos} onCambio={recargar} />
@@ -510,6 +525,8 @@ export default function StaffCajaPage() {
             movimientos={movimientos.filter((x) => x.mesaId === actual.mesa.id)}
             onEnviar={enviarMovimientos}
             onDescartar={(c) => void cola.descartar(c)}
+            onEnviarAhora={cola.sincronizar}
+            enviandoCola={cola.enviando}
             onVolver={() => setMesaId(null)}
             onCambio={recargar}
           />

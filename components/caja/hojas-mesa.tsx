@@ -573,10 +573,12 @@ export function HojaCuadrar({
   ocupado,
   sinConexion,
   error,
+  bloqueo = null,
   onCuadrar,
 }: {
   abierta: boolean;
   onCerrar: () => void;
+  // Lo que ya está en la base (sin lo pendiente de enviar): es lo que se cuadra.
   consumo: number;
   cobrado: number;
   propinas?: number;
@@ -584,6 +586,8 @@ export function HojaCuadrar({
   ocupado: boolean;
   sinConexion: boolean;
   error: string | null;
+  // Por qué todavía no se puede cuadrar (algo de la mesa sigue en el teléfono).
+  bloqueo?: string | null;
   onCuadrar: (notas: string) => void;
 }) {
   const [notas, setNotas] = useState("");
@@ -595,8 +599,13 @@ export function HojaCuadrar({
       pie={
         <div className="flex flex-col gap-2">
           <MensajeError mensaje={error} />
-          <BotonPrincipal disabled={ocupado || sinConexion} onClick={() => onCuadrar(notas)}>
-            {sinConexion ? "Sin conexión" : ocupado ? "Cuadrando..." : `Cuadrar mesa · ${formatearCentavos(consumo)}`}
+          {bloqueo && (
+            <p role="status" className="text-sm text-caja-aviso">
+              {bloqueo}
+            </p>
+          )}
+          <BotonPrincipal disabled={ocupado || sinConexion || !!bloqueo} onClick={() => onCuadrar(notas)}>
+            {sinConexion ? "Sin conexión" : bloqueo ? "Esperando el envío" : ocupado ? "Cuadrando..." : `Cuadrar mesa · ${formatearCentavos(consumo)}`}
           </BotonPrincipal>
         </div>
       }

@@ -6,17 +6,27 @@
 import {
   FUNCION_DE,
   clasificar,
+  conLimite,
   conPendientes,
   conteoPorMesa,
   crearPendiente,
   esperaMs,
+  estadoDeSesion,
   motivoRechazo,
+  ordenDeCaptura,
+  ordenar,
   porEnviar,
   sinLoYaGuardado,
+  textoDeOtraCuenta,
   textoPorEnviar,
   vencido,
   ESPERA_MAX_MS,
   MOTIVO_GENERICO,
+  MAX_INTENTOS_DUDOSOS,
+  MOTIVO_AJENO_VENCIDO,
+  MOTIVO_CUENTA_BAJA,
+  comoRechazado,
+  pendienteAjenoVencido,
 } from "../../lib/domain/caja-cola.ts";
 
 let pasan = 0, fallan = 0;
@@ -75,7 +85,31 @@ const nuevo = (o = {}) => ({
   revisar(r42.tipo === "rechazado" && !/caja_registrar/.test(r42.motivo), "42501: rechazado sin nombres internos");
   const otro = clasificar({ error: { message: "column x does not exist", code: "42703" }, status: 400 }, false);
   revisar(otro.tipo === "rechazado" && otro.motivo === MOTIVO_GENERICO, "otro error de la base: rechazado con mensaje genérico");
-  revisar(clasificar({ error: { message: "Could not find the function", code: "PGRST202" }, status: 404 }, false).tipo === "rechazado", "PGRST202 (base sin la función): rechazado, no se reintenta sin clave");
+  // Pasajeros con código (noche cargada): siempre se reintentan.
+  for (const [code, status] of [["PGRST000", 503], ["PGRST001", 503], ["PGRST002", 503], ["PGRST003", 504], ["53300", 503], ["53000", 503], ["55P03", 500], ["08006", 503], ["08001", 503], ["57P01", 503], ["40001", 500], ["40P01", 500]]) {
+    const c = clasificar({ error: { message: "x", code }, status }, false, 50);
+    revisar(c.tipo === "reintentar" && !c.dudoso, `${code} (${status}): reintentar siempre, aunque lleve 50 dudosos`);
+  }
+  revisar(clasificar({ error: { message: "x", code: "" }, status: 408 }, false).tipo === "reintentar", "408 sin código: reintentar");
+  {
+    const red = clasificar({ error: { message: "Failed to fetch", code: "" }, status: 0 }, true, 50);
+    const sin = clasificar({ error: { message: "x", code: "" }, status: 502 }, false, 50);
+    revisar(red.tipo === "reintentar" && !red.dudoso && sin.tipo === "reintentar" && !sin.dudoso, "red caída y 5xx sin código: se reintentan siempre y no cuentan como dudosos");
+  }
+  // Dudosos: 5xx/408/429 con código desconocido y PGRST202 (PostgREST recargando
+  // el esquema en un pase): se reintentan hasta MAX_INTENTOS_DUDOSOS y luego se rechazan.
+  for (const [code, status] of [["XX000", 500], ["PGRST999", 503], ["PGRST202", 404], ["ABCDE", 429]]) {
+    const c0 = clasificar({ error: { message: "x", code }, status }, false, 0);
+    const c8 = clasificar({ error: { message: "x", code }, status }, false, MAX_INTENTOS_DUDOSOS - 2);
+    const c9 = clasificar({ error: { message: "x", code }, status }, false, MAX_INTENTOS_DUDOSOS - 1);
+    revisar(c0.tipo === "reintentar" && c0.dudoso === true && c8.tipo === "reintentar" && c9.tipo === "rechazado" && c9.motivo === MOTIVO_GENERICO,
+      `${code} (${status}): dudoso, se reintenta ${MAX_INTENTOS_DUDOSOS - 1} veces y al ${MAX_INTENTOS_DUDOSOS}.º se rechaza`);
+  }
+  // 4xx de verdad: rechazo inmediato.
+  for (const [code, status] of [["23505", 409], ["22P02", 400], ["23514", 400], ["PGRST116", 406]]) {
+    revisar(clasificar({ error: { message: "x", code }, status }, false).tipo === "rechazado", `${code} (${status}): 4xx de verdad, rechazado al momento`);
+  }
+  revisar(clasificar({ error: { message: "x", code: "42501" }, status: 503 }, false).tipo === "rechazado", "42501 rechazado aunque venga con 503");
   revisar(clasificar({ error: { message: "La mesa ya está cuadrada", code: "P0001" }, status: 400 }, true).tipo === "rechazado", "P0001 gana aunque el navegador diga que no hay red");
 }
 
@@ -126,10 +160,63 @@ const nuevo = (o = {}) => ({
   revisar(!vencido(p, ahora), "vencido: lo pendiente nunca vence");
   revisar(vencido(r, ahora), "vencido: rechazado de hace más de 72 h");
   revisar(!vencido({ ...r, rechazadoEn: "2026-11-24T12:00:00Z" }, ahora), "vencido: rechazado reciente se queda");
+  // Pendientes de otra cuenta que nadie va a mandar (72 h sin volver a entrar).
+  const viejoAjeno = crearPendiente(nuevo(), "u2", new Date(ahora.getTime() - 73 * 3600 * 1000), 0);
+  const recienteAjeno = crearPendiente(nuevo(), "u2", new Date(ahora.getTime() - 71 * 3600 * 1000), 0);
+  const viejoPropio = crearPendiente(nuevo(), "u1", new Date(ahora.getTime() - 100 * 3600 * 1000), 0);
+  revisar(pendienteAjenoVencido(viejoAjeno, "u1", ahora), "ajeno: pendiente de otra cuenta de hace más de 72 h = vencido");
+  revisar(!pendienteAjenoVencido(recienteAjeno, "u1", ahora), "ajeno: pendiente de otra cuenta de hace menos de 72 h se queda");
+  revisar(!pendienteAjenoVencido(viejoPropio, "u1", ahora), "ajeno: lo propio nunca vence por esta regla (se manda y la base decide)");
+  revisar(!pendienteAjenoVencido({ ...viejoAjeno, estado: "rechazado" }, "u1", ahora), "ajeno: lo ya rechazado no se toca");
+  const comoR = comoRechazado(viejoAjeno, MOTIVO_AJENO_VENCIDO, ahora);
+  revisar(comoR.estado === "rechazado" && comoR.motivo === MOTIVO_AJENO_VENCIDO && comoR.rechazadoEn === ahora.toISOString() && !vencido(comoR, ahora) && comoR.clave === viejoAjeno.clave,
+    "ajeno vencido pasa a rechazado con motivo y desde ahí corre su propia vigencia de 72 h");
+  revisar(/dada de baja/.test(MOTIVO_CUENTA_BAJA), "motivo de cuenta dada de baja");
 }
 
 // 9. Solo tres funciones posibles.
 revisar(Object.values(FUNCION_DE).sort().join() === "caja_registrar_consumo,caja_registrar_consumo_producto,caja_registrar_pago", "la cola solo llama a las 3 funciones idempotentes");
+
+// 10. Reloj del teléfono desfasado: el orden de envío nunca baja.
+{
+  const t = Date.parse("2026-11-25T05:00:00Z");
+  const a = ordenDeCaptura(t, 0, 0);
+  revisar(a === t * 1000, "ordenDeCaptura: con la cola vacía usa el reloj");
+  // Reloj atrasado 2 h después del primer movimiento.
+  const b = ordenDeCaptura(t - 2 * 3600e3, a, 0);
+  revisar(b > a, "ordenDeCaptura: con el reloj atrasado 2 h, lo nuevo va DESPUÉS de lo anterior");
+  const b2 = ordenDeCaptura(t - 2 * 3600e3, a, 1);
+  revisar(b2 > b, "ordenDeCaptura: varios renglones del mismo toque conservan su orden aunque el reloj vaya atrás");
+  // Reloj adelantado (un año) y luego corregido: sigue subiendo.
+  const c = ordenDeCaptura(t + 365 * 86400e3, b2, 0);
+  const d = ordenDeCaptura(t, c, 0);
+  revisar(c > b2 && d > c, "ordenDeCaptura: reloj adelantado y luego corregido, el orden sigue subiendo");
+  revisar(Number.isSafeInteger(d), "ordenDeCaptura: el número sigue siendo entero exacto");
+  revisar(ordenDeCaptura(t, NaN, 0) === t * 1000, "ordenDeCaptura: último orden inválido se ignora");
+  // Consumo con el reloj bien y cobro con el reloj atrasado: el cobro sale después.
+  const consumo = crearPendiente(nuevo({ clave: "k1" }), "u1", new Date(t), 0, 0);
+  const cobro = crearPendiente(nuevo({ clave: "k2", tipo: "pago" }), "u1", new Date(t - 3600e3), 0, consumo.orden);
+  revisar(ordenar([cobro, consumo]).map((x) => x.clave).join() === "k1,k2", "con el reloj atrasado entre consumo y cobro, el consumo se envía primero");
+}
+
+// 11. Sesión del teléfono frente a la de la caja.
+{
+  revisar(estadoDeSesion("u1", "u1", false) === "ok", "estadoDeSesion: misma cuenta = ok");
+  revisar(estadoDeSesion("u2", "u1", false) === "otra_cuenta", "estadoDeSesion: otra cuenta");
+  revisar(estadoDeSesion("u2", "u1", true) === "otra_cuenta", "estadoDeSesion: otra cuenta aunque la red falle");
+  revisar(estadoDeSesion(null, "u1", false) === "vencida", "estadoDeSesion: sin sesión y con respuesta = vencida");
+  revisar(estadoDeSesion(null, "u1", true) === "desconocida", "estadoDeSesion: sin sesión por falta de red = desconocida (no se declara vencida)");
+  revisar(estadoDeSesion("u1", null, false) === "desconocida", "estadoDeSesion: caja sin usuario todavía = desconocida");
+  revisar(/1 movimiento de caja de otra cuenta/.test(textoDeOtraCuenta(1)) && /3 movimientos/.test(textoDeOtraCuenta(3)), "textoDeOtraCuenta: solo el número, sin detalle");
+}
+
+// 12. Tiempo límite.
+{
+  const lenta = new Promise((ok) => setTimeout(() => ok("tarde"), 300));
+  const r1 = await conLimite(lenta, 30, "vencio");
+  const r2 = await conLimite(Promise.resolve("a tiempo"), 300, "vencio");
+  revisar(r1 === "vencio" && r2 === "a tiempo", "conLimite: corta lo que no contesta y deja pasar lo que sí");
+}
 
 console.log(`\nResultado: ${pasan}/${pasan + fallan}`);
 process.exitCode = fallan ? 1 : 0;

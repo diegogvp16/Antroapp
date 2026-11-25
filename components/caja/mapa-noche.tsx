@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { memo, useDeferredValue, useMemo, useState } from "react";
 import { CloudUpload, Search, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -33,7 +33,9 @@ function lineaInferior(m: ResumenMesa): { izquierda: string; derecha: string; to
   return { izquierda: formatearCentavos(m.consumo), derecha: grupos || m.rps[0] || "Sin RP", tono: "text-caja-secundario" };
 }
 
-export function MapaNoche({
+// memo: la caja se vuelve a pintar cuando cambia la cola o su estado
+// (enviando, reintentos); el mapa de 50 mesas solo si cambian sus datos.
+export const MapaNoche = memo(function MapaNoche({
   mesas,
   porMesa = {},
   onAbrirMesa,
@@ -124,11 +126,11 @@ export function MapaNoche({
                   aria-label={`${nombreMesa(m.mesa.numero)}, ${principal}, ${ESTADO_TEXTO[m.estado]}${m.estado === "libre" ? "" : `, ${formatearCentavos(m.estado === "cuadrada" ? m.consumoNoche : m.consumo)}`}${avisoCola ? `, ${avisoCola}` : ""}`}
                 >
                   <span className="flex items-center justify-between gap-2 text-xs text-caja-secundario">
-                    <span>{nombreMesa(m.mesa.numero)}</span>
+                    <span className="shrink-0 whitespace-nowrap">{nombreMesa(m.mesa.numero)}</span>
                     {avisoCola && (
-                      <span className={cn("flex items-center gap-1", cola?.rechazados ? "text-caja-rojo" : "text-caja-aviso")}>
-                        {cola?.rechazados ? <TriangleAlert className="size-3" aria-hidden="true" /> : <CloudUpload className="size-3" aria-hidden="true" />}
-                        {avisoCola}
+                      <span className={cn("flex min-w-0 items-center gap-1", cola?.rechazados ? "text-caja-rojo" : "text-caja-aviso")}>
+                        {cola?.rechazados ? <TriangleAlert className="size-3 shrink-0" aria-hidden="true" /> : <CloudUpload className="size-3 shrink-0" aria-hidden="true" />}
+                        <span className="truncate">{avisoCola}</span>
                       </span>
                     )}
                   </span>
@@ -148,4 +150,4 @@ export function MapaNoche({
       )}
     </div>
   );
-}
+});

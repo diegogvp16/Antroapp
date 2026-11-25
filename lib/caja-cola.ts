@@ -16,8 +16,11 @@
 import { esErrorDeRed } from "@/lib/errores-base";
 import {
   FUNCION_DE,
+  MOTIVO_AJENO_VENCIDO,
   clasificar,
+  comoRechazado,
   ordenar,
+  pendienteAjenoVencido,
   porEnviar,
   vencido,
   type MovimientoPendiente,
@@ -221,7 +224,23 @@ export async function leerCola(usuarioId: string): Promise<MovimientoPendiente[]
   const ahora = new Date();
   const viejos = todos.filter((x) => vencido(x, ahora)).map((x) => x.clave);
   if (viejos.length) await a.quitar(viejos).catch(() => {});
+  // Pendientes de otra cuenta que ya nadie va a mandar (72 h sin volver).
+  const ajenos = todos.filter((x) => pendienteAjenoVencido(x, usuarioId, ahora));
+  if (ajenos.length) await a.poner(ajenos.map((x) => comoRechazado(x, MOTIVO_AJENO_VENCIDO, ahora))).catch(() => {});
   return ordenar(todos.filter((x) => x.usuarioId === usuarioId && !viejos.includes(x.clave)));
+}
+
+// Cuenta dada de baja: la base ya no le acepta nada, así que lo pendiente de
+// esa persona pasa a rechazado (con su motivo) en lugar de quedarse para
+// siempre como "de otra cuenta… se envía cuando vuelva a entrar".
+export async function rechazarPendientesDe(usuarioId: string, motivo: string): Promise<number> {
+  const a = await obtenerAlmacen();
+  const ahora = new Date();
+  const suyos = (await a.todos()).filter((x) => x.usuarioId === usuarioId && x.estado === "pendiente");
+  if (!suyos.length) return 0;
+  await a.poner(suyos.map((x) => comoRechazado(x, motivo, ahora)));
+  avisar();
+  return suyos.length;
 }
 
 export async function guardarEnCola(xs: MovimientoPendiente[]): Promise<void> {
@@ -310,7 +329,7 @@ export async function vaciarCola(
         } catch (e) {
           r = { error: { message: e instanceof Error ? e.message : "sin respuesta" } };
         }
-        const c = clasificar(r, esErrorDeRed(r.error) || (!r.error?.code && r.status === 0));
+        const c = clasificar(r, esErrorDeRed(r.error) || (!r.error?.code && r.status === 0), x.intentosDudosos ?? 0);
         if (c.tipo === "aplicado") {
           await a.quitar([x.clave]);
           res.aplicados.push(x.clave);
@@ -318,7 +337,7 @@ export async function vaciarCola(
           await a.poner([{ ...x, intentos: x.intentos + 1, estado: "rechazado", motivo: c.motivo, rechazadoEn: new Date().toISOString() }]);
           res.rechazados.push(x.clave);
         } else {
-          await a.poner([{ ...x, intentos: x.intentos + 1 }]);
+          await a.poner([{ ...x, intentos: x.intentos + 1, intentosDudosos: (x.intentosDudosos ?? 0) + (c.tipo === "reintentar" && c.dudoso ? 1 : 0) }]);
           if (c.tipo === "sin_sesion") res.sinSesion = true;
           else res.falloRed = true;
           break;

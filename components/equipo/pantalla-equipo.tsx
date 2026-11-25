@@ -28,7 +28,7 @@ export function PantallaEquipo({ para }: { para: "gerente" | "dueno" }) {
       } = await supabase.auth.getUser();
       if (!user) return router.replace(para === "dueno" ? "/dueno/login" : "/cliente/login");
       const { data: perfil } = await supabase.from("profiles").select("role, club_id, activo").eq("id", user.id).maybeSingle();
-      if (perfil?.activo === false) return cerrarSesionDadoDeBaja(supabase, router);
+      if (perfil?.activo === false) return cerrarSesionDadoDeBaja(supabase, router, { colaCaja: para === "gerente" });
       if (para === "gerente") {
         if (perfil?.role !== "gerente" || !perfil.club_id) return router.replace("/staff/panel");
         const { data: club } = await supabase.from("clubs").select("nombre").eq("id", perfil.club_id).maybeSingle();
