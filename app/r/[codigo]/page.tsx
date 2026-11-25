@@ -22,7 +22,7 @@ import {
   type EstadoBoleto,
 } from "@/lib/domain/boleto";
 import { textoCover } from "@/lib/cover";
-import { nocheOperativaMexico } from "@/lib/fechas";
+import { ZONA_MAS_TARDIA_MEXICO, nocheOperativaEn } from "@/lib/fechas";
 import { esErrorDeRed } from "@/lib/errores-base";
 import { DatosBoleto, QrBoleto } from "@/components/boleto/datos-boleto";
 import { EnLaPuerta } from "@/components/boleto/en-la-puerta";
@@ -92,9 +92,12 @@ export default function ReservaPublicaPage() {
           return;
         }
         const reserva = data as ReservaPublica;
+        // Respaldo solo para la función vieja (sin estado_boleto), que no
+        // trae la zona del antro: se usa la zona más al oeste del país para
+        // no dar por vencido un boleto antes que la base.
         const estado = esEstadoBoleto(reserva.estado_boleto)
           ? reserva.estado_boleto
-          : estadoBoletoRespaldo(reserva, nocheOperativaMexico());
+          : estadoBoletoRespaldo(reserva, nocheOperativaEn(ZONA_MAS_TARDIA_MEXICO));
         setCarga({ fase: "lista", reserva, estado });
       } catch (err) {
         console.error("Error cargando boleto:", err);
@@ -126,7 +129,8 @@ export default function ReservaPublicaPage() {
             <CardHeader>
               <CardTitle>No pudimos cargar tu boleto</CardTitle>
               <CardDescription>
-                Revisa la señal e intenta de nuevo. Tu lugar sigue apartado.
+                Revisa la señal e intenta de nuevo. Tu código sigue siendo el
+                mismo: este enlace te lleva al boleto cuando vuelva la señal.
               </CardDescription>
             </CardHeader>
             <CardContent className="px-6 pb-6">
@@ -210,6 +214,7 @@ function Boleto({ reserva, estado }: { reserva: ReservaPublica; estado: EstadoBo
           <>
             <EnLaPuerta
               cover={cover}
+              coverModo={reserva.cover_modo}
               toleranciaHora={reserva.tolerancia_hora}
               edadMinima={reserva.edad_minima}
               codigoVestimenta={reserva.codigo_vestimenta}
@@ -226,7 +231,7 @@ function Boleto({ reserva, estado }: { reserva: ReservaPublica; estado: EstadoBo
                     fecha: reserva.fecha,
                     personas: reserva.personas,
                     enlace,
-                    cover,
+                    cover: { modo: reserva.cover_modo, texto: cover },
                   }),
                 )}
               />

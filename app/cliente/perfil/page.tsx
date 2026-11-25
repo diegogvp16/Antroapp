@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { fechaLarga } from "@/lib/domain/compartir";
+import { olvidarBoletos } from "@/lib/boletos-guardados";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -107,6 +108,8 @@ export default function ClientePerfilPage() {
   async function handleLogout() {
     const supabase = createClient();
     await supabase.auth.signOut();
+    // En un teléfono compartido, el siguiente no debe ver boletos de antes.
+    olvidarBoletos();
     router.replace("/cliente/login");
   }
 

@@ -16,7 +16,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { Club, ClubPhoto } from "@/types";
-import { AVISO_COVER, horaLegible } from "@/lib/domain/boleto";
+import { avisoCover, horaLegible } from "@/lib/domain/boleto";
 import { AvisoBoletoGuardado } from "@/components/boleto/aviso-boleto-guardado";
 
 // Solo devuelve los detalles que el dueño sí llenó: los vacíos no se muestran.
@@ -188,7 +188,9 @@ export default function ClubDetailPage() {
                 <dd className="font-medium">{club.horario}</dd>
               </div>
               {/* La app no cobra nada: apartar es gratis. El cover, si el
-                  antro lo informa, lo cobra el antro en la puerta. */}
+                  antro lo informa, lo cobra el antro en la puerta; la
+                  frase de abajo depende del modo (monto, libre o
+                  consultar). */}
               <div className="flex flex-col gap-1">
                 <dt className="text-noche-muted">Apartar lugar</dt>
                 <dd className="text-lg font-semibold text-noche-accent">
@@ -199,7 +201,9 @@ export default function ClubDetailPage() {
                 <div className="col-span-2 flex flex-col gap-1" data-prueba="cover-ficha">
                   <dt className="text-noche-muted">En la puerta</dt>
                   <dd className="font-medium">{textoCover(club)}</dd>
-                  <dd className="text-xs leading-relaxed text-noche-muted">{AVISO_COVER}</dd>
+                  {avisoCover(club.cover_modo) && (
+                    <dd className="text-xs leading-relaxed text-noche-muted">{avisoCover(club.cover_modo)}</dd>
+                  )}
                 </div>
               )}
               {horaLegible(club.tolerancia_hora) && (

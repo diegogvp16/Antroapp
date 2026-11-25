@@ -48,6 +48,9 @@ export interface Club {
   // Hora límite de llegada (hora local del antro, "HH:MM:SS"); nula = sin
   // límite. Antes de las 08:00 es de la madrugada siguiente.
   tolerancia_hora?: string | null;
+  // Zona horaria IANA del antro ("America/Tijuana"); define el corte de la
+  // noche (08:00 locales). Nula en filas viejas: se usa la de CDMX.
+  zona_horaria?: string | null;
   dueno_id: string | null;
   suscripcion_activa: boolean;
   suscripcion_activada_en: string | null;

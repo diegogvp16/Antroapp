@@ -24,6 +24,7 @@ import { nocheOperativaMexico } from "@/lib/fechas";
 import { textoCover } from "@/lib/cover";
 import { enlaceCompartir, fechaLarga, mensajeReserva } from "@/lib/domain/compartir";
 import { guardarBoleto } from "@/lib/boletos-guardados";
+import { frasePuertaFormulario } from "@/lib/domain/boleto";
 import { EnLaPuerta } from "@/components/boleto/en-la-puerta";
 import { CompartirBoleto } from "@/components/boleto/compartir-boleto";
 import { AvisoBoletoGuardado } from "@/components/boleto/aviso-boleto-guardado";
@@ -199,15 +200,20 @@ function ReservarPage() {
         throw insertError;
       }
 
-      // En este teléfono, para que quien reservó sin cuenta y recarga no
-      // pierda su QR (solo código, antro, fecha y personas).
-      const guardado = guardarBoleto({
-        qr: qrCode,
-        clubId: club.id,
-        clubNombre: club.nombre,
-        fecha,
-        personas,
-      });
+      // Solo sin cuenta: en este teléfono, para que quien reservó y recarga
+      // no pierda su QR (código, antro y su zona, fecha y personas). Con
+      // sesión no se guarda nada aquí: sus boletos están en Mi perfil, y en
+      // un teléfono compartido el siguiente no debe ver el boleto de otro.
+      const guardado = clienteId
+        ? false
+        : guardarBoleto({
+            qr: qrCode,
+            clubId: club.id,
+            clubNombre: club.nombre,
+            fecha,
+            personas,
+            zona: club.zona_horaria ?? null,
+          });
 
       setReserva({
         cliente_nombre: nombre.trim(),
@@ -299,7 +305,7 @@ function ReservarPage() {
         fecha: reserva.fecha,
         personas: reserva.personas,
         enlace,
-        cover,
+        cover: { modo: club.cover_modo, texto: cover },
       }),
     );
 
@@ -325,6 +331,7 @@ function ReservarPage() {
             />
             <EnLaPuerta
               cover={cover}
+              coverModo={club.cover_modo}
               toleranciaHora={club.tolerancia_hora}
               edadMinima={club.edad_minima}
               codigoVestimenta={club.codigo_vestimenta}
@@ -365,8 +372,8 @@ function ReservarPage() {
           <CardTitle>Reservar en {club.nombre}</CardTitle>
           <CardDescription>
             Llena tus datos para apartar lugar. Apartar no tiene costo.
-            {textoCover(club) &&
-              ` ${textoCover(club)} en la puerta: lo cobra el antro, la app no cobra nada.`}
+            {frasePuertaFormulario(club.cover_modo, textoCover(club)) &&
+              ` ${frasePuertaFormulario(club.cover_modo, textoCover(club))}`}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4 px-6 pb-6">

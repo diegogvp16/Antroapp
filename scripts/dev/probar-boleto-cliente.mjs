@@ -26,8 +26,13 @@ import {
   CLAVE_BOLETOS,
   MAX_BOLETOS,
   TEXTO_ESTADO,
+  AVISO_COVER,
+  avisoCover,
+  frasePuertaFormulario,
+  lineaCoverMensaje,
+  esZonaGuardable,
 } from "../../lib/domain/boleto.ts";
-import { nocheOperativaMexico, sumarDiasISO } from "../../lib/fechas.ts";
+import { nocheOperativaMexico, nocheOperativaEn, ZONA_MAS_TARDIA_MEXICO, sumarDiasISO } from "../../lib/fechas.ts";
 
 const env = verificarEnvDev();
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -68,6 +73,23 @@ try {
   ]), "renglones de la puerta completos", JSON.stringify(filas));
   revisar(renglonesPuerta({ cover: "Cover: consultar con el antro" })[0]?.valor === "Consultar con el antro" && renglonesPuerta({ cover: "Entrada libre" })[0]?.valor === "Entrada libre", "cover consultar / libre");
   revisar(renglonesPuerta({ cover: null, edad_minima: 0, codigo_vestimenta: "  " }).length === 0, "sin datos → sin renglones");
+  // El aviso de cobro depende del modo: solo «monto» dice que lo cobra el antro.
+  const COBRA = /lo cobra el antro/i;
+  revisar(avisoCover("monto") === AVISO_COVER && COBRA.test(avisoCover("monto")), "aviso monto: lo cobra el antro");
+  revisar(!COBRA.test(avisoCover("libre")) && /No hay cover/.test(avisoCover("libre")) && /tampoco te cobra nada/.test(avisoCover("libre")), "aviso libre: no hay cover, sin «lo cobra el antro»", avisoCover("libre"));
+  revisar(!COBRA.test(avisoCover("consultar")) && /Pregunta el cover/.test(avisoCover("consultar")), "aviso consultar: pregunta el cover", avisoCover("consultar"));
+  revisar(avisoCover("oculto") === null && avisoCover(null) === null && avisoCover(undefined) === null, "aviso oculto / sin modo → nada");
+  revisar(COBRA.test(frasePuertaFormulario("monto", "Cover $350")) && /\$350/.test(frasePuertaFormulario("monto", "Cover $350")), "formulario monto: monto y quién lo cobra");
+  revisar(frasePuertaFormulario("libre", "Entrada libre") === "Entrada libre en la puerta." && !COBRA.test(frasePuertaFormulario("consultar", "Cover: consultar con el antro")), "formulario libre / consultar sin «lo cobra el antro»");
+  revisar(frasePuertaFormulario("monto", null) === null && frasePuertaFormulario("oculto", "x") === null, "formulario sin texto u oculto → nada");
+  revisar(COBRA.test(lineaCoverMensaje("monto", "Cover $350")) && !COBRA.test(lineaCoverMensaje("libre", "Entrada libre")) && !COBRA.test(lineaCoverMensaje("consultar", "Cover: consultar con el antro")) && !/consultar con el antro en la puerta/.test(lineaCoverMensaje("consultar", "Cover: consultar con el antro")), "mensaje: solo monto dice que lo cobra el antro");
+  revisar(lineaCoverMensaje("monto", null) === null && lineaCoverMensaje("oculto", "x") === null, "mensaje sin cover → sin renglón");
+  // Noche operativa por zona (igual que club_fecha_operacion en la base).
+  revisar(nocheOperativaEn("America/Tijuana", new Date("2026-11-25T14:30:00Z")) === "2026-11-24" && nocheOperativaEn("America/Mexico_City", new Date("2026-11-25T14:30:00Z")) === "2026-11-25", "08:30 CDMX (06:30 Tijuana): en Tijuana sigue la noche del 24");
+  revisar(nocheOperativaEn("America/Tijuana", new Date("2026-11-25T16:00:00Z")) === "2026-11-25", "08:00 de Tijuana → ya es la noche del 25");
+  revisar(nocheOperativaEn("America/Cancun", new Date("2026-11-25T13:30:00Z")) === "2026-11-25" && nocheOperativaEn("America/Tijuana", new Date("2026-07-15T14:59:00Z")) === "2026-07-14", "Cancún adelante; Tijuana con horario de verano");
+  revisar(nocheOperativaEn(null, new Date("2026-11-25T13:59:00Z")) === "2026-11-24" && nocheOperativaEn("Zona/Inventada", new Date("2026-11-25T14:00:00Z")) === "2026-11-25", "sin zona o zona desconocida → la de CDMX");
+  revisar(ZONA_MAS_TARDIA_MEXICO === "America/Tijuana" && ["America/Mexico_City", "America/Cancun", "America/Hermosillo", "America/Mazatlan", "America/Chihuahua", "America/Ciudad_Juarez", "America/Monterrey", "America/Merida"].every((z) => ["2026-01-10T15:00:00Z", "2026-07-10T14:30:00Z", "2026-11-25T15:30:00Z"].every((t) => nocheOperativaEn(ZONA_MAS_TARDIA_MEXICO, new Date(t)) <= nocheOperativaEn(z, new Date(t)))), "la noche de Tijuana nunca va adelante de otra zona de México (respaldo de /r)");
   revisar(TEXTO_ESTADO.vigente.titulo === "Lugar apartado" && !/confirmad/i.test(JSON.stringify(TEXTO_ESTADO)), "el boleto dice «Lugar apartado», nunca «confirmada»");
 
   // Boletos guardados en el teléfono.
@@ -89,6 +111,13 @@ try {
   for (let i = 0; i < 15; i++) muchos = agregarBoleto(muchos, b("2026-11-30", { guardadoEn: i }), "2026-11-24");
   revisar(muchos.length === MAX_BOLETOS && muchos[0].guardadoEn === 14, `máximo ${MAX_BOLETOS} boletos`);
   revisar(esCodigoQr(qr()) && !esCodigoQr("antro-1") && !esCodigoQr("x"), "solo códigos antro-<uuid>");
+  // Purga con la zona de cada antro: a las 08:30 de CDMX (06:30 en Tijuana)
+  // el de Tijuana de la noche del 24 sigue; el de CDMX de esa noche, no.
+  const porZona = (zona) => nocheOperativaEn(zona, new Date("2026-11-25T14:30:00Z"));
+  const tij = b("2026-11-24", { zona: "America/Tijuana" }), cdmx = b("2026-11-24", { zona: "America/Mexico_City" }), sinZona = b("2026-11-24");
+  const purgados = leerBoletos(JSON.stringify([tij, cdmx, sinZona]), porZona);
+  revisar(purgados.length === 1 && purgados[0].qr === tij.qr && purgados[0].zona === "America/Tijuana", "purga por la zona del antro (Tijuana sigue, CDMX y sin zona se van)", JSON.stringify(purgados));
+  revisar(leerBoletos(JSON.stringify([b("2026-11-30", { zona: "<script>" }), b("2026-11-30", { zona: 5 })]), "2026-11-24").length === 0 && esZonaGuardable("America/Argentina/Buenos_Aires") && !esZonaGuardable("../x"), "zona con forma inválida → se descarta");
 
   // ======================= 2. Base (dev) =======================
   console.log("\n— Base: obtener_reserva_por_qr —");
@@ -113,6 +142,13 @@ try {
         cover_modo, cover_monto, edad_minima)
       values ($1, 'Calle secreta 9', 'Vie', 'Querétaro', 'borrador', false, 'monto', 500, 18) returning id`, [`T cli Borrador ${TAG}`]);
     clubs.push(bb.id);
+    // Publicados con «Entrada libre» (en Tijuana) y «Consultar con el antro».
+    const [cl] = await db.q(`insert into public.clubs (nombre, direccion, horario, ciudad, estado_verificacion, suscripcion_activa, cover_modo, zona_horaria)
+      values ($1, 'Calle T cli 2', 'Vie', 'Tijuana', 'verificado', true, 'libre', 'America/Tijuana') returning id`, [`T cli Libre ${TAG}`]);
+    clubs.push(cl.id);
+    const [cc] = await db.q(`insert into public.clubs (nombre, direccion, horario, ciudad, estado_verificacion, suscripcion_activa, cover_modo)
+      values ($1, 'Calle T cli 3', 'Vie', 'Querétaro', 'verificado', true, 'consultar') returning id`, [`T cli Consultar ${TAG}`]);
+    clubs.push(cc.id);
     [{ noche }] = await db.q(`select public.club_fecha_operacion($1, now())::text as noche`, [a.id]);
 
     codigos = { vigente: qr(), futuro: qr(), vencido: qr(), usada: qr(), entro: qr(), usadaVieja: qr(), enPuerta: qr(), borrador: qr() };
@@ -255,6 +291,40 @@ try {
           }
         }
 
+        // a2) Antros con «Entrada libre» y «Consultar»: ningún texto dice que
+        // el antro cobra el cover; el mensaje de WhatsApp tampoco.
+        for (const [modo, clubM, fechaM] of [["libre", clubs[2], noche], ["consultar", clubs[3], noche]]) {
+          await p.goto(`${BASE}/cliente/reservar?club=${clubM}`);
+          await p.waitForSelector("#nombre", { timeout: 90000 });
+          const desc = await p.locator('[data-slot="card-description"]').first().innerText();
+          revisar(!/lo cobra el antro/i.test(desc) && (modo === "libre" ? /Entrada libre en la puerta/.test(desc) : /pregúntalo al antro/.test(desc)), `@${ancho} formulario ${modo}: sin «lo cobra el antro»`, desc);
+          await p.fill("#nombre", `T cli Anónimo ${modo} ${ancho}`);
+          await p.fill("#telefono", "5500000000");
+          await p.fill("#fecha", fechaM);
+          await p.getByRole("button", { name: "Apartar lugar" }).click();
+          const confM = p.locator('[data-prueba="confirmacion"]');
+          const okM = await confM.waitFor({ timeout: 30000 }).then(() => true, () => false);
+          revisar(okM, `@${ancho} ${modo}: aparece la confirmación`);
+          if (!okM) continue;
+          const tM = await confM.innerText();
+          const avisoM = await p.locator('[data-prueba="aviso-cover"]').innerText().catch(() => "");
+          revisar(!/lo cobra el antro/i.test(tM) && (modo === "libre" ? /Entrada libre/.test(tM) && /No hay cover/.test(avisoM) : /Consultar con el antro/.test(tM) && /Pregunta el cover/.test(avisoM)), `@${ancho} confirmación ${modo}: aviso según el modo`, avisoM);
+          const wa = await p.locator('a[href^="https://wa.me"]').first().getAttribute("href");
+          const msj = decodeURIComponent(new URL(wa).searchParams.get("text") ?? "");
+          revisar(!/lo cobra el antro/i.test(msj) && (modo === "libre" ? /Entrada libre en la puerta \(la app tampoco cobra nada\)/.test(msj) : /El cover pregúntalo al antro/.test(msj)), `@${ancho} WhatsApp ${modo}: renglón del cover según el modo`, msj);
+          const hrefM = await p.locator("a", { hasText: "Ver mi boleto" }).getAttribute("href");
+          const guardadoM = JSON.parse((await p.evaluate((k) => localStorage.getItem(k), CLAVE_BOLETOS)) ?? "[]").find((x) => `/r/${x.qr}` === hrefM);
+          if (modo === "libre") revisar(guardadoM?.zona === "America/Tijuana", `@${ancho}: el boleto guardado lleva la zona del antro (Tijuana)`, JSON.stringify(guardadoM));
+          await toma(`confirmacion-${modo}`);
+          await p.goto(`${BASE}${hrefM}`);
+          await p.locator('[data-prueba="estado-boleto"]').waitFor({ timeout: 60000 }).catch(() => {});
+          const tR = await p.locator('[data-slot="card"]').innerText();
+          const waR = await p.locator('a[href^="https://wa.me"]').first().getAttribute("href").catch(() => null);
+          const msjR = waR ? decodeURIComponent(new URL(waR).searchParams.get("text") ?? "") : "";
+          revisar(!/lo cobra el antro/i.test(tR + msjR) && (modo === "libre" ? /No hay cover/.test(tR) : /Pregunta el cover/.test(tR)) && msjR.length > 0, `@${ancho} r-${modo}: boleto y WhatsApp sin «lo cobra el antro»`, tR.slice(0, 200));
+          await toma(`r-${modo}`);
+        }
+
         // c) /r en cada estado.
         const casos = [["vigente", codigos.vigente, true], ["usado", codigos.entro, false], ["vencido", codigos.vencido, false], ["vigente", codigos.borrador, true]];
         for (const [estado, codigo, conQr] of casos) {
@@ -265,7 +335,7 @@ try {
           const nombreToma = codigo === codigos.borrador ? "r-borrador" : `r-${estado}`;
           revisar(est === estado && (qrs === 1) === conQr, `@${ancho} ${nombreToma}: estado ${estado} y QR ${conQr ? "visible" : "oculto"}`, `${est} qr=${qrs}`);
           const t = await p.locator('[data-slot="card"]').innerText();
-          if (codigo === codigos.vigente) revisar(/\$350/.test(t) && /El QR no garantiza el acceso/.test(t) && /Calle T cli 1/.test(t), `@${ancho} r-vigente: cover, aviso y dirección`);
+          if (codigo === codigos.vigente) revisar(/\$350/.test(t) && /lo cobra el antro/i.test(t) && /El QR no garantiza el acceso/.test(t) && /Calle T cli 1/.test(t), `@${ancho} r-vigente: cover, aviso y dirección`);
           if (codigo === codigos.borrador) revisar(!/Calle secreta/.test(t) && !/\$500/.test(t), `@${ancho} r-borrador: sin dirección ni cover del antro no publicado`);
           if (estado === "usado") revisar(/ya se usó/i.test(t), `@${ancho} r-usado: explica que ya se usó`);
           if (estado === "vencido") revisar(/venció/.test(t), `@${ancho} r-vencido: explica que venció`);
@@ -275,6 +345,15 @@ try {
         const nf = await p.getByText("Boleto no encontrado").waitFor({ timeout: 60000 }).then(() => true, () => false);
         revisar(nf, `@${ancho}: código inexistente → «Boleto no encontrado»`);
         await toma("r-no-encontrado");
+        // Sin red al pedir el boleto: no afirma nada del estado de la reserva.
+        await p.route("**/rest/v1/rpc/obtener_reserva_por_qr*", (r) => r.abort("internetdisconnected"));
+        await p.goto(`${BASE}/r/${codigos.vencido}`);
+        const sinRed = await p.getByText("No pudimos cargar tu boleto").waitFor({ timeout: 60000 }).then(() => true, () => false);
+        const tRed = sinRed ? await p.locator('[data-slot="card"]').innerText() : "";
+        revisar(sinRed && !/sigue apartado/i.test(tRed) && /Intentar de nuevo/.test(tRed), `@${ancho} r sin red: no asegura que el lugar sigue apartado`, tRed);
+        await p.unroute("**/rest/v1/rpc/obtener_reserva_por_qr*");
+        errores = [];
+        await p.screenshot({ path: `${SHOTS}r-sin-red-${ancho}.png`, fullPage: true });
         await ctx.close();
       }
 
@@ -296,14 +375,25 @@ try {
         await p.getByRole("button", { name: "Apartar lugar" }).click();
         const ok = await p.locator('[data-prueba="confirmacion"]').waitFor({ timeout: 30000 }).then(() => true, () => false);
         revisar(ok && /Mi perfil/.test(await p.locator('[data-prueba="aviso-guardado"]').innerText()), `@${ancho}: con cuenta, la confirmación remite a Mi perfil`);
+        revisar((await p.evaluate((k) => localStorage.getItem(k), CLAVE_BOLETOS)) === null, `@${ancho}: con cuenta no se guarda el boleto en el teléfono`);
         await p.goto(`${BASE}/cliente/${clubA}`);
         const cover = p.locator('[data-prueba="cover-ficha"]');
         const hay = await cover.waitFor({ timeout: 60000 }).then(() => true, () => false);
-        revisar(hay && /AntroApp no te cobra nada/.test(await cover.innerText()), `@${ancho} ficha: cover con aviso informativo`);
-        revisar(await p.locator('[data-prueba="boleto-guardado"]').isVisible().catch(() => false), `@${ancho} ficha: «Ya apartaste lugar» del boleto guardado`);
+        revisar(hay && /\$350/.test(await cover.innerText()) && /lo cobra el antro/i.test(await cover.innerText()), `@${ancho} ficha monto: cover con aviso de quién lo cobra`);
+        await p.waitForTimeout(600);
+        revisar(!(await p.locator('[data-prueba="boleto-guardado"]').isVisible().catch(() => false)), `@${ancho} ficha con cuenta: sin «Ya apartaste lugar» de otro`);
         revisar(/1:30 a\. m\./.test(await p.locator("body").innerText()), `@${ancho} ficha: hora límite de llegada`);
         await p.waitForTimeout(600);
         await p.screenshot({ path: `${SHOTS}ficha-${ancho}.png`, fullPage: true });
+        for (const [modo, clubM] of [["libre", clubs[2]], ["consultar", clubs[3]]]) {
+          await p.goto(`${BASE}/cliente/${clubM}`);
+          const cv = p.locator('[data-prueba="cover-ficha"]');
+          const hayM = await cv.waitFor({ timeout: 60000 }).then(() => true, () => false);
+          const tv = hayM ? await cv.innerText() : "";
+          revisar(hayM && !/lo cobra el antro/i.test(tv) && (modo === "libre" ? /Entrada libre/.test(tv) && /No hay cover/.test(tv) : /consultar con el antro/i.test(tv) && /Pregunta el cover/.test(tv)), `@${ancho} ficha ${modo}: aviso según el modo`, tv);
+          await p.waitForTimeout(400);
+          await p.screenshot({ path: `${SHOTS}ficha-${modo}-${ancho}.png`, fullPage: true });
+        }
         await p.goto(`${BASE}/cliente/perfil`);
         const ver = p.getByRole("link", { name: /Ver boleto/ }).first();
         const hayVer = await ver.waitFor({ timeout: 60000 }).then(() => true, () => false);
@@ -312,6 +402,11 @@ try {
         revisar(/(lunes|martes|miércoles|jueves|viernes|sábado|domingo) \d{1,2} de/i.test(tp), `@${ancho} perfil: fecha legible`);
         await p.waitForTimeout(400);
         await p.screenshot({ path: `${SHOTS}perfil-${ancho}.png`, fullPage: true });
+        // Cerrar sesión borra los boletos guardados en el teléfono.
+        await p.evaluate(([k, v]) => localStorage.setItem(k, v), [CLAVE_BOLETOS, JSON.stringify([{ qr: qr(), clubId: clubA, clubNombre: "T cli", fecha: sumarDiasISO(noche, 5), personas: 2, guardadoEn: Date.now() }])]);
+        await p.getByRole("button", { name: "Cerrar sesión" }).click();
+        await p.waitForURL(/\/cliente\/login/, { timeout: 30000 }).catch(() => {});
+        revisar((await p.evaluate((k) => localStorage.getItem(k), CLAVE_BOLETOS)) === null, `@${ancho}: al cerrar sesión se borran los boletos del teléfono`);
         await ctx.close();
       }
     } finally {
@@ -327,6 +422,10 @@ try {
     if (clubs.length) await db.q("delete from public.reservations where club_id = any($1::uuid[])", [clubs]);
     if (usuarios.length) await db.q("delete from public.reservations where cliente_id = any($1::uuid[])", [usuarios]);
     if (usuarios.length) await db.q("delete from public.profiles where id = any($1::uuid[])", [usuarios]);
+    // Los intentos que cuenta el antiabuso de reservas sin cuenta (si está
+    // aplicado): solo los de los antros de esta prueba.
+    const [{ hay: hayIntentos }] = await db.q("select to_regclass('public.reserva_intentos') is not null as hay");
+    if (hayIntentos && clubs.length) await db.q("delete from public.reserva_intentos where club_id = any($1::uuid[])", [clubs]);
     if (clubs.length) await db.q("delete from public.clubs where id = any($1::uuid[])", [clubs]);
     await db.q("commit");
   } catch (e) {

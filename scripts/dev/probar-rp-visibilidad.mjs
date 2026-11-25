@@ -65,20 +65,28 @@ const ids = [];
 const clubIds = [];
 const db = await conectarDevEscritura();
 
+// La base de dev la comparten varios agentes y el límite de inicios de sesión
+// de Supabase Auth se alcanza fácil: se reintenta con espera, y solo abren
+// sesión las cuentas que la usan.
 async function sesion(email, password) {
   const c = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, opts);
-  ok(await c.auth.signInWithPassword({ email, password }), "login " + email.split("@")[0]);
-  return c;
+  for (let intento = 1; ; intento++) {
+    const r = await c.auth.signInWithPassword({ email, password });
+    if (!r.error) return c;
+    if (!/rate limit/i.test(r.error.message) || intento >= 8) ok(r, "login " + email.split("@")[0]);
+    console.log(`  (límite de inicios de sesión; reintento ${intento} en ${15 * intento} s)`);
+    await new Promise((fin) => setTimeout(fin, 15000 * intento));
+  }
 }
-async function cuenta(clave, role, club_id = null) {
+async function cuenta(clave, role, club_id = null, { conSesion = true } = {}) {
   const email = `t_cli_${TAG}_${clave}@example.com`;
   const u = ok(await svc.auth.admin.createUser({ email, password: PASS, email_confirm: true }), "usuario " + clave);
   ids.push(u.user.id);
   ok(await svc.from("profiles").insert({ id: u.user.id, nombre: `T cli ${clave}`, role, club_id }), "perfil " + clave);
-  return { id: u.user.id, email, c: await sesion(email, PASS) };
+  return { id: u.user.id, email, c: conSesion ? await sesion(email, PASS) : null };
 }
-async function antro(k, extra = {}) {
-  const dueno = await cuenta(`dueno${k}`, "dueno");
+async function antro(k, extra = {}, { conSesion = true } = {}) {
+  const dueno = await cuenta(`dueno${k}`, "dueno", null, { conSesion });
   const club = ok(await svc.from("clubs").insert({
     nombre: `T cli ${k} ${TAG}`, direccion: "Calle 1", horario: "Vie", dueno_id: dueno.id,
     pago_rp_modo: "reserva", comision_tipo: "fijo", comision_monto: 100, comision_desbloqueo_reservas: 0, ...extra,
@@ -86,7 +94,7 @@ async function antro(k, extra = {}) {
   clubIds.push(club.id);
   const mesas = ok(await svc.from("club_tables").insert(Array.from({ length: 24 }, (_, i) => ({ club_id: club.id, numero: `M${i + 1}`, capacidad: 6 }))).select("id"), "mesas");
   const c = { id: club.id, dueno, mesas: mesas.map((m) => m.id) };
-  c.gerente = await cuenta(`gerente${k}`, "gerente", club.id);
+  c.gerente = await cuenta(`gerente${k}`, "gerente", club.id, { conSesion });
   return c;
 }
 const fechaOp = async (clubId, instante) =>
@@ -316,9 +324,10 @@ try {
 
   // ======================= 3. Cuota =======================
   console.log("\n— Cuota y semana —");
-  const C = await antro("C");
+  const C = await antro("C", {}, { conSesion: false });
   C.rps = {};
-  for (const k of ["d0", "d1", "d3", "sem", "n1"]) C.rps[k] = await cuenta(`rp${k}C`, "rp", C.id);
+  // Solo d0, d1 y d3 preguntan su cuota con sesión.
+  for (const k of ["d0", "d1", "d3", "sem", "n1"]) C.rps[k] = await cuenta(`rp${k}C`, "rp", C.id, { conSesion: ["d0", "d1", "d3"].includes(k) });
   const hoyC = await fechaOp(C.id, new Date().toISOString());
   const L = (await db.q("select public.lunes_de($1::date)::text as l", [hoyC]))[0].l;
   const setD = (d) => db.q("update public.clubs set comision_desbloqueo_reservas = $2 where id = $1", [C.id, d]);
@@ -350,7 +359,7 @@ try {
   revisar(s1.centavos === 0 && s2.centavos === 0, "D=2: la 1.ª del domingo no paga y la 1.ª del lunes tampoco (la semana se reinicia, no es la 2.ª)", JSON.stringify([s1, s2]));
   revisar(s3.centavos === 10000 && s4.centavos === 10000, "la 2.ª del domingo paga en su semana y la 2.ª del lunes en la suya", JSON.stringify([s3, s4]));
   // ¿A qué noche pertenece la madrugada del lunes? Hora del antro, corte 08:00.
-  const T = await antro("T", { zona_horaria: "America/Tijuana" });
+  const T = await antro("T", { zona_horaria: "America/Tijuana" }, { conSesion: false });
   const lunesUtc = (h) => (db.q("select (($1::date + $2::time) at time zone 'America/Mexico_City')::text as t", [lun, h]));
   const enMx = async (h) => fechaOp(C.id, (await lunesUtc(h))[0].t);
   revisar(await enMx("00:00") === dom && await enMx("07:59:59") === dom && await enMx("08:00") === lun, "CDMX: lunes 00:00 y 07:59 siguen en la noche del domingo; a las 08:00 empieza el lunes");
