@@ -16,7 +16,7 @@ export default function AccesoNegociosPage() {
         </div>
         <Link
           href="/"
-          className="text-center text-xs text-muted-foreground underline underline-offset-4"
+          className="inline-flex min-h-10 items-center justify-center self-center px-3 text-xs text-muted-foreground underline underline-offset-4"
         >
           Volver
         </Link>

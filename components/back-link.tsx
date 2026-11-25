@@ -12,7 +12,8 @@ export function BackLink({ href, label = "Volver", className }: BackLinkProps) {
     <Link
       href={href}
       className={cn(
-        "absolute left-4 top-4 flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground sm:left-6 sm:top-6",
+        // 40 px de alto para el dedo (antes 20); el texto queda donde estaba.
+        "absolute left-2 top-2 flex min-h-10 items-center gap-1 px-2 text-sm font-medium text-muted-foreground hover:text-foreground sm:left-4 sm:top-4",
         className,
       )}
     >

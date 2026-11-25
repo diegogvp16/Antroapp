@@ -82,7 +82,9 @@ export function GaleriaAntro({ photos, nombre }: GaleriaAntroProps) {
             <ChevronRight className="size-5" />
           </button>
 
-          <div className="absolute inset-x-0 bottom-3 flex justify-center gap-1.5">
+          {/* Cada punto es un botón de 40×40 para el dedo; la barrita se ve
+              igual que antes, centrada dentro. */}
+          <div className="absolute inset-x-0 bottom-0 flex justify-center">
             {photos.map((photo, i) => (
               <button
                 key={photo.id}
@@ -90,13 +92,17 @@ export function GaleriaAntro({ photos, nombre }: GaleriaAntroProps) {
                 onClick={() => irA(i)}
                 aria-label={`Ir a la foto ${i + 1}`}
                 aria-current={i === index ? "true" : undefined}
-                className={cn(
-                  "h-1 rounded-sm transition-all",
-                  i === index
-                    ? "w-6 bg-noche-accent"
-                    : "w-2.5 bg-noche-text/45 hover:bg-noche-text/70",
-                )}
-              />
+                className="group flex size-10 items-center justify-center"
+              >
+                <span
+                  className={cn(
+                    "h-1 rounded-sm transition-all",
+                    i === index
+                      ? "w-6 bg-noche-accent"
+                      : "w-2.5 bg-noche-text/45 group-hover:bg-noche-text/70",
+                  )}
+                />
+              </button>
             ))}
           </div>
         </>

@@ -138,7 +138,7 @@ export default function ClubDetailPage() {
     <div className="relative flex flex-1 flex-col items-center">
       <BackLink
         href="/cliente"
-        className="z-10 rounded-sm bg-noche-bg/70 px-3 py-1.5 text-noche-text backdrop-blur"
+        className="left-4 top-4 z-10 rounded-sm bg-noche-bg/70 px-3 text-noche-text backdrop-blur sm:left-6 sm:top-6"
       />
       {loading || notFound || !club ? (
       <Card className="mt-24 w-full max-w-sm overflow-hidden p-0">
