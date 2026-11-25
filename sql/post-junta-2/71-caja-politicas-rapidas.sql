@@ -18,8 +18,10 @@
 -- 2) caja_firma_noche (la consulta cada 10 s cada dispositivo con la caja
 --    abierta) corría con los permisos de quien llama, aplicando RLS fila por
 --    fila en 6 tablas. Ahora es SECURITY DEFINER: autoriza UNA vez al inicio
---    con caja_puede_ver (sin permiso devuelve NULL, igual que antes cuando RLS
---    ocultaba todo) y lee sin RLS. Mismo resultado para quien sí puede ver.
+--    con caja_puede_ver y lee sin RLS. Mismo resultado para quien sí puede
+--    ver. Sin permiso ahora devuelve NULL (antes, con RLS ocultando todo,
+--    devolvía la firma de una noche vacía); la caja no se le muestra a esa
+--    cuenta, así que no cambia nada en pantalla.
 -- ============================================================================
 begin;
 
