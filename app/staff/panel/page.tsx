@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Html5Qrcode } from "html5-qrcode";
+// La librería del escáner (con ZXing, ~365 KB) se carga al abrir la cámara, no con el panel.
+import type { Html5Qrcode } from "html5-qrcode";
 import { BotonLinterna } from "@/components/boton-linterna";
 import { createClient } from "@/lib/supabase/client";
 import { cerrarSesionDadoDeBaja } from "@/lib/cuenta-dada-de-baja";
@@ -889,21 +890,26 @@ export default function StaffPanelPage() {
   useEffect(() => {
     if (!scannerOpen) return;
 
-    const html5QrCode = new Html5Qrcode(QR_READER_ELEMENT_ID);
-    html5QrCodeRef.current = html5QrCode;
     let cancelled = false;
+    let lector: Html5Qrcode | null = null;
 
-    html5QrCode
-      .start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: 250 },
-        (decodedText) => {
-          handleDecodedText(decodedText);
-        },
-        undefined,
-      )
+    void import("html5-qrcode")
+      .then(({ Html5Qrcode: Lector }) => {
+        if (cancelled) return;
+        const html5QrCode = new Lector(QR_READER_ELEMENT_ID);
+        lector = html5QrCode;
+        html5QrCodeRef.current = html5QrCode;
+        return html5QrCode.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: 250 },
+          (decodedText) => {
+            handleDecodedText(decodedText);
+          },
+          undefined,
+        );
+      })
       .then(() => {
-        if (!cancelled) setCamaraLista(true);
+        if (!cancelled && lector) setCamaraLista(true);
       })
       .catch((err) => {
         console.error("Error iniciando la cámara:", err);
@@ -918,10 +924,13 @@ export default function StaffPanelPage() {
 
     return () => {
       cancelled = true;
-      html5QrCode
-        .stop()
-        .then(() => html5QrCode.clear())
-        .catch(() => {});
+      const activo = lector;
+      if (activo) {
+        activo
+          .stop()
+          .then(() => activo.clear())
+          .catch(() => {});
+      }
       html5QrCodeRef.current = null;
       setCamaraLista(false);
     };
@@ -930,21 +939,26 @@ export default function StaffPanelPage() {
   useEffect(() => {
     if (!attendanceScannerOpen) return;
 
-    const html5QrCode = new Html5Qrcode(QR_READER_ATTENDANCE_ELEMENT_ID);
-    html5QrCodeAttendanceRef.current = html5QrCode;
     let cancelled = false;
+    let lector: Html5Qrcode | null = null;
 
-    html5QrCode
-      .start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: 250 },
-        (decodedText) => {
-          handleAttendanceDecodedText(decodedText);
-        },
-        undefined,
-      )
+    void import("html5-qrcode")
+      .then(({ Html5Qrcode: Lector }) => {
+        if (cancelled) return;
+        const html5QrCode = new Lector(QR_READER_ATTENDANCE_ELEMENT_ID);
+        lector = html5QrCode;
+        html5QrCodeAttendanceRef.current = html5QrCode;
+        return html5QrCode.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: 250 },
+          (decodedText) => {
+            handleAttendanceDecodedText(decodedText);
+          },
+          undefined,
+        );
+      })
       .then(() => {
-        if (!cancelled) setCamaraAsistenciaLista(true);
+        if (!cancelled && lector) setCamaraAsistenciaLista(true);
       })
       .catch((err) => {
         console.error("Error iniciando la cámara:", err);
@@ -959,10 +973,13 @@ export default function StaffPanelPage() {
 
     return () => {
       cancelled = true;
-      html5QrCode
-        .stop()
-        .then(() => html5QrCode.clear())
-        .catch(() => {});
+      const activo = lector;
+      if (activo) {
+        activo
+          .stop()
+          .then(() => activo.clear())
+          .catch(() => {});
+      }
       html5QrCodeAttendanceRef.current = null;
       setCamaraAsistenciaLista(false);
     };
