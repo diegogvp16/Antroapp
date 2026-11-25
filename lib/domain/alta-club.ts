@@ -3,7 +3,8 @@
 // Reglas puras, sin React ni Supabase: el asistente las usa para avisar en
 // cada paso y POST /api/admin/alta-club las vuelve a aplicar en el servidor
 // (nunca confía en lo que validó el navegador). La función de la base
-// admin_alta_club (sql/post-junta/01-alta-club.sql) es la última línea.
+// admin_alta_club (sql/post-junta/01-alta-club.sql; con reglas de RPs y permisos
+// de caja desde sql/post-junta-2/10-alta-club-reglas.sql) es la última línea.
 //
 // Este archivo no importa nada con "@/": así lo pueden cargar las pruebas
 // con Node directamente (scripts/dev/probar-alta-club-dominio.mjs).
@@ -121,11 +122,147 @@ export const esquemaMesas = z
     });
   });
 
-// ---------- Paso 4: equipo ----------
+// ---------- Paso 4: reglas de comisión y RPs ----------
+// Se guardan con el modelo de sql/post-junta/07-config-rp.sql (reglas_comision,
+// club_config_rp) dentro de la transacción del alta (sql/post-junta-2/10):
+// el antro NO nace calculando con las columnas viejas de clubs (comision_*).
+// Rangos y mensajes iguales a validarRegla (lib/domain/config-rp.ts) y a
+// config_rp_cambiar_regla; las pruebas revisan que coincidan.
+export const MODOS_PAGO_RP = ["reserva", "dia"] as const;
+export type ModoPagoRp = (typeof MODOS_PAGO_RP)[number];
+export const NIVELES_VISIBILIDAD = ["estado", "estado_monto", "estado_monto_botellas"] as const;
+export const TIPOS_REGLA = ["porcentaje", "fijo", "cuota"] as const;
+export const MAX_TARIFAS_DIA = 7;
+export const MONTO_MAXIMO_CENTAVOS = 10_000_000; // $100,000
+
+const MSG_PORCENTAJE = "Escribe un porcentaje entre 0.01 y 100.";
+const MSG_MONTO = "Escribe un monto entre $0.01 y $100,000.";
+const MSG_CUOTA = "La cuota va de 1 a 100 reservas.";
+const MSG_TARIFA = "Cada tarifa va de $0 a $100,000.";
+
+const enteroONulo = (mensaje: string) => z.number(mensaje).int(mensaje).nullable();
+
+export const esquemaReglaComision = z
+  .object({
+    tipo: z.enum(TIPOS_REGLA, "Elige el tipo de regla."),
+    cuota: z.number(MSG_CUOTA).int(MSG_CUOTA),
+    porcentaje_bp: enteroONulo(MSG_PORCENTAJE),
+    monto_centavos: enteroONulo(MSG_MONTO),
+  })
+  .superRefine((r, ctx) => {
+    if (r.tipo === "porcentaje") {
+      if (!(r.porcentaje_bp != null && r.porcentaje_bp >= 1 && r.porcentaje_bp <= 10000)) {
+        ctx.addIssue({ code: "custom", path: ["porcentaje_bp"], message: MSG_PORCENTAJE });
+      }
+      return;
+    }
+    if (!(r.monto_centavos != null && r.monto_centavos >= 1 && r.monto_centavos <= MONTO_MAXIMO_CENTAVOS)) {
+      ctx.addIssue({ code: "custom", path: ["monto_centavos"], message: MSG_MONTO });
+    }
+    if (r.tipo === "cuota" && !(r.cuota >= 1 && r.cuota <= 100)) {
+      ctx.addIssue({ code: "custom", path: ["cuota"], message: MSG_CUOTA });
+    }
+  })
+  // Solo viaja lo que usa cada tipo (como la tabla reglas_comision exige).
+  .transform((r) => ({
+    tipo: r.tipo,
+    cuota: r.tipo === "cuota" ? r.cuota : 0,
+    porcentaje_bp: r.tipo === "porcentaje" ? r.porcentaje_bp : null,
+    monto_centavos: r.tipo === "porcentaje" ? null : r.monto_centavos,
+  }));
+export type ReglaAlta = z.infer<typeof esquemaReglaComision>;
+
+// tarifas_dia[i] = centavos del día i + 1 trabajado en la semana (1.º, 2.º…).
+// Si un RP trabaja más días que los configurados, se repite el último
+// (registrar_pago_dia).
+export const esquemaRp = z
+  .object({
+    modo_pago: z.enum(MODOS_PAGO_RP, "Elige cómo se paga a los RPs."),
+    regla: esquemaReglaComision.nullable(),
+    visibilidad: z.enum(NIVELES_VISIBILIDAD, "Elige qué ven los RPs de sus clientes."),
+    tarifas_dia: z
+      .array(z.number(MSG_TARIFA).int(MSG_TARIFA).min(0, MSG_TARIFA).max(MONTO_MAXIMO_CENTAVOS, MSG_TARIFA))
+      .max(MAX_TARIFAS_DIA, `Máximo ${MAX_TARIFAS_DIA} días con tarifa.`),
+  })
+  .superRefine((r, ctx) => {
+    if (r.modo_pago === "reserva" && !r.regla) {
+      ctx.addIssue({ code: "custom", path: ["regla"], message: "Configura la regla de comisión por reserva." });
+    }
+    if (r.modo_pago === "dia" && r.tarifas_dia.length === 0) {
+      ctx.addIssue({ code: "custom", path: ["tarifas_dia"], message: "Escribe al menos la tarifa del día 1." });
+    }
+  });
+export type RpAlta = z.infer<typeof esquemaRp>;
+
+// Permisos de caja por rol. Los valores por defecto son los de la plataforma
+// (caja_tiene_permiso): el gerente puede todo; el staff recibe en la puerta,
+// abre mesas, registra consumo, cobra y cierra. En el alta solo se guardan
+// las casillas que CAMBIAN respecto de eso: si la plataforma cambia sus
+// valores, el antro los sigue en lo que no tocó.
+export const PERMISOS_CAJA_ALTA = [
+  { permiso: "puerta", titulo: "Recibir en la puerta", detalle: "Escanear el QR y dar la entrada." },
+  { permiso: "abrir_mesa", titulo: "Abrir mesas", detalle: "Sentar a un grupo en una mesa." },
+  { permiso: "registrar_consumo", titulo: "Registrar consumo", detalle: "Agregar lo que se pide." },
+  { permiso: "cobrar", titulo: "Cobrar", detalle: "Registrar pagos de la mesa." },
+  { permiso: "cerrar_mesa", titulo: "Cerrar mesas", detalle: "Cuando el grupo ya pagó." },
+  { permiso: "reabrir_mesa", titulo: "Reabrir mesas", detalle: "Con motivo; queda en la actividad." },
+  { permiso: "anular", titulo: "Anular consumos y pagos", detalle: "Con motivo; queda en la actividad." },
+  { permiso: "cuadrar_mesa", titulo: "Cuadrar mesas", detalle: "Con el cuadre nace la comisión del RP." },
+  { permiso: "cerrar_noche", titulo: "Cerrar la noche", detalle: "Cierra la caja de toda la noche." },
+] as const;
+export type PermisoCajaAlta = (typeof PERMISOS_CAJA_ALTA)[number]["permiso"];
+export const ROLES_CAJA = ["staff", "gerente"] as const;
+export type RolCaja = (typeof ROLES_CAJA)[number];
+const VALORES_PERMISO = PERMISOS_CAJA_ALTA.map((p) => p.permiso) as [PermisoCajaAlta, ...PermisoCajaAlta[]];
+const PERMISOS_STAFF_POR_DEFECTO: ReadonlySet<string> = new Set(["puerta", "abrir_mesa", "registrar_consumo", "cobrar", "cerrar_mesa"]);
+
+export function permisoPorDefecto(rol: RolCaja, permiso: PermisoCajaAlta): boolean {
+  return rol === "gerente" || PERMISOS_STAFF_POR_DEFECTO.has(permiso);
+}
+
+export type MatrizPermisos = Record<RolCaja, Record<PermisoCajaAlta, boolean>>;
+export function matrizPorDefecto(): MatrizPermisos {
+  const fila = (rol: RolCaja) =>
+    Object.fromEntries(VALORES_PERMISO.map((p) => [p, permisoPorDefecto(rol, p)])) as Record<PermisoCajaAlta, boolean>;
+  return { staff: fila("staff"), gerente: fila("gerente") };
+}
+
+export const esquemaPermisoCaja = z.object({
+  permiso: z.enum(VALORES_PERMISO, "Permiso de caja inválido."),
+  rol: z.enum(ROLES_CAJA, "Los permisos de caja son para staff o gerente."),
+  permitido: z.boolean(),
+});
+export type CambioPermisoCaja = z.infer<typeof esquemaPermisoCaja>;
+
+export const esquemaPermisosCaja = z
+  .array(esquemaPermisoCaja)
+  .max(VALORES_PERMISO.length * ROLES_CAJA.length, "Demasiados permisos de caja.")
+  .superRefine((lista, ctx) => {
+    const vistos = new Set<string>();
+    lista.forEach((x, i) => {
+      const clave = `${x.permiso}|${x.rol}`;
+      if (vistos.has(clave)) ctx.addIssue({ code: "custom", path: [i], message: "Hay un permiso de caja repetido." });
+      vistos.add(clave);
+    });
+  });
+
+// Solo las casillas distintas de la plataforma (lo que se manda a la base).
+export function cambiosDePermisos(m: MatrizPermisos): CambioPermisoCaja[] {
+  const salida: CambioPermisoCaja[] = [];
+  for (const rol of ROLES_CAJA) {
+    for (const permiso of VALORES_PERMISO) {
+      const v = m[rol][permiso];
+      if (v !== permisoPorDefecto(rol, permiso)) salida.push({ permiso, rol, permitido: v });
+    }
+  }
+  return salida;
+}
+
+// ---------- Paso 5: equipo ----------
 export const esquemaPersonal = z.object({ nombre: nombrePersona, correo, rol: z.enum(ROLES_PERSONAL) });
 export type Personal = z.infer<typeof esquemaPersonal>;
 
-// ---------- Paso 5: grupo ----------
+// ---------- Paso 6: grupo ----------
 export const esquemaGrupo = z.discriminatedUnion("modo", [
   z.object({ modo: z.literal("ninguno") }),
   z.object({
@@ -149,10 +286,16 @@ export const esquemaAltaClub = z
     datos: esquemaDatos,
     politicas: esquemaPoliticas,
     mesas: esquemaMesas,
+    rp: esquemaRp,
+    caja_permisos: esquemaPermisosCaja.optional().default([]),
     dueno: esquemaCuenta.nullable(),
     personal: z.array(esquemaPersonal).max(MAX_PERSONAL, `Máximo ${MAX_PERSONAL} personas en el alta.`),
     grupo: esquemaGrupo,
     publicar: z.boolean(),
+    // Clon (B2): id del antro de origen. La base copia de ahí el catálogo de
+    // productos (sin existencias); todo lo demás viaja arriba, ya revisado
+    // por el admin en el asistente (sql/post-junta-2/11-clonar-club.sql).
+    clonar_de: z.uuid("El antro de origen no es válido.").nullable().optional().default(null),
   })
   .superRefine((a, ctx) => {
     if (a.grupo.modo !== "ninguno") {
@@ -208,6 +351,14 @@ export function payloadSql(a: AltaClub, ids: ReadonlyMap<string, string>, altaId
     },
     publicar: a.publicar,
     mesas: a.mesas.map((m) => ({ numero: m.numero.trim(), capacidad: m.capacidad })),
+    rp: {
+      modo_pago: a.rp.modo_pago,
+      regla: a.rp.regla,
+      visibilidad: a.rp.visibilidad,
+      tarifas_dia: a.rp.tarifas_dia.map((monto_centavos, i) => ({ posicion: i + 1, monto_centavos })),
+    },
+    caja_permisos: a.caja_permisos,
+    ...(a.clonar_de ? { clonar_de: a.clonar_de } : {}),
     usuarios: cuentasNuevas(a).map((c) => {
       const id = ids.get(c.correo);
       if (!id) throw new Error("Falta la cuenta de " + c.correo);
@@ -277,3 +428,237 @@ export function erroresPorCampo(error: z.ZodError): Record<string, string> {
   }
   return salida;
 }
+
+// ---------- Clonar un antro (B2) ----------
+// admin_club_plantilla(origen) (sql/post-junta-2/11-clonar-club.sql) devuelve
+// SOLO configuración. Aquí se lee con zod (lo que no cuadre se ignora con un
+// aviso, nunca truena) y se convierte en el texto que precarga el asistente.
+// Nombre, dirección, equipo y fotos NO vienen: el antro nuevo es otro lugar
+// con otra gente. El catálogo de productos no pasa por el navegador: lo
+// copia la base al dar de alta (aquí solo se cuenta para el resumen).
+
+const numeroONulo = z.preprocess(
+  (v) => (v === null || v === undefined || v === "" ? null : Number(v)),
+  z.number().finite().nullable(),
+);
+const textoONulo = z
+  .string()
+  .nullable()
+  .optional()
+  .transform((v) => v ?? "");
+
+export const esquemaPlantilla = z.object({
+  origen: z.object({ id: z.uuid(), nombre: z.string() }),
+  club: z.object({
+    ciudad: textoONulo,
+    zona_horaria: textoONulo,
+    horario: textoONulo,
+    ambiente: textoONulo,
+    tipo_musica: textoONulo,
+    codigo_vestimenta: textoONulo,
+    edad_minima: numeroONulo,
+    deposito_monto: numeroONulo,
+    cover_modo: textoONulo,
+    cover_monto: numeroONulo,
+    tolerancia_hora: textoONulo,
+  }),
+  mesas: z.array(z.object({ numero: z.string(), capacidad: z.number() })).catch([]),
+  modo_pago: z.string().catch("reserva"),
+  regla: z
+    .object({
+      origen: z.enum(["regla", "anterior"]),
+      tipo: z.string(),
+      cuota: numeroONulo,
+      porcentaje_bp: numeroONulo,
+      monto_centavos: numeroONulo,
+    })
+    .nullable()
+    .catch(null),
+  regla_programada_desde: z.string().nullable().catch(null),
+  visibilidad: z.string().catch("estado_monto"),
+  tarifas_dia: z.array(z.object({ posicion: z.number(), monto_centavos: z.number() })).catch([]),
+  caja_permisos: z.array(z.object({ permiso: z.string(), rol: z.string(), permitido: z.boolean() })).catch([]),
+  permisos_por_persona: z.number().catch(0),
+  productos: z
+    .array(
+      z.object({
+        nombre: z.string(),
+        categoria: z.string(),
+        precio_centavos: z.number(),
+        existencias_minimas: z.number(),
+        activo: z.boolean(),
+      }),
+    )
+    .nullable()
+    .catch(null),
+  grupo_id: z.uuid().nullable().catch(null),
+});
+export type PlantillaClub = z.infer<typeof esquemaPlantilla>;
+
+// Lo que precarga el asistente, en texto (como lo escribiría el admin).
+export interface PrecargaClon {
+  origen: { id: string; nombre: string };
+  datos: { ciudad: string; zona_horaria: string; horario: string };
+  politicas: {
+    cover_modo: (typeof COVER_MODOS)[number];
+    cover_texto: string;
+    deposito_texto: string;
+    edad_texto: string;
+    codigo_vestimenta: string;
+    tipo_musica: string;
+    ambiente: string;
+    tolerancia_hora: string;
+  };
+  mesas: Mesa[];
+  rp: {
+    modo_pago: ModoPagoRp;
+    tipo: (typeof TIPOS_REGLA)[number];
+    monto_texto: string;
+    porcentaje_texto: string;
+    cuota_texto: string;
+    visibilidad: (typeof NIVELES_VISIBILIDAD)[number];
+    tarifas: string[];
+  };
+  permisos: { personalizar: boolean; matriz: MatrizPermisos };
+  grupo_id: string | null;
+  // Catálogo que copiará la base (null = no hay catálogo: fase 2 apagada).
+  productos: { total: number; activos: number; nombres: string[] } | null;
+  // Lo que el admin debe revisar porque no se copió igual.
+  avisos: string[];
+}
+
+// Centavos → "150" o "150.50" (lo que acepta parsearPesosACentavos).
+export function centavosATexto(c: number): string {
+  const n = Math.round(c);
+  return n % 100 === 0 ? String(n / 100) : (n / 100).toFixed(2);
+}
+// Puntos base → "12.5".
+export function bpATexto(bp: number): string {
+  return String(Math.round(bp) / 100);
+}
+const COVER_MODOS = ["oculto", "monto", "libre", "consultar"] as const;
+const enLista = <T extends string>(lista: readonly T[], v: string): v is T => (lista as readonly string[]).includes(v);
+
+export function precargaDesdePlantilla(p: PlantillaClub): PrecargaClon {
+  const avisos: string[] = [];
+  const c = p.club;
+
+  const zonaValida = enLista(VALORES_ZONA, c.zona_horaria);
+  if (c.zona_horaria && !zonaValida) {
+    avisos.push(`La zona horaria del origen («${c.zona_horaria}») no está en la lista: se puso la del Centro; revísala.`);
+  }
+
+  const cover_modo = enLista(COVER_MODOS, c.cover_modo) ? c.cover_modo : "oculto";
+  const tolerancia = /^([01]\d|2[0-3]):[0-5]\d$/.test(c.tolerancia_hora) ? c.tolerancia_hora : "";
+
+  // Mesas: nombre y capacidad, sin repetir y hasta el máximo del alta.
+  const vistas = new Set<string>();
+  const mesas: Mesa[] = [];
+  for (const m of p.mesas) {
+    const clave = m.numero.trim().toLowerCase();
+    if (!clave || vistas.has(clave)) continue;
+    vistas.add(clave);
+    mesas.push({ numero: m.numero.trim(), capacidad: m.capacidad });
+  }
+  if (mesas.length > MAX_MESAS) {
+    avisos.push(`El origen tiene ${mesas.length} mesas; el alta acepta ${MAX_MESAS}: se copiaron las primeras ${MAX_MESAS}.`);
+    mesas.length = MAX_MESAS;
+  }
+
+  // Regla de comisión: la que manda hoy en el origen.
+  const modo_pago: ModoPagoRp = p.modo_pago === "dia" ? "dia" : "reserva";
+  const r = p.regla;
+  let tipo: PrecargaClon["rp"]["tipo"] = "fijo";
+  let monto_texto = "";
+  let porcentaje_texto = "";
+  let cuota_texto = "4";
+  if (r && enLista(TIPOS_REGLA, r.tipo)) {
+    tipo = r.tipo;
+    if (r.monto_centavos != null && r.monto_centavos > 0) monto_texto = centavosATexto(r.monto_centavos);
+    if (r.porcentaje_bp != null && r.porcentaje_bp > 0) porcentaje_texto = bpATexto(r.porcentaje_bp);
+    if (r.tipo === "cuota" && r.cuota != null && r.cuota > 0) cuota_texto = String(r.cuota);
+  }
+  if (modo_pago === "reserva") {
+    if (!r || r.origen === "anterior") {
+      avisos.push(
+        "El origen todavía calcula la comisión con la regla anterior (sin regla nueva): revisa la regla del paso «Reglas de comisión y RPs».",
+      );
+    }
+    const regla = esquemaReglaComision.safeParse({
+      tipo,
+      cuota: tipo === "cuota" ? Number(cuota_texto) : 0,
+      porcentaje_bp: tipo === "porcentaje" ? (r?.porcentaje_bp ?? null) : null,
+      monto_centavos: tipo === "porcentaje" ? null : (r?.monto_centavos ?? null),
+    });
+    if (!regla.success) avisos.push("La regla del origen no está completa (por ejemplo, $0): escríbela antes de seguir.");
+  } else if (r?.origen === "regla") {
+    avisos.push("El origen paga por día: su regla por reserva no se guarda en el antro nuevo (igual que en un alta por día).");
+  }
+  if (p.regla_programada_desde) {
+    avisos.push(`El origen tiene una regla programada desde el ${p.regla_programada_desde}: no se copia; se copia la que vale hoy.`);
+  }
+
+  // Tarifas por día, en orden; hasta 7.
+  const tarifas = [...p.tarifas_dia]
+    .filter((t) => t.posicion >= 1 && t.posicion <= MAX_TARIFAS_DIA)
+    .sort((a, b) => a.posicion - b.posicion)
+    .map((t) => centavosATexto(t.monto_centavos));
+  if (modo_pago === "reserva" && tarifas.length > 0) {
+    avisos.push(
+      `El origen paga por reserva: sus ${tarifas.length} tarifas por día quedan precargadas, pero solo se guardan si eliges «Por día trabajado».`,
+    );
+  }
+
+  // Permisos de caja por rol: se parte de la plataforma y se aplica lo del origen.
+  const matriz = matrizPorDefecto();
+  for (const x of p.caja_permisos) {
+    if (enLista(ROLES_CAJA, x.rol) && enLista(VALORES_PERMISO, x.permiso)) matriz[x.rol][x.permiso] = x.permitido;
+  }
+  const personalizar = cambiosDePermisos(matriz).length > 0;
+  if (p.permisos_por_persona > 0) {
+    avisos.push(
+      p.permisos_por_persona === 1
+        ? "1 permiso de caja por persona no se copia (el personal no pasa al antro nuevo)."
+        : `${p.permisos_por_persona} permisos de caja por persona no se copian (el personal no pasa al antro nuevo).`,
+    );
+  }
+
+  const visibilidad = enLista(NIVELES_VISIBILIDAD, p.visibilidad) ? p.visibilidad : "estado_monto";
+
+  return {
+    origen: p.origen,
+    datos: { ciudad: c.ciudad, zona_horaria: zonaValida ? c.zona_horaria : "America/Mexico_City", horario: c.horario },
+    politicas: {
+      cover_modo,
+      cover_texto: cover_modo === "monto" && c.cover_monto != null && c.cover_monto > 0 ? centavosATexto(c.cover_monto * 100) : "",
+      deposito_texto: c.deposito_monto != null && c.deposito_monto > 0 ? centavosATexto(c.deposito_monto * 100) : "",
+      edad_texto: c.edad_minima != null ? String(c.edad_minima) : "",
+      codigo_vestimenta: c.codigo_vestimenta,
+      tipo_musica: c.tipo_musica,
+      ambiente: c.ambiente,
+      tolerancia_hora: tolerancia,
+    },
+    mesas,
+    rp: { modo_pago, tipo, monto_texto, porcentaje_texto, cuota_texto, visibilidad, tarifas: tarifas.length ? tarifas : [""] },
+    permisos: { personalizar, matriz },
+    grupo_id: p.grupo_id,
+    productos: p.productos
+      ? { total: p.productos.length, activos: p.productos.filter((x) => x.activo).length, nombres: p.productos.map((x) => x.nombre) }
+      : null,
+    avisos,
+  };
+}
+
+// Qué NO se copia nunca (se muestra en el resumen).
+export const NO_SE_COPIA_CLON = [
+  "Nombre, dirección y ubicación",
+  "Reservas y consumos",
+  "Caja: noches, mesas, cuentas, pagos y cuadres",
+  "Comisiones y pagos por día",
+  "Turnos y asistencias",
+  "Fotos y documentos de verificación",
+  "Dueño, personal y cuentas",
+  "Permisos de caja por persona y sueldos individuales de RPs",
+  "Existencias e historial de inventario",
+  "Suscripción y verificación (nace en borrador, salvo que lo publiques)",
+] as const;

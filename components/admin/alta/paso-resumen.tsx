@@ -3,8 +3,9 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { textoCover } from "@/lib/cover";
-import { ETIQUETA_ROL, ROLES_PERSONAL, ZONAS_MEXICO } from "@/lib/domain/alta-club";
-import { aEntrada, type Borrador } from "./estado";
+import { OPCIONES_VISIBILIDAD, describirRegla } from "@/lib/domain/config-rp";
+import { ETIQUETA_ROL, NO_SE_COPIA_CLON, PERMISOS_CAJA_ALTA, ROLES_PERSONAL, ZONAS_MEXICO, esquemaRp } from "@/lib/domain/alta-club";
+import { aEntrada, PASO, type Borrador } from "./estado";
 import type { GrupoExistente } from "./paso-grupo";
 
 function Fila({ etiqueta, children }: { etiqueta: string; children: ReactNode }) {
@@ -43,6 +44,17 @@ export function PasoResumen({
 }) {
   const e = aEntrada(b);
   const p = e.politicas;
+  const rp = esquemaRp.safeParse(e.rp);
+  const pesos = (c: number) =>
+    new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: c % 100 === 0 ? 0 : 2 }).format(c / 100);
+  const pago = !rp.success
+    ? "Falta completar"
+    : rp.data.modo_pago === "reserva" && rp.data.regla
+      ? `Por reserva: ${describirRegla(rp.data.regla)}`
+      : `Por día: ${rp.data.tarifas_dia.map((c, i) => `día ${i + 1} ${pesos(c)}`).join(", ")}`;
+  const visibilidad = OPCIONES_VISIBILIDAD.find((o) => o.valor === b.rp.visibilidad)?.titulo ?? "—";
+  const cambiosCaja = e.caja_permisos ?? [];
+  const tituloPermiso = (permiso: string) => PERMISOS_CAJA_ALTA.find((x) => x.permiso === permiso)?.titulo ?? permiso;
   const cover = textoCover({ cover_modo: p.cover_modo, cover_monto: p.cover_monto ?? null }) ?? "No se muestra";
   const zona = ZONAS_MEXICO.find((z) => z.valor === b.datos.zona_horaria)?.etiqueta ?? b.datos.zona_horaria;
   const capacidad = b.mesas.reduce((s, m) => s + (Number.isFinite(m.capacidad) ? m.capacidad : 0), 0);
@@ -61,16 +73,35 @@ export function PasoResumen({
           ? `${b.grupo.cuenta.nombre.trim()} (${b.grupo.cuenta.correo.trim().toLowerCase()}), cuenta nueva`
           : "Sin cambios";
 
+  const clon = b.clon;
+  const productos = clon?.productos;
+
   return (
     <div className="flex flex-col gap-4">
-      <Seccion titulo="Datos" onEditar={() => onIrA(0)}>
+      {clon && (
+        <section className="flex flex-col border-b border-border pb-3" aria-label="Clon">
+          <h3 className="py-2 text-sm font-semibold">Clon</h3>
+          <dl>
+            <Fila etiqueta="Sale de">{clon.origen.nombre}</Fila>
+            <Fila etiqueta="Catálogo">
+              {productos == null
+                ? "Sin catálogo de productos"
+                : productos.total === 0
+                  ? "El origen no tiene productos"
+                  : `Se copian ${productos.total} productos (${productos.activos} activos), con existencias en 0`}
+            </Fila>
+            <Fila etiqueta="No se copia">{NO_SE_COPIA_CLON.join(" · ")}</Fila>
+          </dl>
+        </section>
+      )}
+      <Seccion titulo="Datos" onEditar={() => onIrA(PASO.datos)}>
         <Fila etiqueta="Nombre">{b.datos.nombre.trim()}</Fila>
         <Fila etiqueta="Dirección">{b.datos.direccion.trim()}</Fila>
         <Fila etiqueta="Ciudad">{b.datos.ciudad.trim()}</Fila>
         <Fila etiqueta="Zona horaria">{zona}</Fila>
         <Fila etiqueta="Horario">{b.datos.horario.trim()}</Fila>
       </Seccion>
-      <Seccion titulo="Cover y políticas" onEditar={() => onIrA(1)}>
+      <Seccion titulo="Cover y políticas" onEditar={() => onIrA(PASO.politicas)}>
         <Fila etiqueta="Cover">{cover}</Fila>
         <Fila etiqueta="Depósito">{p.deposito_monto ? `$${Number(p.deposito_monto).toLocaleString("es-MX")} (informativo)` : "Sin depósito"}</Fila>
         <Fila etiqueta="Edad mínima">{p.edad_minima ?? "—"}</Fila>
@@ -78,7 +109,7 @@ export function PasoResumen({
         <Fila etiqueta="Música">{p.tipo_musica || "—"}</Fila>
         <Fila etiqueta="Llegada hasta">{p.tolerancia_hora ?? "Sin límite"}</Fila>
       </Seccion>
-      <Seccion titulo="Mesas" onEditar={() => onIrA(2)}>
+      <Seccion titulo="Mesas" onEditar={() => onIrA(PASO.mesas)}>
         <Fila etiqueta="Mesas">
           {b.mesas.length} · {capacidad} personas
         </Fila>
@@ -92,7 +123,16 @@ export function PasoResumen({
           </Fila>
         )}
       </Seccion>
-      <Seccion titulo="Equipo" onEditar={() => onIrA(3)}>
+      <Seccion titulo="Reglas de comisión y RPs" onEditar={() => onIrA(PASO.reglas)}>
+        <Fila etiqueta="Pago a RPs">{pago}</Fila>
+        <Fila etiqueta="Qué ven los RPs">{visibilidad}</Fila>
+        <Fila etiqueta="Permisos de caja">
+          {cambiosCaja.length === 0
+            ? "Los de la plataforma"
+            : cambiosCaja.map((c) => `${c.rol === "staff" ? "Staff" : "Gerente"} ${c.permitido ? "sí" : "no"}: ${tituloPermiso(c.permiso)}`).join(" · ")}
+        </Fila>
+      </Seccion>
+      <Seccion titulo="Equipo" onEditar={() => onIrA(PASO.equipo)}>
         <Fila etiqueta="Dueño">{b.conDueno ? `${b.dueno.nombre.trim()} (${b.dueno.correo.trim().toLowerCase()})` : "Sin dueño por ahora"}</Fila>
         {ROLES_PERSONAL.map((r) => (
           <Fila key={r} etiqueta={ETIQUETA_ROL[r]}>
@@ -100,7 +140,7 @@ export function PasoResumen({
           </Fila>
         ))}
       </Seccion>
-      <Seccion titulo="Grupo" onEditar={() => onIrA(4)}>
+      <Seccion titulo="Grupo" onEditar={() => onIrA(PASO.grupo)}>
         <Fila etiqueta="Grupo">{grupoTexto}</Fila>
         {duenoGrupo && <Fila etiqueta="Dueño del grupo">{duenoGrupo}</Fila>}
       </Seccion>

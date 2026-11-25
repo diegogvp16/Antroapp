@@ -62,6 +62,12 @@ export async function POST(request: Request) {
     const { data: g } = await admin.from("grupos").select("id").eq("id", alta.grupo.grupo_id).maybeSingle();
     if (!g) return responder({ error: "El grupo elegido no existe." }, 400);
   }
+  // Clon: el origen tiene que existir (la base lo vuelve a revisar y es la
+  // que copia su catálogo; aquí solo se evita crear cuentas en vano).
+  if (alta.clonar_de) {
+    const { data: o } = await admin.from("clubs").select("id").eq("id", alta.clonar_de).maybeSingle();
+    if (!o) return responder({ error: "El antro de origen no existe." }, 400);
+  }
 
   // 3. Cuentas de Auth.
   const cuentas = cuentasNuevas(alta);
@@ -109,14 +115,29 @@ export async function POST(request: Request) {
   }
 
   const orden = new Map(cuentas.map((c, i) => [c.correo, i]));
-  const exito = (resultado: unknown) => {
+  const exito = (resultado: unknown, aviso?: string) => {
     credenciales.sort((a, b) => (orden.get(a.correo) ?? 0) - (orden.get(b.correo) ?? 0));
-    return responder({ ok: true, resultado, credenciales });
+    return responder({ ok: true, resultado, credenciales, ...(aviso ? { aviso } : {}) });
   };
 
   // 4. Todo lo de la base, en una transacción, con la sesión del admin.
   const { data, error } = await supabase.rpc("admin_alta_club", { p: payloadSql(alta, creadas, altaId) });
-  if (!error) return exito(data);
+  if (!error) {
+    // La versión de la base que guarda las reglas (sql/post-junta-2/10)
+    // responde con la llave "rp". Sin ella (SQL viejo), el antro se creó
+    // pero sin reglas: se avisa en vez de callarlo.
+    if (data && typeof data === "object" && !("rp" in data)) {
+      console.error(`alta-club ${altaId}: la base no guardó las reglas de RPs (falta sql/post-junta-2/10)`);
+      return exito(data, "El antro se creó, pero las reglas de RPs y los permisos de caja NO se guardaron (falta actualizar la base). Configúralas en el panel del dueño.");
+    }
+    // Igual con el clon: la versión que copia el catálogo (post-junta-2/11)
+    // responde con la llave "clon".
+    if (alta.clonar_de && data && typeof data === "object" && !("clon" in data)) {
+      console.error(`alta-club ${altaId}: la base no copió el catálogo (falta sql/post-junta-2/11)`);
+      return exito(data, "El antro se creó con la configuración del origen, pero el catálogo de productos NO se copió (falta actualizar la base).");
+    }
+    return exito(data);
+  }
 
   if (error.code !== "P0001") {
     // ¿Se guardó y solo se perdió la respuesta? Entonces no se deshace nada.

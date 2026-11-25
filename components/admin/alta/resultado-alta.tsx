@@ -14,11 +14,13 @@ export function ResultadoAlta({
   nombreAntro,
   publicado,
   credenciales,
+  aviso = null,
   onOtro,
 }: {
   nombreAntro: string;
   publicado: boolean;
   credenciales: Credencial[];
+  aviso?: string | null;
   onOtro: () => void;
 }) {
   const [copiado, setCopiado] = useState(false);
@@ -41,6 +43,7 @@ export function ResultadoAlta({
         <p className="text-sm text-muted-foreground">
           {publicado ? "Está publicado: ya aparece para los clientes." : "Está en borrador: el público no lo ve hasta que lo publiques."}
         </p>
+        {aviso && <p className="rounded-lg border border-status-warn/40 bg-status-warn/10 p-3 text-sm">{aviso}</p>}
       </div>
 
       {credenciales.length > 0 && (
