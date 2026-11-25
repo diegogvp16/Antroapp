@@ -89,7 +89,42 @@ Es el único cambio en producción autorizado hoy.
    - primero `sql/limpiar-demo-caja.sql` en el SQL Editor, porque la caja no se borra por la API;
    - después, reponer reservas, consumos, comisiones y tablas de RP desde el respaldo.
 
-## Sigue
+## Hueco del perfil en PRODUCCIÓN (autorizado por Diego, 25/11)
 
-- Integrar los 6 carriles en `post-junta-2`, con prioridad en B10, B11 y B4.
-- Después: C1/C5, C4, C6, aplicar C7 parte 2 en dev, D3 (`pase-2.md`) y D4 (`avance.md`).
+- **Revisión:** la de 5 líneas, entregada.
+- **Respaldo:** `backups/prod-2026-11-25-antes-perfil/`, con 28 perfiles y 7 políticas de `profiles`. Había 0 clientes o dueños con `club_id`.
+- **SQL:** copiado al portapapeles de Diego dos veces, con la ruta: Antroapp, `kigltjvakwuuulvzbyri`, SQL Editor.
+- **Pendiente:** que Diego lo corra y diga «listo». Después se verifica, solo leyendo, la política, la prueba del hueco en dev, el recorrido 49/49, el humo 84/84 y el login y registro.
+
+## Integración (25/11, tarde)
+
+- **La parte B y C1/C5 terminaron**, con revisión adversarial y correcciones en cada carril:
+  - todos los defectos que encontró el revisor eran reales;
+  - se corrigieron todos menos los que quedaron como decisión de Diego.
+- **Commits por carril:**
+  - `c6185ee` b-cliente;
+  - `464beca` b-reportes;
+  - `0aa928b` b-alta;
+  - `941fd6a` b-equipo;
+  - `f17ba51` b-caja;
+  - `8b695c0` c-rls.
+- **Merge en `post-junta-2`:** en orden B10, B11/B4, alta, equipo, caja y RLS. Hubo un solo conflicto, en los botones de `/admin`, y se quedaron todos.
+- **Typecheck, lint y build:** limpios.
+- **71 (C7 parte 2) aplicado en dev:**
+  - prueba del 71: 9/9;
+  - caja: 168/168;
+  - concurrencia: 29/29.
+- **C4 con todo integrado: 57/57 pasos, 9/9 flujos.** Las dos fallas de la mañana eran de la app y quedaron resueltas. Solo cambiaron los textos del formulario.
+- **Ensayo de toda la cadena del pase 2** (38 pasos, `ensayo-pase2 completo --comparar-prod`):
+  - el esquema queda idéntico después de revertir y reaplicar;
+  - dev revertido queda igual a producción, salvo la política del perfil (pendiente) y GRANT a `service_role`.
+- **Hallazgo y arreglo:** el rollback del `post-junta/10` regresaba 6 funciones a antes del 10a. En producción habría reabierto el hueco ALTO del pase 1. Ahora regresa a lo que hay hoy en producción (`69edb31`).
+- **Privilegios de producción:**
+  - allá, lo nuevo nace abierto a `anon`; en dev, no;
+  - simulación en dev (`simular-privilegios-prod.mjs`): 0 funciones o tablas abiertas sin probar;
+  - un control confirma que la simulación sí reproduce producción.
+- **D3:** `docs/pase-2.md`.
+- **C6, accesibilidad a 360 px:** 54 pantallas. Pasó de 10 hallazgos a 0:
+  - «Volver» y puntos de la galería a 40 px;
+  - el aviso de suscripción del dueño ya no desborda.
+- **D4:** `docs/avance.md`.

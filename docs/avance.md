@@ -1,5 +1,85 @@
 # Avance hacia la junta del 25/11/2026
 
+## Estado al 25/11/2026 (noche 3)
+
+### En producción
+
+- **Pase 1** ejecutado el 24/11. Reporte: `docs/reporte-pase.md` (humo 84/84, recorrido 49/49).
+- **demo-datos del 25/11**, autorizado y verificado:
+  - el cuadre salió sin diferencias;
+  - solo se tocó Club Demo;
+  - el detalle está en `docs/avance-noche3.md`.
+- **Hueco CRÍTICO del perfil** (`sql/2026-11-25-perfil-sin-club-ajeno.sql`): autorizado, **pendiente de que Diego lo corra** en el SQL Editor. Hoy un usuario recién registrado puede crear su perfil de dueño con el antro de otro.
+
+### Ramas
+
+| Rama | Qué trae | Estado |
+|---|---|---|
+| `master` | Pase 1 | En producción |
+| `prejunta` | Lo de la junta: guion, checklist, ensayo, capturas, arreglos de ficha, manuales de staff y RP, runbook de la noche | Typecheck, lint y build limpios. Worktree `AntroApp-prejunta` |
+| `post-junta-2` | `post-junta`, más la parte B completa, C1–C8, D3 y el arreglo del perfil | Typecheck, lint y build limpios. Árbol principal |
+
+Lo que trae `post-junta-2`, todo probado en dev:
+
+- **Alta de antros:**
+  - B5: reglas de comisión y RPs en el alta;
+  - B2: clonar antro;
+  - B3: configuración por grupo.
+- **Equipo:**
+  - B7: bandeja de correos, en modo archivo;
+  - B12: invitaciones;
+  - B1: mesas y personal por CSV, con cupos de envío.
+- **Reportes:**
+  - B11: cierre de la noche;
+  - B4: exportables CSV;
+  - B8: panel de salud del admin.
+- **Cliente:**
+  - B6: boleto, estado del QR y cover según el modo;
+  - B10: lo que ve el RP, con candado real en la base.
+- **Caja:** B9, la caja con mala señal (cola en el teléfono; no se cuadra con movimientos por enviar).
+- **Seguridad:**
+  - C1: auditoría de RLS, en `docs/auditoria-rls.md`;
+  - C2: hueco crítico del perfil;
+  - C3: límites a las reservas sin cuenta;
+  - C5: concurrencia;
+  - C8: datos personales en los registros de errores;
+  - simulación de los privilegios de producción.
+- **Rendimiento (C7):**
+  - 16 índices;
+  - políticas de caja de 31.8 ms a 0.31 ms;
+  - escáner cargado al abrir la cámara.
+- **Pruebas:**
+  - C4: suite de punta a punta, 57/57 pasos;
+  - C6: accesibilidad a 360 px, 54 pantallas sin hallazgos.
+- **D3:** `docs/pase-2.md`, con el orden completo del pase 2.
+
+### Cómo probar `post-junta-2`
+
+```bash
+PUERTO=3031 node scripts/dev/servidor-dev.mjs                         # servidor contra dev
+PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/e2e/correr.mjs            # punta a punta (reporte en screenshots-e2e/)
+PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/auditoria-360.mjs         # accesibilidad a 360 px
+node scripts/dev/ensayo-pase2.mjs completo --comparar-prod            # cadena del pase 2 y comparación con producción
+node scripts/dev/simular-privilegios-prod.mjs                         # nada abierto al anónimo que no se haya probado
+```
+
+### Decisiones pendientes de Diego
+
+Están en `docs/post-junta-2/<carril>.md` y en el reporte de la noche 3.
+
+- **Comisiones:** si el modo de pago del grupo cambia «al momento» o «desde el lunes».
+- **Seguridad:** «un dueño, un antro» en la base.
+- **Invitaciones:** los cupos de envío.
+- **Cierre de la noche:** si «en puerta» en una noche cerrada cuenta como «no llegó».
+- **Caja:** los reintentos de la caja (10) y los 72 h de movimientos ajenos.
+- **Fotos:**
+  - el nombre del archivo en la ruta de las fotos;
+  - el tope de 10 MB y si se aceptan GIF.
+- **Boleto:** un botón «Olvidar este boleto» en un teléfono compartido.
+- **Pase 2:** si se adelantan los arreglos de huecos que ya existen en producción (`docs/pase-2.md`).
+
+---
+
 > Se actualiza al terminar cada bloque. Todo el trabajo está en la rama
 > `desarrollo` y en **antroapp-dev**. Nada se ha aplicado en producción, no
 > hay push a `master` ni deploy a producción, y no se tocaron las variables
