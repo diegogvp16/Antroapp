@@ -16,6 +16,7 @@ import {
   esquemaPersonal,
   esquemaPoliticas,
   esquemaRp,
+  entradaRpDeTextos,
   matrizPorDefecto,
   type EntradaAltaClub,
   type MatrizPermisos,
@@ -63,6 +64,10 @@ export interface Borrador {
     grupo_id: string;
     dueno_grupo: "ninguno" | "dueno_antro" | "cuenta_nueva";
     cuenta: { nombre: string; correo: string };
+    // Grupo existente (B3): «grupo» = el antro sigue la configuración del
+    // grupo (reemplaza lo de los pasos anteriores en lo que el grupo define);
+    // «alta» = se queda con lo de este alta.
+    config: "grupo" | "alta";
   };
   publicar: boolean;
   // Clon (B2): de qué antro sale, qué catálogo copiará la base y qué revisar.
@@ -95,7 +100,7 @@ export const BORRADOR_INICIAL: Borrador = {
   conDueno: true,
   dueno: { nombre: "", correo: "" },
   personal: [],
-  grupo: { modo: "ninguno", nombre: "", grupo_id: "", dueno_grupo: "dueno_antro", cuenta: { nombre: "", correo: "" } },
+  grupo: { modo: "ninguno", nombre: "", grupo_id: "", dueno_grupo: "dueno_antro", cuenta: { nombre: "", correo: "" }, config: "grupo" },
   publicar: false,
   clon: null,
 };
@@ -132,24 +137,13 @@ function pesosDeTexto(texto: string): number {
   return centavos == null ? Number.NaN : centavos / 100;
 }
 
-// Texto → centavos; NaN si no es válido (para que zod lo marque).
-const centavosDeTexto = (texto: string) => parsearPesosACentavos(texto.trim()) ?? Number.NaN;
-
+// Lo del modo elegido viaja siempre; lo del otro modo, si está completo
+// (entradaRpDeTextos): así un clon guarda la regla Y las tarifas del origen.
 export function aEntradaRp(r: Borrador["rp"]): EntradaAltaClub["rp"] {
-  return {
-    modo_pago: r.modo_pago,
-    regla:
-      r.modo_pago === "reserva"
-        ? {
-            tipo: r.tipo,
-            cuota: r.tipo === "cuota" ? (r.cuota_texto.trim() ? Number(r.cuota_texto) : Number.NaN) : 0,
-            porcentaje_bp: r.tipo === "porcentaje" ? porcentajeABp(r.porcentaje_texto) : null,
-            monto_centavos: r.tipo === "porcentaje" ? null : r.monto_texto.trim() ? centavosDeTexto(r.monto_texto) : null,
-          }
-        : null,
-    visibilidad: r.visibilidad,
-    tarifas_dia: r.modo_pago === "dia" ? r.tarifas.map((t) => (t.texto.trim() ? centavosDeTexto(t.texto) : Number.NaN)) : [],
-  };
+  return entradaRpDeTextos(
+    { ...r, tarifas: r.tarifas.map((t) => t.texto) },
+    { centavos: parsearPesosACentavos, bp: porcentajeABp },
+  );
 }
 
 export function aEntrada(b: Borrador): EntradaAltaClub {
@@ -169,6 +163,7 @@ export function aEntrada(b: Borrador): EntradaAltaClub {
             grupo_id: b.grupo.grupo_id,
             dueno_grupo: b.grupo.dueno_grupo,
             cuenta: b.grupo.dueno_grupo === "cuenta_nueva" ? b.grupo.cuenta : null,
+            config: b.grupo.config,
           };
   return {
     datos: b.datos,

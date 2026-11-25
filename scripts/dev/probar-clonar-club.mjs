@@ -20,7 +20,7 @@
 //      configuración, que NO se copió nada de lo demás (0 filas) y que el
 //      origen quedó idéntico (huella md5 por tabla antes y después).
 //   4. La regla clonada manda en la caja del antro nuevo (camino real).
-//   5. Clon de un antro que paga por día: las tarifas pasan.
+//   5. Clon de un antro que paga por día: las tarifas y su regla por reserva pasan.
 //   6. Origen inexistente o mal escrito, idempotencia, y nadie fuera del
 //      admin (gerente, dueño, dueño del origen, cuenta sin perfil, anónimo)
 //      lee la plantilla ni clona.
@@ -41,6 +41,7 @@ import {
   payloadSql,
   centavosATexto,
   bpATexto,
+  entradaRpDeTextos,
 } from "../../lib/domain/alta-club.ts";
 import { porcentajeABp } from "../../lib/domain/config-rp.ts";
 
@@ -109,7 +110,7 @@ function pruebasDeDominio() {
   revisar(pre.grupo_id === GRUPO && pre.productos?.total === 2 && pre.productos.activos === 1, "dominio: grupo y conteo del catálogo");
   revisar(pre.avisos.some((a) => /programada desde el 2026-11-30/.test(a)), "dominio: avisa de la regla programada que no se copia");
   revisar(pre.avisos.some((a) => /2 permisos de caja por persona no se copian/.test(a)), "dominio: avisa de los permisos por persona");
-  revisar(pre.avisos.some((a) => /tarifas por día quedan precargadas/.test(a)), "dominio: avisa que las tarifas solo cuentan en modo día");
+  revisar(pre.avisos.some((a) => /además tiene 2 tarifas por día: se copian igual/.test(a)), "dominio: avisa que las tarifas por día también se copian (no se usan por reserva)");
   revisar(!pre.avisos.some((a) => /regla anterior/.test(a)), "dominio: con regla nueva no avisa de la anterior");
 
   const vieja = precargaDesdePlantilla(esquemaPlantilla.parse({
@@ -127,8 +128,17 @@ function pruebasDeDominio() {
   const porc = precargaDesdePlantilla(esquemaPlantilla.parse({ ...plantilla, regla: { origen: "regla", tipo: "porcentaje", cuota: 0, porcentaje_bp: 1250, monto_centavos: null } }));
   revisar(porc.rp.tipo === "porcentaje" && porc.rp.porcentaje_texto === "12.5" && porcentajeABp(porc.rp.porcentaje_texto) === 1250, "dominio: porcentaje 1250 bp → «12.5» → 1250");
   const dia = precargaDesdePlantilla(esquemaPlantilla.parse({ ...plantilla, modo_pago: "dia" }));
-  revisar(dia.rp.modo_pago === "dia" && dia.avisos.some((a) => /paga por día: su regla por reserva no se guarda/.test(a)) && !dia.avisos.some((a) => /quedan precargadas/.test(a)),
-    "dominio: origen por día con regla → aviso de que la regla no se guarda");
+  revisar(dia.rp.modo_pago === "dia" && dia.rp.monto_texto === "250" && dia.avisos.some((a) => /paga por día y además tiene regla por reserva: se copia igual/.test(a)) && !dia.avisos.some((a) => /tarifas por día: se cop/.test(a)),
+    "dominio: origen por día con regla → la regla queda precargada y se avisa que también se copia");
+  const diaConv = { centavos: pesos, bp: porcentajeABp };
+  const eDia = entradaRpDeTextos(dia.rp, diaConv);
+  revisar(eDia.regla?.tipo === "cuota" && eDia.regla.cuota === 2 && eDia.regla.monto_centavos === 25000 && eDia.tarifas_dia.join(",") === "30000,45050",
+    "dominio: el clon de un origen por día manda su regla Y sus tarifas", JSON.stringify(eDia));
+  const eRes = entradaRpDeTextos(pre.rp, diaConv);
+  revisar(eRes.regla?.cuota === 2 && eRes.tarifas_dia.join(",") === "30000,45050", "dominio: el clon de un origen por reserva manda su regla Y sus tarifas", JSON.stringify(eRes));
+  const diaVieja = precargaDesdePlantilla(esquemaPlantilla.parse({ ...plantilla, modo_pago: "dia", regla: { origen: "anterior", tipo: "fijo", cuota: 0, porcentaje_bp: null, monto_centavos: 10000 } }));
+  revisar(diaVieja.rp.monto_texto === "" && entradaRpDeTextos(diaVieja.rp, diaConv).regla === null,
+    "dominio: origen por día SIN regla nueva (solo columnas viejas) → no se inventa una regla");
   const muchas = precargaDesdePlantilla(esquemaPlantilla.parse({ ...plantilla, mesas: Array.from({ length: 305 }, (_, i) => ({ numero: `M${i}`, capacidad: 4 })) }));
   revisar(muchas.mesas.length === 300 && muchas.avisos.some((a) => /305 mesas/.test(a)), "dominio: más de 300 mesas → las primeras 300, con aviso");
   revisar(!esquemaPlantilla.safeParse({ club: {} }).success && !esquemaPlantilla.safeParse(null).success, "dominio: una plantilla sin origen no se acepta (la pantalla muestra error)");
@@ -209,20 +219,33 @@ async function noche(clubId, mesaId, ger, rp, centavos, concepto) {
 }
 
 // Huella de todo lo de un antro: filas y md5 por tabla (para «el origen no
-// cambió» y para «el clon tiene 0 filas de esto»).
-const TABLAS_POR_CLUB = [
-  "club_tables", "reglas_comision", "club_config_rp", "club_dia_tarifas", "caja_permisos", "config_rp_cambios", "club_altas",
-  "reservations", "caja_noches", "mesa_sesiones", "mesa_cuentas", "caja_consumos", "caja_pagos", "caja_cuadres", "caja_eventos",
-  "rp_schedule", "rp_attendance", "rp_pagos_dia", "rp_comision_overrides", "rp_dia_tarifa_overrides", "club_photos",
-  "verificacion_documentos", "grupo_clubs", "productos", "producto_movimientos",
-];
+// cambió» y para «el clon tiene 0 filas de esto»). Las tablas se descubren
+// en el catálogo: TODA tabla de public con columna club_id (así una tabla
+// nueva de otro carril también queda revisada), más commissions y
+// consumption_entries, que cuelgan de la reserva.
+let tablasPorClub = null;
+async function descubrirTablas(db) {
+  if (!tablasPorClub) {
+    tablasPorClub = (
+      await db.q(
+        `select c.table_name t from information_schema.columns c
+           join information_schema.tables x on x.table_schema = c.table_schema and x.table_name = c.table_name and x.table_type = 'BASE TABLE'
+          where c.table_schema = 'public' and c.column_name = 'club_id' order by 1`,
+      )
+    ).map((r) => r.t);
+  }
+  return tablasPorClub;
+}
+// Lo ÚNICO que puede tener filas de un clon recién hecho: su configuración,
+// la bitácora de su alta, su grupo, su catálogo y sus cuentas nuevas. Con
+// la configuración por grupo (sql/post-junta-2/12), también de qué claves
+// es «propio» y la bitácora del grupo con su alta (no salen del origen).
+const SE_COPIA = new Set(["club_tables", "reglas_comision", "club_config_rp", "club_dia_tarifas", "caja_permisos", "config_rp_cambios", "club_altas", "grupo_clubs", "productos", "profiles", "club_config_propia", "grupo_config_cambios"]);
 async function huella(db, clubId) {
   const salida = {};
   const club = await db.q("select md5(c::text) h from public.clubs c where id = $1", [clubId]);
   salida.clubs = { n: club.length, h: club[0]?.h ?? "" };
-  for (const t of TABLAS_POR_CLUB) {
-    const existe = (await db.q("select to_regclass($1) is not null as e", [`public.${t}`]))[0].e;
-    if (!existe) continue;
+  for (const t of await descubrirTablas(db)) {
     const r = await db.q(`select count(*)::int n, md5(coalesce(string_agg(x::text, '|' order by x::text), '')) h from public.${t} x where club_id = $1`, [clubId]);
     salida[t] = r[0];
   }
@@ -230,8 +253,6 @@ async function huella(db, clubId) {
     const r = await db.q(`select count(*)::int n, md5(coalesce(string_agg(x::text, '|' order by x::text), '')) h from public.${t} x where ${col} in (select id from public.reservations where club_id = $1)`, [clubId]);
     salida[t] = r[0];
   }
-  const per = await db.q("select count(*)::int n, md5(coalesce(string_agg(x::text, '|' order by x::text), '')) h from public.profiles x where club_id = $1", [clubId]);
-  salida.profiles = per[0];
   return salida;
 }
 
@@ -252,14 +273,8 @@ function cuerpoDeClon(pre, { nombre, direccion, personal = [], dueno = null }) {
       tolerancia_hora: p.tolerancia_hora || null,
     },
     mesas: pre.mesas,
-    rp: {
-      modo_pago: rp.modo_pago,
-      regla: rp.modo_pago === "reserva"
-        ? { tipo: rp.tipo, cuota: rp.tipo === "cuota" ? Number(rp.cuota_texto) : 0, porcentaje_bp: rp.tipo === "porcentaje" ? porcentajeABp(rp.porcentaje_texto) : null, monto_centavos: rp.tipo === "porcentaje" ? null : pesos(rp.monto_texto) }
-        : null,
-      visibilidad: rp.visibilidad,
-      tarifas_dia: rp.modo_pago === "dia" ? rp.tarifas.map(pesos) : [],
-    },
+    // Igual que el asistente (aEntradaRp): lo del otro modo también viaja si está completo.
+    rp: entradaRpDeTextos(rp, { centavos: pesos, bp: porcentajeABp }),
     caja_permisos: pre.permisos.personalizar ? cambiosDePermisos(pre.permisos.matriz) : [],
     dueno,
     personal,
@@ -388,7 +403,8 @@ try {
   const { data: permC } = await svc.from("caja_permisos").select("permiso, rol, profile_id, permitido").eq("club_id", clon);
   revisar(permC?.length === 2 && permC.every((x) => x.profile_id === null && x.rol === "staff") && permC.some((x) => x.permiso === "cobrar" && !x.permitido) && permC.some((x) => x.permiso === "anular" && x.permitido),
     "permisos de caja por rol iguales; ninguno por persona", JSON.stringify(permC));
-  revisar(((await svc.from("club_dia_tarifas").select("id").eq("club_id", clon)).data ?? []).length === 0, "paga por reserva: las tarifas por día no se guardan (como en cualquier alta por reserva)");
+  const { data: tarC } = await svc.from("club_dia_tarifas").select("posicion, monto").eq("club_id", clon).order("posicion");
+  revisar(tarC?.map((t) => `${t.posicion}:${Number(t.monto)}`).join(",") === "1:300,2:450", "paga por reserva y sus tarifas por día ($300/$450) también se copian, como en el origen", JSON.stringify(tarC));
   if (hayProductos) {
     const prodC = await db.q("select nombre, categoria, precio_centavos, existencias, existencias_minimas, activo, creado_por from public.productos where club_id = $1 order by nombre", [clon]);
     const prodO = await db.q("select nombre, categoria, precio_centavos, existencias_minimas, activo from public.productos where club_id = $1 order by nombre", [origen]);
@@ -398,7 +414,12 @@ try {
   }
   const dC = await huella(db, clon);
   const NO_COPIA = ["reservations", "consumption_entries", "caja_noches", "mesa_sesiones", "mesa_cuentas", "caja_consumos", "caja_pagos", "caja_cuadres", "caja_eventos", "commissions", "rp_pagos_dia", "rp_schedule", "rp_attendance", "club_photos", "verificacion_documentos", "rp_comision_overrides", "rp_dia_tarifa_overrides", "producto_movimientos"];
-  for (const t of NO_COPIA) if (dC[t]) revisar(dC[t].n === 0, `no se copió: ${t} (0 filas en el clon)`, String(dC[t].n));
+  for (const t of NO_COPIA) revisar(dC[t]?.n === 0, `no se copió: ${t} (0 filas en el clon)`, String(dC[t]?.n ?? "tabla no encontrada"));
+  // Y cualquier otra tabla con club_id (suscripciones, invitaciones, correos,
+  // movimientos de personal, intentos de reserva…): 0 filas del clon.
+  const otras = Object.keys(dC).filter((t) => t !== "clubs" && !SE_COPIA.has(t) && !NO_COPIA.includes(t));
+  const conFilas = otras.filter((t) => dC[t].n > 0);
+  revisar(conFilas.length === 0 && otras.length > 0, `ninguna otra tabla con club_id tiene filas del clon (${otras.length} más: ${otras.join(", ")})`, conFilas.map((t) => `${t}: ${dC[t].n}`).join("; "));
   const perfilesC = (await svc.from("profiles").select("nombre, role").eq("club_id", clon)).data ?? [];
   revisar(perfilesC.length === 2 && perfilesC.every((x) => /Clon T alta/.test(x.nombre)), "personal: solo las 2 cuentas nuevas del clon, nadie del origen", JSON.stringify(perfilesC));
   const { data: altaC } = await svc.from("club_altas").select("resumen").eq("club_id", clon).maybeSingle();
@@ -430,7 +451,7 @@ try {
   const rD = await ca.rpc("admin_alta_club", { p: {
     alta_id: randomUUID(), club: { nombre: `${PREFIJO} por dia`, direccion: "Calle Día 1", ciudad: "Puebla", horario: "Vie 10pm" },
     mesas: [{ numero: "A", capacidad: 4 }],
-    rp: { modo_pago: "dia", regla: null, visibilidad: "estado", tarifas_dia: [{ posicion: 1, monto_centavos: 30000 }, { posicion: 2, monto_centavos: 45000 }, { posicion: 3, monto_centavos: 60000 }] },
+    rp: { modo_pago: "dia", regla: { tipo: "porcentaje", cuota: 0, porcentaje_bp: 800, monto_centavos: null }, visibilidad: "estado", tarifas_dia: [{ posicion: 1, monto_centavos: 30000 }, { posicion: 2, monto_centavos: 45000 }, { posicion: 3, monto_centavos: 60000 }] },
   } });
   revisar(!rD.error, "origen por día dado de alta directo", JSON.stringify(rD.error));
   const plD = esquemaPlantilla.parse(ok(await ca.rpc("admin_club_plantilla", { p_club: rD.data.club_id }), "plantilla por día"));
@@ -441,7 +462,9 @@ try {
   const { data: tarDC } = await svc.from("club_dia_tarifas").select("posicion, monto").eq("club_id", rDC.cuerpo.resultado?.club_id).order("posicion");
   const { data: cDC } = await svc.from("clubs").select("pago_rp_modo").eq("id", rDC.cuerpo.resultado?.club_id).maybeSingle();
   revisar(cDC?.pago_rp_modo === "dia" && tarDC?.map((t) => `${t.posicion}:${Number(t.monto)}`).join(",") === "1:300,2:450,3:600", "modo día y tarifas $300/$450/$600 copiadas", JSON.stringify(tarDC));
-  revisar(((await svc.from("reglas_comision").select("id").eq("club_id", rDC.cuerpo.resultado?.club_id)).data ?? []).length === 0, "sin regla por reserva (el origen no tenía)");
+  const { data: reglaDC } = await svc.from("reglas_comision").select("tipo, porcentaje_bp, vigente_desde, vigente_hasta").eq("club_id", rDC.cuerpo.resultado?.club_id);
+  revisar(reglaDC?.length === 1 && reglaDC[0].tipo === "porcentaje" && reglaDC[0].porcentaje_bp === 800 && reglaDC[0].vigente_desde === lunes && reglaDC[0].vigente_hasta === null,
+    "y su regla por reserva (8 %) también se copia aunque pague por día: si cambia de modo, no calcula con las columnas viejas", JSON.stringify(reglaDC));
 
   // ---------- 6. Origen inválido, idempotencia y autorización ----------
   const antesU = (await usuariosConSufijo()).length;

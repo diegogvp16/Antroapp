@@ -78,7 +78,7 @@ try {
     club: { nombre: ORIGEN, direccion: "Av. Origen UI 1", ciudad: "Guadalajara", zona_horaria: "America/Mexico_City", horario: "Vie y Sáb 11pm a 5am",
             cover_modo: "monto", cover_monto: "250", deposito_monto: "300", edad_minima: "21", codigo_vestimenta: "Formal", tipo_musica: "Reguetón", ambiente: "Terraza", tolerancia_hora: "00:30" },
     mesas: [{ numero: "Barra 1", capacidad: 4 }, { numero: "Barra 2", capacidad: 4 }, { numero: "VIP A", capacidad: 15 }],
-    rp: { modo_pago: "reserva", regla: { tipo: "porcentaje", cuota: 0, porcentaje_bp: 1250, monto_centavos: null }, visibilidad: "estado", tarifas_dia: [] },
+    rp: { modo_pago: "reserva", regla: { tipo: "porcentaje", cuota: 0, porcentaje_bp: 1250, monto_centavos: null }, visibilidad: "estado", tarifas_dia: [{ posicion: 1, monto_centavos: 30000 }] },
     caja_permisos: [{ permiso: "reabrir_mesa", rol: "staff", permitido: true }],
   } });
   if (rO.error) throw new Error("origen: " + rO.error.message);
@@ -158,6 +158,7 @@ try {
       revisar(!fase2 || /Se copian 2 productos \(2 activos\), con existencias en 0/.test(resumen), "resumen: cuántos productos se copian, sin existencias");
       revisar(/Reservas y consumos/.test(resumen) && /Dueño, personal y cuentas/.test(resumen), "resumen: lo que NO se copia");
       revisar(/12\.5 % del consumo/.test(resumen), "resumen: la regla del origen");
+      revisar(/También se guarda\s+Tarifas por día: día 1 \$300/.test(resumen), "resumen: también se guardan las tarifas por día del origen (paga por reserva)");
       await foto("resumen");
       await verificar("clon, resumen");
       await p.getByRole("button", { name: "Dar de alta en borrador" }).click();

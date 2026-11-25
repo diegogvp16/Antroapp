@@ -52,6 +52,14 @@ export function PasoResumen({
     : rp.data.modo_pago === "reserva" && rp.data.regla
       ? `Por reserva: ${describirRegla(rp.data.regla)}`
       : `Por día: ${rp.data.tarifas_dia.map((c, i) => `día ${i + 1} ${pesos(c)}`).join(", ")}`;
+  // Lo del otro modo que también se guarda (completo): clon o un cambio de modo a medias.
+  const tambien = !rp.success
+    ? null
+    : rp.data.modo_pago === "dia" && rp.data.regla
+      ? `Regla por reserva: ${describirRegla(rp.data.regla)}`
+      : rp.data.modo_pago === "reserva" && rp.data.tarifas_dia.length > 0
+        ? `Tarifas por día: ${rp.data.tarifas_dia.map((c, i) => `día ${i + 1} ${pesos(c)}`).join(", ")}`
+        : null;
   const visibilidad = OPCIONES_VISIBILIDAD.find((o) => o.valor === b.rp.visibilidad)?.titulo ?? "—";
   const cambiosCaja = e.caja_permisos ?? [];
   const tituloPermiso = (permiso: string) => PERMISOS_CAJA_ALTA.find((x) => x.permiso === permiso)?.titulo ?? permiso;
@@ -125,6 +133,12 @@ export function PasoResumen({
       </Seccion>
       <Seccion titulo="Reglas de comisión y RPs" onEditar={() => onIrA(PASO.reglas)}>
         <Fila etiqueta="Pago a RPs">{pago}</Fila>
+        {tambien && (
+          <Fila etiqueta="También se guarda">
+            {tambien}
+            <span className="block text-xs text-muted-foreground">No se usa hoy: queda lista por si el antro cambia de modo de pago.</span>
+          </Fila>
+        )}
         <Fila etiqueta="Qué ven los RPs">{visibilidad}</Fila>
         <Fila etiqueta="Permisos de caja">
           {cambiosCaja.length === 0
@@ -143,6 +157,13 @@ export function PasoResumen({
       <Seccion titulo="Grupo" onEditar={() => onIrA(PASO.grupo)}>
         <Fila etiqueta="Grupo">{grupoTexto}</Fila>
         {duenoGrupo && <Fila etiqueta="Dueño del grupo">{duenoGrupo}</Fila>}
+        {b.grupo.modo === "existente" && (
+          <Fila etiqueta="Configuración">
+            {b.grupo.config === "grupo"
+              ? "La del grupo: reemplaza lo de los pasos anteriores en lo que el grupo define"
+              : "La de este alta (menos lo que el grupo bloqueó)"}
+          </Fila>
+        )}
       </Seccion>
 
       <fieldset className="flex flex-col gap-2">

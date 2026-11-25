@@ -1,6 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
+import { createClient } from "@/lib/supabase/client";
+import { describirRegla } from "@/lib/domain/config-rp";
+import { CLAVES_CONFIG, TITULO_CLAVE, describirValor, type ClaveConfig } from "@/lib/domain/config-grupo";
 import { Campo, SELECT_CLASES } from "./campo";
 import type { Borrador } from "./estado";
 
@@ -79,6 +83,10 @@ export function PasoGrupo({
         </Campo>
       )}
 
+      {grupo.modo === "existente" && grupo.grupo_id && (
+        <ConfigDelGrupo grupoId={grupo.grupo_id} config={grupo.config} onConfig={(c) => set("config", c)} />
+      )}
+
       {grupo.modo !== "ninguno" && (
         <>
           <Campo id="grupo-dueno" etiqueta="Dueño del grupo" error={errores["grupo.dueno_grupo"]} ayuda="Ve las cifras de todos los antros del grupo en /grupo.">
@@ -103,5 +111,69 @@ export function PasoGrupo({
         </>
       )}
     </div>
+  );
+}
+
+// Grupo existente: qué define el grupo y si el antro lo sigue
+// (sql/post-junta-2/12-config-grupo.sql; la base lo aplica en el alta).
+type ValoresGrupo = Partial<Record<ClaveConfig, { valor: unknown; bloqueado: boolean }>>;
+const descr = (r: Parameters<typeof describirRegla>[0]) => describirRegla(r);
+
+function ConfigDelGrupo({ grupoId, config, onConfig }: { grupoId: string; config: Grupo["config"]; onConfig: (c: Grupo["config"]) => void }) {
+  const [claves, setClaves] = useState<ValoresGrupo | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let vigente = true;
+    setClaves(null);
+    setError(false);
+    createClient()
+      .rpc("grupo_config_actual", { p_grupo: grupoId })
+      .then(({ data, error: e }) => {
+        if (!vigente) return;
+        if (e) setError(true);
+        else setClaves(((data as { claves?: ValoresGrupo } | null)?.claves ?? {}) as ValoresGrupo);
+      });
+    return () => {
+      vigente = false;
+    };
+  }, [grupoId]);
+
+  if (error) return <p className="text-xs text-muted-foreground">No se pudo leer la configuración del grupo. Si el grupo define valores, la base los aplica igual al antro nuevo.</p>;
+  if (!claves) return <p className="text-sm text-muted-foreground">Leyendo la configuración del grupo…</p>;
+  const definidas = CLAVES_CONFIG.filter((k) => claves[k]);
+  if (definidas.length === 0) {
+    return <p className="text-xs text-muted-foreground">El grupo todavía no define valores por defecto: el antro nace con lo de este alta y seguirá al grupo en lo que defina después.</p>;
+  }
+  const bloqueadas = definidas.filter((k) => claves[k]?.bloqueado);
+  return (
+    <fieldset className="flex flex-col gap-2 rounded-lg border border-border p-3">
+      <legend className="px-1 text-sm font-semibold">Configuración del grupo</legend>
+      <ul className="flex flex-col gap-1 text-sm">
+        {definidas.map((k) => (
+          <li key={k} className="break-words">
+            <span className="font-medium">{TITULO_CLAVE[k]}:</span> {describirValor(k, claves[k]?.valor, descr)}
+            {claves[k]?.bloqueado && <span className="text-xs text-muted-foreground"> (bloqueado)</span>}
+          </li>
+        ))}
+      </ul>
+      {(
+        [
+          { valor: "grupo", etiqueta: "Usar la del grupo (recomendado)", ayuda: "Reemplaza lo de los pasos anteriores en lo que el grupo define. El antro sigue al grupo." },
+          { valor: "alta", etiqueta: "Usar lo de este alta", ayuda: "El antro se queda con lo que pusiste; los cambios del grupo no lo tocan hasta que vuelva al del grupo." },
+        ] as const
+      ).map((o) => (
+        <label key={o.valor} className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-border p-3 has-[:checked]:border-foreground">
+          <input type="radio" name="grupo-config" className="mt-0.5 size-5" checked={config === o.valor} onChange={() => onConfig(o.valor)} />
+          <span className="flex flex-col">
+            <span className="text-sm font-medium">{o.etiqueta}</span>
+            <span className="text-xs text-muted-foreground">{o.ayuda}</span>
+          </span>
+        </label>
+      ))}
+      {config === "alta" && bloqueadas.length > 0 && (
+        <p className="text-xs text-status-warn">El grupo bloqueó {bloqueadas.map((k) => TITULO_CLAVE[k].toLowerCase()).join(", ")}: eso se aplica aunque elijas lo de este alta.</p>
+      )}
+    </fieldset>
   );
 }

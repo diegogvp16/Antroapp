@@ -51,7 +51,7 @@ function textoCambio(c: Cambio): string {
   return `Regla de comisión: ${describirRegla(c.despues as Regla)}${c.vigente_desde ? ` (desde el ${etiquetaNoche(c.vigente_desde)})` : ""}`;
 }
 
-export function ConfigRpAntro({ clubId }: { clubId: string }) {
+export function ConfigRpAntro({ clubId, onGuardado }: { clubId: string; onGuardado?: () => void }) {
   const [config, setConfig] = useState<Config | null>(null);
   const [historial, setHistorial] = useState<Cambio[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +62,7 @@ export function ConfigRpAntro({ clubId }: { clubId: string }) {
   const [cuotaTxt, setCuotaTxt] = useState("4");
   const [aviso, setAviso] = useState<string | null>(null);
   const [errorForm, setErrorForm] = useState<string | null>(null);
+  const [errorNivel, setErrorNivel] = useState<string | null>(null);
   const [guardando, setGuardando] = useState<"nivel" | "regla" | null>(null);
 
   const cargar = useCallback(async () => {
@@ -84,11 +85,14 @@ export function ConfigRpAntro({ clubId }: { clubId: string }) {
   async function guardarNivel() {
     setGuardando("nivel");
     setAviso(null);
+    setErrorNivel(null);
     const { error: e } = await createClient().rpc("config_rp_cambiar_visibilidad", { p_club: clubId, p_nivel: nivel });
     setGuardando(null);
-    if (e) return setError(mensajeParaUsuario(e, "No se pudo guardar."));
+    // El aviso va junto al botón (p. ej., si el grupo lo bloqueó), sin tapar la pantalla.
+    if (e) return setErrorNivel(mensajeParaUsuario(e, "No se pudo guardar."));
     setAviso("Listo: tus RPs ya ven sus reservas así.");
     cargar();
+    onGuardado?.();
   }
 
   async function guardarRegla() {
@@ -116,6 +120,7 @@ export function ConfigRpAntro({ clubId }: { clubId: string }) {
     const desde = (data as { vigente_desde?: string })?.vigente_desde;
     setAviso(`Regla programada: empieza el ${desde ? etiquetaNoche(desde) : "lunes"}. Esta semana sigue la regla actual.`);
     cargar();
+    onGuardado?.();
   }
 
   if (error) {
@@ -153,6 +158,11 @@ export function ConfigRpAntro({ clubId }: { clubId: string }) {
           <Button type="button" className="h-10 self-start" disabled={guardando !== null || nivel === config.nivel_visibilidad} onClick={guardarNivel}>
             {guardando === "nivel" ? "Guardando…" : "Guardar"}
           </Button>
+          {errorNivel && (
+            <p role="alert" className="text-xs font-medium break-words text-status-err">
+              {errorNivel}
+            </p>
+          )}
         </CardContent>
       </Card>
 

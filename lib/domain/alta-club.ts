@@ -194,6 +194,52 @@ export const esquemaRp = z
   });
 export type RpAlta = z.infer<typeof esquemaRp>;
 
+// Lo que el asistente tiene escrito en el paso de reglas (texto) → lo que
+// valida esquemaRp. Lo del modo ELEGIDO viaja siempre (y zod marca lo que
+// falte). Lo del OTRO modo también se guarda si está completo y es válido:
+// la regla por reserva en un antro por día y las tarifas por día en uno por
+// reserva (admin_alta_club guarda las dos cosas). Así un clon sale igual a
+// su origen y, si el antro cambia de modo después, ya tiene con qué pagar
+// (nunca las columnas viejas en $0). Si está incompleto, no viaja (no se
+// puede marcar un error en un campo que el paso no muestra).
+// conv: conversiones de texto (pesos → centavos, porcentaje → bp; null si
+// no es válido), para no depender aquí de lib/cover ni de config-rp.
+export interface TextosRp {
+  modo_pago: ModoPagoRp;
+  tipo: (typeof TIPOS_REGLA)[number];
+  monto_texto: string;
+  porcentaje_texto: string;
+  cuota_texto: string;
+  visibilidad: (typeof NIVELES_VISIBILIDAD)[number];
+  tarifas: string[];
+}
+export function entradaRpDeTextos(
+  r: TextosRp,
+  conv: { centavos: (texto: string) => number | null; bp: (texto: string) => number | null },
+): z.input<typeof esquemaRp> {
+  const centavos = (t: string) => (t.trim() ? (conv.centavos(t.trim()) ?? Number.NaN) : Number.NaN);
+  const regla = {
+    tipo: r.tipo,
+    cuota: r.tipo === "cuota" ? (r.cuota_texto.trim() ? Number(r.cuota_texto) : Number.NaN) : 0,
+    porcentaje_bp: r.tipo === "porcentaje" ? conv.bp(r.porcentaje_texto) : null,
+    monto_centavos: r.tipo === "porcentaje" ? null : r.monto_texto.trim() ? centavos(r.monto_texto) : null,
+  };
+  // Para el modo que no se eligió: sin las casillas vacías del final y solo
+  // si todas las demás son válidas.
+  const llenas = [...r.tarifas];
+  while (llenas.length && !llenas[llenas.length - 1].trim()) llenas.pop();
+  const tarifasExtra = llenas.map(centavos);
+  const extraValidas =
+    tarifasExtra.length <= MAX_TARIFAS_DIA &&
+    tarifasExtra.every((c) => Number.isInteger(c) && c >= 0 && c <= MONTO_MAXIMO_CENTAVOS);
+  return {
+    modo_pago: r.modo_pago,
+    regla: r.modo_pago === "reserva" ? regla : esquemaReglaComision.safeParse(regla).success ? regla : null,
+    visibilidad: r.visibilidad,
+    tarifas_dia: r.modo_pago === "dia" ? r.tarifas.map(centavos) : extraValidas ? tarifasExtra : [],
+  };
+}
+
 // Permisos de caja por rol. Los valores por defecto son los de la plataforma
 // (caja_tiene_permiso): el gerente puede todo; el staff recibe en la puerta,
 // abre mesas, registra consumo, cobra y cierra. En el alta solo se guardan
@@ -276,6 +322,9 @@ export const esquemaGrupo = z.discriminatedUnion("modo", [
     grupo_id: z.uuid("Elige el grupo."),
     dueno_grupo: z.enum(["ninguno", "dueno_antro", "cuenta_nueva"]),
     cuenta: esquemaCuenta.nullable(),
+    // B3: «grupo» = sigue la configuración del grupo (la base la aplica en
+    // la misma transacción); «alta» = se queda con lo de este alta.
+    config: z.enum(["grupo", "alta"]).optional().default("grupo"),
   }),
 ]);
 export type Grupo = z.infer<typeof esquemaGrupo>;
@@ -373,6 +422,9 @@ export function payloadSql(a: AltaClub, ids: ReadonlyMap<string, string>, altaId
             grupo_id: a.grupo.modo === "existente" ? a.grupo.grupo_id : undefined,
             dueno_antro_es_dueno_grupo: a.grupo.dueno_grupo === "dueno_antro",
           },
+    // sql/post-junta-2/12-config-grupo.sql: «heredar» aplica los valores del
+    // grupo al antro nuevo; «propio» deja los del alta. Sin el 12, se ignora.
+    grupo_config: a.grupo.modo === "existente" && a.grupo.config === "alta" ? "propio" : "heredar",
   };
 }
 
@@ -578,21 +630,29 @@ export function precargaDesdePlantilla(p: PlantillaClub): PrecargaClon {
     if (r.porcentaje_bp != null && r.porcentaje_bp > 0) porcentaje_texto = bpATexto(r.porcentaje_bp);
     if (r.tipo === "cuota" && r.cuota != null && r.cuota > 0) cuota_texto = String(r.cuota);
   }
+  const reglaCompleta = esquemaReglaComision.safeParse({
+    tipo,
+    cuota: tipo === "cuota" ? Number(cuota_texto) : 0,
+    porcentaje_bp: tipo === "porcentaje" ? (r?.porcentaje_bp ?? null) : null,
+    monto_centavos: tipo === "porcentaje" ? null : (r?.monto_centavos ?? null),
+  }).success;
   if (modo_pago === "reserva") {
     if (!r || r.origen === "anterior") {
       avisos.push(
         "El origen todavía calcula la comisión con la regla anterior (sin regla nueva): revisa la regla del paso «Reglas de comisión y RPs».",
       );
     }
-    const regla = esquemaReglaComision.safeParse({
-      tipo,
-      cuota: tipo === "cuota" ? Number(cuota_texto) : 0,
-      porcentaje_bp: tipo === "porcentaje" ? (r?.porcentaje_bp ?? null) : null,
-      monto_centavos: tipo === "porcentaje" ? null : (r?.monto_centavos ?? null),
-    });
-    if (!regla.success) avisos.push("La regla del origen no está completa (por ejemplo, $0): escríbela antes de seguir.");
-  } else if (r?.origen === "regla") {
-    avisos.push("El origen paga por día: su regla por reserva no se guarda en el antro nuevo (igual que en un alta por día).");
+    if (!reglaCompleta) avisos.push("La regla del origen no está completa (por ejemplo, $0): escríbela antes de seguir.");
+  } else if (r?.origen === "regla" && reglaCompleta) {
+    // Se copia igual que en el origen (entradaRpDeTextos la manda aunque el
+    // modo sea por día): si el antro nuevo pasa a «por reserva», ya la tiene.
+    avisos.push("El origen paga por día y además tiene regla por reserva: se copia igual, guardada por si el antro nuevo pasa a pagar por reserva.");
+  } else {
+    // Sin regla nueva en el origen (o incompleta): no se inventa una con las
+    // columnas viejas; el paso queda vacío y no viaja.
+    monto_texto = "";
+    porcentaje_texto = "";
+    if (r?.origen === "regla") avisos.push("El origen paga por día y su regla por reserva no está completa: no se copia.");
   }
   if (p.regla_programada_desde) {
     avisos.push(`El origen tiene una regla programada desde el ${p.regla_programada_desde}: no se copia; se copia la que vale hoy.`);
@@ -605,7 +665,9 @@ export function precargaDesdePlantilla(p: PlantillaClub): PrecargaClon {
     .map((t) => centavosATexto(t.monto_centavos));
   if (modo_pago === "reserva" && tarifas.length > 0) {
     avisos.push(
-      `El origen paga por reserva: sus ${tarifas.length} tarifas por día quedan precargadas, pero solo se guardan si eliges «Por día trabajado».`,
+      tarifas.length === 1
+        ? "El origen paga por reserva y además tiene 1 tarifa por día: se copia igual, guardada por si el antro nuevo pasa a pagar por día."
+        : `El origen paga por reserva y además tiene ${tarifas.length} tarifas por día: se copian igual, guardadas por si el antro nuevo pasa a pagar por día.`,
     );
   }
 

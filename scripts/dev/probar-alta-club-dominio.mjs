@@ -15,8 +15,10 @@ import {
   matrizPorDefecto,
   permisoPorDefecto,
   PERMISOS_CAJA_ALTA,
+  entradaRpDeTextos,
+  esquemaRp,
 } from "../../lib/domain/alta-club.ts";
-import { validarRegla } from "../../lib/domain/config-rp.ts";
+import { validarRegla, porcentajeABp } from "../../lib/domain/config-rp.ts";
 
 let pasan = 0, fallan = 0;
 function revisar(cond, texto) {
@@ -260,6 +262,45 @@ const mensajes = (r) => (r.success ? {} : erroresPorCampo(r.error));
   x.caja_permisos = [{ permiso: "cobrar", rol: "staff", permitido: "si" }];
   revisar(!valida(x).success, "«permitido» tiene que ser sí o no");
   revisar(permisoPorDefecto("staff", "cuadrar_mesa") === false && permisoPorDefecto("gerente", "cuadrar_mesa") === true, "cuadrar: el staff no, el gerente sí");
+}
+
+// ---------- Configuración del grupo en el alta (B3, sql/post-junta-2/12) ----------
+{
+  const GID = "0de70000-0000-4000-8000-0000000000aa";
+  const idsDe = (a) => new Map(cuentasNuevas(a).map((c, i) => [c.correo, `0de70000-0000-4000-8000-00000000010${i}`]));
+  const conGrupo = (extra) => ({ ...base(), grupo: { modo: "existente", grupo_id: GID, dueno_grupo: "ninguno", cuenta: null, ...extra } });
+  const porDefecto = esquemaAltaClub.parse(conGrupo({}));
+  revisar(porDefecto.grupo.config === "grupo" && payloadSql(porDefecto, idsDe(porDefecto), GID).grupo_config === "heredar", "grupo existente: por defecto sigue la configuración del grupo («heredar»)");
+  const propia = esquemaAltaClub.parse(conGrupo({ config: "alta" }));
+  revisar(payloadSql(propia, idsDe(propia), GID).grupo_config === "propio", "«usar lo de este alta» manda «propio»");
+  revisar(!valida(conGrupo({ config: "otra" })).success, "otro valor de config se rechaza");
+  revisar(payloadSql(esquemaAltaClub.parse(base()), idsDe(esquemaAltaClub.parse(base())), GID).grupo_config === "heredar", "sin grupo: «heredar» (la base no hace nada)");
+}
+
+// ---------- Texto del paso de reglas → entrada (aEntradaRp del asistente) ----------
+// Lo del otro modo viaja si está completo: un clon guarda la regla y las
+// tarifas del origen aunque solo use una (revisión del carril b-alta).
+{
+  const conv = { centavos: (t) => (/^\d+(\.\d{1,2})?$/.test(t.trim()) ? Math.round(Number(t) * 100) : null), bp: porcentajeABp };
+  const textos = (extra) => ({ modo_pago: "reserva", tipo: "fijo", monto_texto: "150", porcentaje_texto: "", cuota_texto: "4", visibilidad: "estado", tarifas: [""], ...extra });
+  const e1 = entradaRpDeTextos(textos({}), conv);
+  revisar(e1.regla?.monto_centavos === 15000 && e1.tarifas_dia.length === 0 && esquemaRp.safeParse(e1).success, "por reserva con la casilla de tarifa vacía: regla $150, sin tarifas");
+  const e2 = entradaRpDeTextos(textos({ tarifas: ["300", "450.50"] }), conv);
+  revisar(e2.tarifas_dia.join(",") === "30000,45050" && e2.regla?.monto_centavos === 15000 && esquemaRp.safeParse(e2).success, "por reserva con tarifas completas: viajan las dos cosas");
+  const e3 = entradaRpDeTextos(textos({ tarifas: ["300", "abc"] }), conv);
+  revisar(e3.tarifas_dia.length === 0 && esquemaRp.safeParse(e3).success, "por reserva con una tarifa mal escrita (campo oculto): no viajan tarifas y no se marca error");
+  const e4 = entradaRpDeTextos(textos({ tarifas: ["300", ""] }), conv);
+  revisar(e4.tarifas_dia.join(",") === "30000", "por reserva: la casilla vacía del final no cuenta");
+  const d1 = entradaRpDeTextos(textos({ modo_pago: "dia", tarifas: ["300"] }), conv);
+  revisar(d1.regla?.tipo === "fijo" && d1.regla.monto_centavos === 15000 && d1.tarifas_dia.join(",") === "30000" && esquemaRp.safeParse(d1).success, "por día con regla completa: viajan la regla y las tarifas");
+  const d2 = entradaRpDeTextos(textos({ modo_pago: "dia", monto_texto: "", tarifas: ["300"] }), conv);
+  revisar(d2.regla === null && esquemaRp.safeParse(d2).success, "por día con la regla vacía: no viaja regla (como antes)");
+  const d3 = entradaRpDeTextos(textos({ modo_pago: "dia", tipo: "porcentaje", porcentaje_texto: "12.5", tarifas: ["300"] }), conv);
+  revisar(d3.regla?.porcentaje_bp === 1250 && d3.regla.monto_centavos === null, "por día con porcentaje 12.5: viaja 1250 bp");
+  const d4 = entradaRpDeTextos(textos({ modo_pago: "dia", tarifas: [""] }), conv);
+  revisar(!esquemaRp.safeParse(d4).success, "por día sin tarifas: zod lo marca (como antes)");
+  const r5 = entradaRpDeTextos(textos({ monto_texto: "" }), conv);
+  revisar(!esquemaRp.safeParse(r5).success, "por reserva sin monto: zod lo marca (como antes)");
 }
 
 console.log(`\n${pasan} pasan, ${fallan} fallan`);
