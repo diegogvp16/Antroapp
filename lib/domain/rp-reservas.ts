@@ -17,7 +17,9 @@ export interface ReservaRpDetalle {
   estado: EstadoReservaRp;
   mesa: string | null;
   consumo_centavos: number | null;
-  renglones: { concepto: string | null; monto_centavos: number }[] | null;
+  // Solo con «estado, monto y botellas» y el catálogo de la fase 2 en la
+  // base: un renglón por producto (agrupado), sin los conceptos libres.
+  renglones: RenglonRp[] | null;
   creada_en: string;
   llego_en: string | null;
   sentado_en: string | null;
@@ -26,6 +28,49 @@ export interface ReservaRpDetalle {
   comision_centavos: number | null;
   comision_estado: string | null;
   nivel: NivelVisibilidadRp;
+  // Con botellas: lo que se capturó sin catálogo (concepto libre). Nulo en
+  // los otros niveles o si la base todavía no lo manda.
+  otros_centavos?: number | null;
+}
+
+// Renglón de consumo que manda rp_mis_reservas. La versión de
+// sql/post-junta-2/41 trae producto, categoría y cantidad; la anterior solo
+// concepto y monto (por eso todo es opcional menos el monto).
+export interface RenglonRp {
+  concepto?: string | null;
+  producto?: string | null;
+  categoria?: string | null;
+  cantidad?: number | null;
+  monto_centavos: number;
+}
+
+export interface BotellaRp {
+  producto: string;
+  categoria: string | null;
+  cantidad: number;
+  monto_centavos: number;
+}
+
+// Qué botellas se le muestran al RP. Solo con la fase 2 encendida
+// (NEXT_PUBLIC_FASE2) y el nivel «estado, monto y botellas»; si no, nulo y
+// la pantalla se ve igual que con «estado y monto». La base ya decide qué
+// manda; esto evita además mostrar renglones con la bandera apagada.
+export function botellasParaRp(
+  r: Pick<ReservaRpDetalle, "nivel" | "renglones" | "otros_centavos">,
+  fase2Activa: boolean,
+): { items: BotellaRp[]; otros: number } | null {
+  if (!fase2Activa || r.nivel !== "estado_monto_botellas" || !Array.isArray(r.renglones)) return null;
+  const items: BotellaRp[] = [];
+  for (const x of r.renglones) {
+    const monto = Number(x?.monto_centavos);
+    if (!Number.isFinite(monto)) continue;
+    const producto = String(x.producto ?? x.concepto ?? "").trim() || "Consumo";
+    const cantidad = Number.isInteger(x.cantidad) && Number(x.cantidad) >= 1 ? Number(x.cantidad) : 1;
+    items.push({ producto, categoria: x.categoria ?? null, cantidad, monto_centavos: monto });
+  }
+  const otros = Number(r.otros_centavos ?? 0);
+  if (items.length === 0 && !(otros > 0)) return null;
+  return { items, otros: otros > 0 ? otros : 0 };
 }
 
 export const ESTADOS_RP: readonly EstadoReservaRp[] = ["consumio", "llego_sin_consumo", "no_llego", "por_llegar"];

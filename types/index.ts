@@ -45,6 +45,12 @@ export interface Club {
   // nada. cover_monto va en pesos y solo tiene valor en modo "monto".
   cover_modo: CoverModo;
   cover_monto: number | null;
+  // Hora límite de llegada (hora local del antro, "HH:MM:SS"); nula = sin
+  // límite. Antes de las 08:00 es de la madrugada siguiente.
+  tolerancia_hora?: string | null;
+  // Zona horaria IANA del antro ("America/Tijuana"); define el corte de la
+  // noche (08:00 locales). Nula en filas viejas: se usa la de CDMX.
+  zona_horaria?: string | null;
   dueno_id: string | null;
   suscripcion_activa: boolean;
   suscripcion_activada_en: string | null;

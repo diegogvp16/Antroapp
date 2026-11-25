@@ -2,11 +2,13 @@
 
 import { ArrowLeft, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatearCentavos, horaCorta, leerRenglon } from "@/lib/domain/caja";
+import { formatearCentavos, horaCorta } from "@/lib/domain/caja";
 import { etiquetaNoche } from "@/lib/fechas";
+import { FASE2_ACTIVA } from "@/lib/fase2";
 import {
   ESTADO_COMISION_LABEL,
   ESTADO_RP,
+  botellasParaRp,
   enlaceWhatsApp,
   lineaDeTiempo,
   type ReservaRpDetalle,
@@ -29,6 +31,8 @@ export function DetalleReservaRp({
     `Hola ${r.cliente_nombre.split(" ")[0]}, soy tu RP de ${clubNombre ?? "el antro"}. `,
   );
   const pasos = lineaDeTiempo(r);
+  // Solo con la fase 2 (catálogo) y el nivel «estado, monto y botellas».
+  const botellas = botellasParaRp(r, FASE2_ACTIVA);
   return (
     <div className="flex min-h-[calc(100dvh-7rem)] flex-col">
       <div className="flex items-center gap-2">
@@ -75,19 +79,27 @@ export function DetalleReservaRp({
         </ol>
       </section>
 
-      {r.renglones && r.renglones.length > 0 && (
+      {botellas && (
         <section className="mt-2">
-          <h3 className="mb-1 text-sm font-medium">Consumo</h3>
+          <h3 className="mb-1 text-sm font-medium">Botellas y productos</h3>
           <ul className="divide-y divide-caja-borde rounded-lg border border-caja-borde bg-caja-superficie text-sm">
-            {r.renglones.map((x, i) => {
-              const ren = leerRenglon(x.concepto, x.monto_centavos);
-              return (
-                <li key={i} className="flex justify-between gap-2 px-3 py-2">
-                  <span className="truncate">{ren.cantidad} × {ren.producto}</span>
-                  <span className="tabular-nums">{formatearCentavos(ren.total)}</span>
-                </li>
-              );
-            })}
+            {botellas.items.map((x, i) => (
+              <li key={`${x.producto}-${i}`} className="flex min-h-10 items-center justify-between gap-2 px-3 py-2">
+                <span className="min-w-0">
+                  <span className="block truncate">
+                    {x.cantidad} × {x.producto}
+                  </span>
+                  {x.categoria && <span className="block text-xs text-caja-secundario">{x.categoria}</span>}
+                </span>
+                <span className="shrink-0 tabular-nums">{formatearCentavos(x.monto_centavos)}</span>
+              </li>
+            ))}
+            {botellas.otros > 0 && (
+              <li className="flex min-h-10 items-center justify-between gap-2 px-3 py-2 text-caja-secundario">
+                <span>Otros consumos</span>
+                <span className="shrink-0 tabular-nums">{formatearCentavos(botellas.otros)}</span>
+              </li>
+            )}
           </ul>
         </section>
       )}

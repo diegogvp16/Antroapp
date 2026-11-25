@@ -5,8 +5,10 @@ import { createClient } from "@/lib/supabase/client";
 import { mensajeParaUsuario } from "@/lib/errores-base";
 import { parsearPesosACentavos } from "@/lib/cover";
 import { etiquetaNoche } from "@/lib/fechas";
+import { FASE2_ACTIVA } from "@/lib/fase2";
 import {
   OPCIONES_VISIBILIDAD,
+  avisoVisibilidad,
   describirRegla,
   porcentajeABp,
   validarRegla,
@@ -127,6 +129,11 @@ export function ConfigRpAntro({ clubId }: { clubId: string }) {
   }
   if (!config) return <p className="text-sm text-muted-foreground">Cargando…</p>;
 
+  // Con lo que está eligiendo (antes de guardar): la regla de esta semana o la programada.
+  const avisoNivel =
+    avisoVisibilidad(nivel, config.vigente, FASE2_ACTIVA) ??
+    (config.programada ? avisoVisibilidad(nivel, config.programada, FASE2_ACTIVA) : null);
+
   return (
     <div className="flex flex-col gap-4">
       {aviso && (
@@ -150,6 +157,11 @@ export function ConfigRpAntro({ clubId }: { clubId: string }) {
               </label>
             ))}
           </fieldset>
+          {avisoNivel && (
+            <p role="note" className="rounded-lg border border-status-warn/40 bg-status-warn/10 p-3 text-xs">
+              {avisoNivel}
+            </p>
+          )}
           <Button type="button" className="h-10 self-start" disabled={guardando !== null || nivel === config.nivel_visibilidad} onClick={guardarNivel}>
             {guardando === "nivel" ? "Guardando…" : "Guardar"}
           </Button>

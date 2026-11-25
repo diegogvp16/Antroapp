@@ -30,10 +30,11 @@ import {
 import { formatearPesos } from "@/lib/dinero";
 import {
   RESUMEN_VACIO,
+  desdeMisReservas,
   rangoQueCubre,
   resumirPeriodo,
+  type FilaMisReservas,
   type GananciaRp,
-  type ReservaRp,
   type ResumenPeriodo,
 } from "@/lib/rp-rendimiento";
 import {
@@ -237,7 +238,7 @@ export default function RpPanelPage() {
         // El panel se muestra ya; el rendimiento llega después con su "Cargando…".
         setCheckingSession(false);
 
-        await fetchRendimiento(profile.id, profile.club_id, modoActual);
+        await fetchRendimiento(profile.id, modoActual);
       }
 
       setCheckingSession(false);
@@ -245,7 +246,6 @@ export default function RpPanelPage() {
 
     async function fetchRendimiento(
       rpId: string,
-      clubId: string,
       modo: "reserva" | "dia",
     ) {
       setLoadingRendimiento(true);
@@ -257,17 +257,16 @@ export default function RpPanelPage() {
         // cuenta en la semana del sábado.
         const cubre = rangoQueCubre(periodos.semana, periodos.anterior, periodos.mes);
 
-        const { data: reservasData, error: reservasError } = await supabase
-          .from("reservations")
-          .select("id, status, cliente_nombre, fecha")
-          .eq("rp_id", rpId)
-          .eq("club_id", clubId)
-          .gte("fecha", cubre.desde)
-          .lte("fecha", cubre.hasta)
-          .order("fecha", { ascending: false });
+        // El RP no lee la tabla reservations directo (así no ve montos que su
+        // antro le oculta): todo sale de rp_mis_reservas, que ya filtra por
+        // el RP que llama y por su antro.
+        const { data: misReservas, error: reservasError } = await supabase.rpc("rp_mis_reservas", {
+          p_desde: cubre.desde,
+          p_hasta: cubre.hasta,
+        });
 
         if (reservasError) throw reservasError;
-        const reservas = (reservasData ?? []) as ReservaRp[];
+        const { reservas, comisiones } = desdeMisReservas((misReservas ?? []) as FilaMisReservas[]);
 
         let ganancias: GananciaRp[] = [];
         if (modo === "dia") {
@@ -294,27 +293,8 @@ export default function RpPanelPage() {
             ),
           );
         } else {
-          const { data: comisiones, error: comisionesError } = await supabase
-            .from("commissions")
-            .select("monto, status, reservations!inner(fecha)")
-            .eq("rp_id", rpId)
-            .eq("tipo", "rp")
-            .gte("reservations.fecha", cubre.desde)
-            .lte("reservations.fecha", cubre.hasta);
-
-          if (comisionesError) throw comisionesError;
-          // SAFETY: el join !inner con reservations devuelve un solo objeto
-          // por comisión (reservation_id es una llave foránea a una fila).
-          const filas = (comisiones ?? []) as unknown as {
-            monto: number;
-            status: string;
-            reservations: { fecha: string };
-          }[];
-          ganancias = filas.map((c) => ({
-            noche: c.reservations.fecha,
-            monto: Number(c.monto),
-            status: c.status,
-          }));
+          // La comisión de cada reserva viene en la misma fila.
+          ganancias = comisiones;
         }
 
         setResumenes({

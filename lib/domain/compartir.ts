@@ -4,6 +4,7 @@
 // Funciones puras.
 
 import { enlaceWhatsApp } from "@/lib/domain/rp-reservas";
+import { lineaCoverMensaje } from "@/lib/domain/boleto";
 
 const formatoFechaLarga = new Intl.DateTimeFormat("es-MX", {
   timeZone: "UTC",
@@ -34,6 +35,7 @@ export function mensajeReserva({
   fecha,
   personas,
   enlace,
+  cover = null,
 }: {
   // "rp": el RP se lo manda a su cliente; "cliente": el cliente lo comparte.
   quien: "rp" | "cliente";
@@ -42,7 +44,13 @@ export function mensajeReserva({
   fecha: string;
   personas: number;
   enlace: string;
+  // Modo del cover (clubs.cover_modo) y su texto de textoCover (lib/cover.ts),
+  // si el antro lo muestra. El renglón depende del modo: solo con "monto"
+  // dice que lo cobra el antro. Opcional: el panel del RP no lo manda y su
+  // mensaje queda igual que antes.
+  cover?: { modo: string | null | undefined; texto: string | null } | null;
 }): string {
+  const lineaCover = cover ? lineaCoverMensaje(cover.modo, cover.texto) : null;
   const nombre = cliente.trim().split(/\s+/)[0] || cliente.trim();
   const inicio =
     quien === "rp" ? `Hola ${nombre}, ya quedó tu reserva en ${antro}:` : `Reserva en ${antro} a nombre de ${cliente.trim()}:`;
@@ -53,6 +61,7 @@ export function mensajeReserva({
     "Código QR para la puerta:",
     enlace,
     "",
+    ...(lineaCover ? [lineaCover, ""] : []),
     AVISO_QR,
   ].join("\n");
 }

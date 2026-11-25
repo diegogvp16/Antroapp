@@ -16,6 +16,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { Club, ClubPhoto } from "@/types";
+import { avisoCover, horaLegible } from "@/lib/domain/boleto";
+import { AvisoBoletoGuardado } from "@/components/boleto/aviso-boleto-guardado";
 
 // Solo devuelve los detalles que el dueño sí llenó: los vacíos no se muestran.
 function getDetalles(club: Club) {
@@ -186,7 +188,9 @@ export default function ClubDetailPage() {
                 <dd className="font-medium">{club.horario}</dd>
               </div>
               {/* La app no cobra nada: apartar es gratis. El cover, si el
-                  antro lo informa, lo cobra el antro en la puerta. */}
+                  antro lo informa, lo cobra el antro en la puerta; la
+                  frase de abajo depende del modo (monto, libre o
+                  consultar). */}
               <div className="flex flex-col gap-1">
                 <dt className="text-noche-muted">Apartar lugar</dt>
                 <dd className="text-lg font-semibold text-noche-accent">
@@ -194,9 +198,18 @@ export default function ClubDetailPage() {
                 </dd>
               </div>
               {textoCover(club) && (
-                <div className="col-span-2 flex flex-col gap-1">
+                <div className="col-span-2 flex flex-col gap-1" data-prueba="cover-ficha">
                   <dt className="text-noche-muted">En la puerta</dt>
                   <dd className="font-medium">{textoCover(club)}</dd>
+                  {avisoCover(club.cover_modo) && (
+                    <dd className="text-xs leading-relaxed text-noche-muted">{avisoCover(club.cover_modo)}</dd>
+                  )}
+                </div>
+              )}
+              {horaLegible(club.tolerancia_hora) && (
+                <div className="col-span-2 flex flex-col gap-1">
+                  <dt className="text-noche-muted">Llega antes de</dt>
+                  <dd className="font-medium">{horaLegible(club.tolerancia_hora)}</dd>
                 </div>
               )}
             </dl>
@@ -218,14 +231,17 @@ export default function ClubDetailPage() {
               </section>
             )}
 
-            <Button
-              render={<Link href={`/cliente/reservar?club=${club.id}`} />}
-              nativeButton={false}
-              size="lg"
-              className="mt-auto h-14 w-full text-base font-semibold"
-            >
-              Reservar
-            </Button>
+            <div className="mt-auto flex flex-col gap-3">
+              <AvisoBoletoGuardado clubId={club.id} />
+              <Button
+                render={<Link href={`/cliente/reservar?club=${club.id}`} />}
+                nativeButton={false}
+                size="lg"
+                className="h-14 w-full text-base font-semibold"
+              >
+                Reservar
+              </Button>
+            </div>
           </div>
         </div>
       )}

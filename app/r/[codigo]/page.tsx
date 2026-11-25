@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { QRCodeSVG } from "qrcode.react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { BackLink } from "@/components/back-link";
@@ -14,13 +13,25 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { Reservation } from "@/types";
-import { AVISO_QR, fechaLarga } from "@/lib/domain/compartir";
+import type { CoverModo, Reservation } from "@/types";
+import { enlaceCompartir, fechaLarga, mensajeReserva } from "@/lib/domain/compartir";
+import {
+  TEXTO_ESTADO,
+  esEstadoBoleto,
+  estadoBoletoRespaldo,
+  type EstadoBoleto,
+} from "@/lib/domain/boleto";
+import { textoCover } from "@/lib/cover";
+import { ZONA_MAS_TARDIA_MEXICO, nocheOperativaEn } from "@/lib/fechas";
+import { esErrorDeRed } from "@/lib/errores-base";
+import { DatosBoleto, QrBoleto } from "@/components/boleto/datos-boleto";
+import { EnLaPuerta } from "@/components/boleto/en-la-puerta";
+import { CompartirBoleto } from "@/components/boleto/compartir-boleto";
 
-// Lo que devuelve la función obtener_reserva_por_qr: solo los campos que el
-// boleto necesita mostrar, con el nombre del antro ya resuelto. No es la fila
-// completa de `reservations` — deliberadamente no trae teléfono del cliente,
-// consumo, cliente_id ni rp_id.
+// Lo que devuelve obtener_reserva_por_qr (sql/post-junta-2/40-boleto-estado.sql):
+// solo lo que el boleto muestra. Deliberadamente sin teléfono, consumo ni
+// ids. Las columnas desde estado_boleto son nuevas: con la función vieja no
+// llegan, y por eso son opcionales (el estado cae al respaldo).
 interface ReservaPublica {
   cliente_nombre: string;
   fecha: string;
@@ -28,130 +39,222 @@ interface ReservaPublica {
   status: Reservation["status"];
   qr_code: string;
   club_nombre: string | null;
+  estado_boleto?: string | null;
+  club_direccion?: string | null;
+  cover_modo?: CoverModo | null;
+  cover_monto?: number | null;
+  tolerancia_hora?: string | null;
+  edad_minima?: number | null;
+  codigo_vestimenta?: string | null;
 }
+
+type Carga =
+  | { fase: "cargando" }
+  | { fase: "no_encontrada" }
+  | { fase: "error" }
+  | { fase: "lista"; reserva: ReservaPublica; estado: EstadoBoleto };
+
+const CLASE_INSIGNIA: Record<EstadoBoleto, string> = {
+  vigente: "border-noche-accent/50 bg-noche-accent/15 text-noche-accent",
+  usado: "border-border bg-noche-surface-2 text-muted-foreground",
+  vencido: "border-destructive/40 bg-destructive/10 text-destructive",
+};
 
 export default function ReservaPublicaPage() {
   const params = useParams<{ codigo: string }>();
   const codigo = decodeURIComponent(params.codigo ?? "");
 
-  const [reserva, setReserva] = useState<ReservaPublica | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [notFound, setNotFound] = useState(false);
+  const [carga, setCarga] = useState<Carga>({ fase: "cargando" });
+  const [intento, setIntento] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
     async function fetchReserva() {
-      setLoading(true);
-      setNotFound(false);
+      setCarga({ fase: "cargando" });
       try {
         const supabase = createClient();
         // Vía RPC y no lectura directa de `reservations`: la tabla está
         // cerrada para quien no tiene sesión, y esta función devuelve una
         // sola reserva, la del código exacto, sin permitir listar el resto.
-        // El nombre del antro ya viene incluido.
         const { data, error } = await supabase
           .rpc("obtener_reserva_por_qr", { p_qr: codigo })
           .maybeSingle();
 
-        if (cancelled) {
+        if (cancelled) return;
+        if (error) {
+          console.error("Error cargando boleto:", error);
+          setCarga({ fase: esErrorDeRed(error) ? "error" : "no_encontrada" });
           return;
         }
-
-        if (error || !data) {
-          setNotFound(true);
-          setReserva(null);
-        } else {
-          setReserva(data as ReservaPublica);
+        if (!data) {
+          setCarga({ fase: "no_encontrada" });
+          return;
         }
+        const reserva = data as ReservaPublica;
+        // Respaldo solo para la función vieja (sin estado_boleto), que no
+        // trae la zona del antro: se usa la zona más al oeste del país para
+        // no dar por vencido un boleto antes que la base.
+        const estado = esEstadoBoleto(reserva.estado_boleto)
+          ? reserva.estado_boleto
+          : estadoBoletoRespaldo(reserva, nocheOperativaEn(ZONA_MAS_TARDIA_MEXICO));
+        setCarga({ fase: "lista", reserva, estado });
       } catch (err) {
-        console.error("Error cargando reserva pública:", err);
-        if (!cancelled) {
-          setNotFound(true);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        console.error("Error cargando boleto:", err);
+        if (!cancelled) setCarga({ fase: "error" });
       }
     }
 
     if (codigo) {
       fetchReserva();
     } else {
-      setLoading(false);
-      setNotFound(true);
+      setCarga({ fase: "no_encontrada" });
     }
 
     return () => {
       cancelled = true;
     };
-  }, [codigo]);
+  }, [codigo, intento]);
 
   return (
     <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-16">
       <BackLink href="/" label="Volver al inicio" />
       <Card className="w-full max-w-sm">
-        {loading ? (
-          <CardContent className="px-6 py-10 text-center text-muted-foreground">
-            Cargando reserva...
+        {carga.fase === "cargando" ? (
+          <CardContent className="px-6 py-10 text-center text-muted-foreground" role="status">
+            Cargando boleto...
           </CardContent>
-        ) : notFound || !reserva ? (
-          <CardHeader>
-            <CardTitle>Reserva no encontrada</CardTitle>
-            <CardDescription>
-              Este código no corresponde a ninguna reserva activa.
-            </CardDescription>
-          </CardHeader>
-        ) : (
+        ) : carga.fase === "error" ? (
           <>
             <CardHeader>
-              <CardTitle>
-                Tu reserva en {reserva.club_nombre ?? "el antro"}
-              </CardTitle>
+              <CardTitle>No pudimos cargar tu boleto</CardTitle>
               <CardDescription>
-                Muestra este código al llegar al antro.
+                Revisa la señal e intenta de nuevo. Tu código sigue siendo el
+                mismo: este enlace te lleva al boleto cuando vuelva la señal.
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-col items-center gap-6 px-6 pb-6">
-              <div className="rounded-md bg-white p-4 shadow-[0_0_0_6px_rgb(242_239_233/0.08)]">
-                <QRCodeSVG value={reserva.qr_code} size={220} />
-              </div>
-              <div className="w-full space-y-1.5 border-t border-dashed border-border pt-5 text-sm">
-                <p>
-                  <span className="text-muted-foreground">Nombre:</span>{" "}
-                  {reserva.cliente_nombre}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Fecha:</span>{" "}
-                  {fechaLarga(reserva.fecha)}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Personas:</span>{" "}
-                  {reserva.personas}
-                </p>
-              </div>
-
-              <p className="w-full text-xs leading-relaxed text-muted-foreground">{AVISO_QR}</p>
-
-              <div className="w-full border-t border-border pt-6 text-center">
-                <p className="text-sm text-muted-foreground">
-                  ¿No conoces un RP? Explora los antros disponibles en
-                  AntroApp
-                </p>
-                <Button
-                  render={<Link href="/cliente" />}
-                  nativeButton={false}
-                  variant="outline"
-                  className="mt-3 h-11 w-full"
-                >
-                  Ver antros disponibles
-                </Button>
-              </div>
+            <CardContent className="px-6 pb-6">
+              <Button
+                type="button"
+                size="lg"
+                className="h-12 w-full text-base"
+                onClick={() => setIntento((n) => n + 1)}
+              >
+                Intentar de nuevo
+              </Button>
             </CardContent>
           </>
+        ) : carga.fase === "no_encontrada" ? (
+          <>
+            <CardHeader>
+              <CardTitle>Boleto no encontrado</CardTitle>
+              <CardDescription>
+                No hay ninguna reserva con este código. Revisa que el enlace
+                esté completo, tal como te lo mandaron.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="px-6 pb-6">
+              <Button
+                render={<Link href="/cliente" />}
+                nativeButton={false}
+                variant="outline"
+                className="h-11 w-full"
+              >
+                Ver antros disponibles
+              </Button>
+            </CardContent>
+          </>
+        ) : (
+          <Boleto reserva={carga.reserva} estado={carga.estado} />
         )}
       </Card>
     </div>
+  );
+}
+
+function Boleto({ reserva, estado }: { reserva: ReservaPublica; estado: EstadoBoleto }) {
+  const textos = TEXTO_ESTADO[estado];
+  const vigente = estado === "vigente";
+  const cover =
+    reserva.cover_modo != null
+      ? textoCover({ cover_modo: reserva.cover_modo, cover_monto: reserva.cover_monto ?? null })
+      : null;
+  const enlace = typeof window === "undefined" ? "" : window.location.href.split("#")[0];
+  const antro = reserva.club_nombre ?? "el antro";
+
+  return (
+    <>
+      <CardHeader>
+        <span
+          className={`mb-2 inline-flex w-fit items-center rounded-md border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${CLASE_INSIGNIA[estado]}`}
+          data-prueba="estado-boleto"
+          data-estado={estado}
+        >
+          {textos.etiqueta}
+        </span>
+        <CardTitle>{textos.titulo}</CardTitle>
+        <CardDescription>
+          {vigente ? `En ${antro}, el ${fechaLarga(reserva.fecha)}. ${textos.detalle}` : textos.detalle}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col items-center gap-6 px-6 pb-6">
+        {/* El QR solo se muestra si todavía sirve: uno usado o vencido no
+            debe parecer válido en la puerta. */}
+        {vigente && <QrBoleto codigo={reserva.qr_code} tamano={220} />}
+
+        <DatosBoleto
+          antro={reserva.club_nombre}
+          direccion={reserva.club_direccion}
+          fecha={reserva.fecha}
+          personas={reserva.personas}
+          nombre={reserva.cliente_nombre}
+        />
+
+        {vigente && (
+          <>
+            <EnLaPuerta
+              cover={cover}
+              coverModo={reserva.cover_modo}
+              toleranciaHora={reserva.tolerancia_hora}
+              edadMinima={reserva.edad_minima}
+              codigoVestimenta={reserva.codigo_vestimenta}
+            />
+            {enlace && (
+              <CompartirBoleto
+                enlace={enlace}
+                titulo={`Mi lugar en ${antro}`}
+                mensajeWhatsApp={enlaceCompartir(
+                  mensajeReserva({
+                    quien: "cliente",
+                    antro,
+                    cliente: reserva.cliente_nombre,
+                    fecha: reserva.fecha,
+                    personas: reserva.personas,
+                    enlace,
+                    cover: { modo: reserva.cover_modo, texto: cover },
+                  }),
+                )}
+              />
+            )}
+          </>
+        )}
+
+        <div className="w-full border-t border-border pt-6 text-center">
+          <p className="text-sm text-muted-foreground">
+            {vigente
+              ? "¿No conoces un RP? Explora los antros disponibles en AntroApp"
+              : "Aparta tu próxima noche en AntroApp"}
+          </p>
+          <Button
+            render={<Link href="/cliente" />}
+            nativeButton={false}
+            variant="outline"
+            className="mt-3 h-11 w-full"
+          >
+            Ver antros disponibles
+          </Button>
+        </div>
+      </CardContent>
+    </>
   );
 }

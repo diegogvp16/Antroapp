@@ -124,6 +124,37 @@ export function nocheOperativaMexico(ahora: Date = new Date()): string {
   return hoyMexico(new Date(ahora.getTime() - CORTE_NOCHE_HORA * 3_600_000));
 }
 
+// Zona más al oeste de México (Baja California). Su noche operativa nunca va
+// adelante de la de otra zona del país: sirve para no dar por vencido antes
+// de tiempo algo cuya zona no se conoce.
+export const ZONA_MAS_TARDIA_MEXICO = "America/Tijuana";
+
+// Noche de operación en curso para la zona horaria de un antro
+// (clubs.zona_horaria), igual que la base (club_fecha_operacion y
+// obtener_reserva_por_qr): el reloj de pared de esa zona menos 8 horas.
+// Sin zona, o con una zona que el navegador no conoce, la de la Ciudad de
+// México.
+export function nocheOperativaEn(zona: string | null | undefined, ahora: Date = new Date()): string {
+  if (!zona || zona === ZONA_OPERACION) return nocheOperativaMexico(ahora);
+  try {
+    const v: Record<string, number> = {};
+    const partes = new Intl.DateTimeFormat("en-US", {
+      timeZone: zona,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(ahora);
+    for (const p of partes) if (p.type !== "literal") v[p.type] = Number(p.value);
+    const reloj = Date.UTC(v.year, v.month - 1, v.day, v.hour, v.minute) - CORTE_NOCHE_HORA * 3_600_000;
+    return new Date(reloj).toISOString().slice(0, 10);
+  } catch {
+    return nocheOperativaMexico(ahora);
+  }
+}
+
 export interface RangoNoches {
   // Fechas de calendario "YYYY-MM-DD", inclusivas, para comparar contra
   // columnas de tipo date (por ejemplo reservations.fecha).
