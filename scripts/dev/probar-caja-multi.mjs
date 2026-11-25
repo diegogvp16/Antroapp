@@ -1,6 +1,8 @@
 // Caja en condiciones reales, en el navegador: 3 sesiones a la vez en la
 // misma mesa (2 staff y 1 gerente), doble toque, sin conexión y respuestas
-// perdidas por la señal. Contra el servidor local de dev
+// perdidas por la señal. Desde B9 (cola de caja) lo capturado sin señal o
+// con la respuesta perdida se guarda en el teléfono y se manda solo; la
+// prueba completa de eso está en scripts/dev/probar-caja-sin-red.mjs. Contra el servidor local de dev
 // (node scripts/dev/servidor-dev.mjs) y antroapp-dev.
 //
 //   PLAYWRIGHT_DESDE=<carpeta con node_modules/playwright> \
@@ -50,7 +52,8 @@ function nota(texto, paso, detalle = "") {
 }
 
 async function usuario(clave, role) {
-  const email = `prueba-${clave}-${TAG}@example.com`;
+  // Prefijo t_caja_ (dev compartido: se reconoce y se borra al final).
+  const email = `t_caja_${clave.toLowerCase()}_${TAG}@example.com`;
   const u = ok(await svc.auth.admin.createUser({ email, password: PASS, email_confirm: true }), "crear " + clave);
   ok(await svc.from("profiles").upsert({ id: u.user.id, nombre: `${clave} ${TAG}`, role, club_id: clubId, activo: true }), "perfil " + clave);
   U[clave] = { id: u.user.id, email };
@@ -117,7 +120,7 @@ const errores = [];
 try {
   // ======================= Escenario =======================
   clubId = randomUUID();
-  ok(await svc.from("clubs").insert({ id: clubId, nombre: `Prueba ${TAG}`, direccion: "Calle Prueba 1", horario: "22:00-03:00", suscripcion_activa: false }), "club");
+  ok(await svc.from("clubs").insert({ id: clubId, nombre: `T caja ${TAG}`, direccion: "Calle Prueba 1", horario: "22:00-03:00", suscripcion_activa: false }), "club");
   ok(await svc.from("clubs").update({ estado_verificacion: "verificado", verificado_en: new Date().toISOString(), suscripcion_activa: true, pago_rp_modo: "reserva" }).eq("id", clubId), "publicar");
   await usuario("staffA", "staff");
   await usuario("staffB", "staff");
@@ -185,38 +188,40 @@ try {
   nota("triple toque en 'Agregar a la mesa': un solo consumo", t.consumos === 3 && t.consumo === 270000, `${t.consumos} renglones`);
 
   // ---------- 4. Respuesta perdida al agregar consumo ----------
+  // La base guarda, la respuesta se pierde: queda en la cola del teléfono,
+  // la hoja se cierra con el aviso y se reintenta solo con la misma clave.
   await abrirConsumo(B.p);
   const botonPerdido = await capturar(B.p, "Ronda sin señal", "450");
   let quitar = await perderRespuestaUnaVez(B.p, "caja_registrar_consumo");
   await botonPerdido.click();
-  const aviso = B.p.getByText(/No hubo respuesta por la señal/).first();
-  await aviso.waitFor({ timeout: 20000 });
-  t = await totales(S1);
-  nota("respuesta perdida: el consumo sí quedó en la base y la hoja sigue abierta con lo capturado",
-    t.consumos === 4 && (await B.p.getByRole("dialog", { name: "Agregar consumo" }).getByLabel("Concepto").inputValue()) === "Ronda sin señal");
-  await B.p.screenshot({ path: SHOTS + "02-respuesta-perdida-consumo.png", fullPage: true });
-  await quitar();
-  await B.p.getByRole("dialog", { name: "Agregar consumo" }).getByRole("button", { name: /Agregar a la mesa/ }).click();
   await hojaCerrada(B.p, "Agregar consumo");
+  const aviso = await B.p.getByText(/Guardado en este teléfono/).first().waitFor({ timeout: 20000 }).then(() => true, () => false);
+  await B.p.screenshot({ path: SHOTS + "02-respuesta-perdida-consumo.png", fullPage: true });
   t = await totales(S1);
-  nota("reintento tras la respuesta perdida: no se duplica", t.consumos === 4 && t.consumo === 315000, `${t.consumos} renglones, ${pesos(t.consumo)}`);
+  nota("respuesta perdida: el consumo sí quedó en la base y la hoja se cierra con 'Guardado en este teléfono'", t.consumos === 4 && aviso);
+  await B.p.getByText(/movimientos? por enviar|· por enviar/).first().waitFor({ state: "detached", timeout: 30000 }).catch(() => {});
+  await B.p.waitForTimeout(3000);
+  await quitar();
+  t = await totales(S1);
+  nota("reintento automático tras la respuesta perdida: no se duplica", t.consumos === 4 && t.consumo === 315000, `${t.consumos} renglones, ${pesos(t.consumo)}`);
 
   // ---------- 5. Sin conexión ----------
   await abrirConsumo(A.p);
   await capturar(A.p, "Capturado sin red", "100");
   await A.ctx.setOffline(true);
   await A.p.getByText("Sin conexión · reconectando…").waitFor({ timeout: 10000 }).then(() => nota("sin red: aparece 'Sin conexión · reconectando…'", true), () => nota("sin red: aparece 'Sin conexión · reconectando…'", false));
-  const botonSinRed = A.p.getByRole("dialog", { name: "Agregar consumo" }).getByRole("button", { name: "Sin conexión" });
-  nota("sin red: el botón se desactiva y dice 'Sin conexión'", await botonSinRed.isDisabled().catch(() => false));
+  const botonSinRed = A.p.getByRole("dialog", { name: "Agregar consumo" }).getByRole("button", { name: /Guardar en el teléfono/ });
+  nota("sin red: el botón dice 'Guardar en el teléfono' y sigue activo", await botonSinRed.isEnabled().catch(() => false));
   await A.p.screenshot({ path: SHOTS + "03-sin-conexion.png", fullPage: true });
-  await A.ctx.setOffline(false);
-  const botonVuelve = A.p.getByRole("dialog", { name: "Agregar consumo" }).getByRole("button", { name: /Agregar a la mesa/ });
-  await botonVuelve.waitFor({ timeout: 20000 });
-  nota("al volver la red, lo capturado sigue ahí", (await A.p.getByRole("dialog", { name: "Agregar consumo" }).getByLabel("Concepto").inputValue()) === "Capturado sin red");
-  await botonVuelve.click();
+  await botonSinRed.click();
   await hojaCerrada(A.p, "Agregar consumo");
   t = await totales(S1);
-  nota("…y se guarda una vez", t.consumos === 5 && t.consumo === 325000, `${t.consumos} renglones`);
+  nota("sin red: queda en el teléfono, no en la base", t.consumos === 4);
+  await A.ctx.setOffline(false);
+  for (let i = 0; i < 40 && (await totales(S1)).consumos < 5; i++) await A.p.waitForTimeout(500);
+  await A.p.waitForTimeout(3000);
+  t = await totales(S1);
+  nota("…al volver la red se manda solo y se guarda una vez", t.consumos === 5 && t.consumo === 325000, `${t.consumos} renglones`);
 
   // ---------- 6. Dos staff cobran el saldo completo a la vez ----------
   // Las tres pantallas al día antes de cobrar.
@@ -245,21 +250,17 @@ try {
   const cobroG = await abrirCobro(G.p);
   quitar = await perderRespuestaUnaVez(G.p, "caja_registrar_pago");
   await cobroG.click();
-  await G.p.getByText(/No hubo respuesta por la señal/).first().waitFor({ timeout: 20000 });
-  await quitar();
+  // Se queda en la cola del teléfono y se reintenta solo con la misma clave.
+  await hojaCerrada(G.p, "Cobrar");
+  await G.p.getByText(/Guardado en este teléfono/).first().waitFor({ timeout: 20000 }).catch(() => {});
   t = await totales(S1);
   nota("cobro con respuesta perdida: sí quedó en la base", t.pagos === 2 && t.cobrado === 333000, `${t.pagos} cobros`);
-  // Al recargar, la hoja ve que la mesa ya quedó pagada (por su propio cobro)
-  // y en vez de cobrar otra vez ofrece "Listo".
-  const hojaCobro = G.p.getByRole("dialog", { name: "Cobrar" });
-  await hojaCobro.getByText("La mesa ya quedó pagada.").waitFor({ timeout: 20000 });
-  nota("tras la respuesta perdida, la hoja dice que la mesa ya quedó pagada (no ofrece cobrar otra vez)",
-    (await hojaCobro.getByRole("button", { name: /^Cobrar $/ }).count()) === 0);
   await G.p.screenshot({ path: SHOTS + "05-cobro-respuesta-perdida.png", fullPage: true });
-  await hojaCobro.getByRole("button", { name: "Listo" }).click();
-  await hojaCerrada(G.p, "Cobrar");
+  await G.p.getByText(/· por enviar/).first().waitFor({ state: "detached", timeout: 30000 }).catch(() => {});
+  await G.p.waitForTimeout(3000);
+  await quitar();
   t = await totales(S1);
-  nota("el cobro quedó una sola vez", t.pagos === 2 && t.cobrado === 333000, `${t.pagos} cobros, ${pesos(t.cobrado)}`);
+  nota("el cobro quedó una sola vez (el reintento automático no lo duplica)", t.pagos === 2 && t.cobrado === 333000, `${t.pagos} cobros, ${pesos(t.cobrado)}`);
 
   // ---------- 8. Cuadrar con respuesta perdida ----------
   await G.p.getByRole("button", { name: /^Cuadrar mesa$/ }).click({ timeout: 20000 });
