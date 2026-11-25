@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { fechaLarga } from "@/lib/domain/compartir";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -163,7 +165,7 @@ export default function ClientePerfilPage() {
                     <CardTitle>
                       {(r.club_id && clubNombres[r.club_id]) || "Antro"}
                     </CardTitle>
-                    <CardDescription>{r.fecha}</CardDescription>
+                    <CardDescription>{fechaLarga(r.fecha)}</CardDescription>
                   </div>
                   <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
                     <Badge className={STATUS_CLASSES[r.status]}>
@@ -175,8 +177,18 @@ export default function ClientePerfilPage() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="px-6 pb-4 text-sm text-muted-foreground">
-                {r.personas} personas
+              <CardContent className="flex items-center justify-between gap-3 px-6 pb-4 text-sm text-muted-foreground">
+                <span>
+                  {r.personas} {r.personas === 1 ? "persona" : "personas"}
+                </span>
+                {r.qr_code && (
+                  <Link
+                    href={`/r/${r.qr_code}`}
+                    className="inline-flex min-h-10 items-center font-medium text-noche-accent underline-offset-4 hover:underline"
+                  >
+                    Ver boleto →
+                  </Link>
+                )}
               </CardContent>
             </Card>
           ))}

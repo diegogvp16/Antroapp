@@ -15,7 +15,7 @@ export interface Regla {
 export const OPCIONES_VISIBILIDAD: ReadonlyArray<{ valor: NivelVisibilidad; titulo: string; detalle: string }> = [
   { valor: "estado", titulo: "Solo el estado", detalle: "Si su cliente llegó, consumió o no llegó. Sin montos." },
   { valor: "estado_monto", titulo: "Estado y monto", detalle: "Además, cuánto consumió la mesa de su cliente." },
-  { valor: "estado_monto_botellas", titulo: "Estado, monto y botellas", detalle: "Además, qué se pidió (cada renglón de consumo)." },
+  { valor: "estado_monto_botellas", titulo: "Estado, monto y botellas", detalle: "Además, qué botellas y productos del catálogo pidió su cliente." },
 ];
 
 const pesos = (centavos: number) =>
@@ -24,10 +24,28 @@ const porcentaje = (bp: number) => `${(bp / 100).toLocaleString("es-MX", { maxim
 
 // "10 % del consumo" · "$150 por reserva que consume" ·
 // "Las primeras 4 de la semana no pagan; desde la 5.ª, $200 cada una".
+// Una regla «anterior» (clubs.comision_*) de porcentaje con desbloqueo llega
+// como cuota con porcentaje_bp y sin monto: se describe con el porcentaje
+// (antes salía «$0 cada una»).
 export function describirRegla(r: Regla): string {
-  if (r.tipo === "porcentaje") return `${porcentaje(r.porcentaje_bp ?? 0)} del consumo de cada reserva`;
+  const esPorcentaje = r.porcentaje_bp !== null && r.monto_centavos === null;
+  if (r.tipo === "porcentaje" && !(r.cuota > 0)) return `${porcentaje(r.porcentaje_bp ?? 0)} del consumo de cada reserva`;
   if (r.tipo === "fijo") return `${pesos(r.monto_centavos ?? 0)} por cada reserva que consume`;
-  return `Las primeras ${r.cuota} reservas de la semana no pagan; desde la ${r.cuota + 1}.ª, ${pesos(r.monto_centavos ?? 0)} cada una`;
+  const pago = esPorcentaje ? `${porcentaje(r.porcentaje_bp ?? 0)} del consumo` : pesos(r.monto_centavos ?? 0);
+  return `Las primeras ${r.cuota} reservas de la semana no pagan; desde la ${r.cuota + 1}.ª, ${pago} cada una`;
+}
+
+// Aviso junto a «Qué ven tus RPs», o nulo. Con porcentaje, la comisión (que
+// el RP sí ve) delata el consumo; y sin la fase 2 no hay botellas que
+// mostrar.
+export function avisoVisibilidad(nivel: NivelVisibilidad, vigente: Regla | null, fase2Activa: boolean): string | null {
+  if (nivel === "estado" && vigente && vigente.porcentaje_bp !== null && vigente.monto_centavos === null) {
+    return "Tu regla es un porcentaje del consumo: con su comisión, el RP puede calcular cuánto consumió su cliente.";
+  }
+  if (nivel === "estado_monto_botellas" && !fase2Activa) {
+    return "Las botellas salen del catálogo de productos, que todavía no está encendido: por ahora tus RPs lo ven igual que «Estado y monto».";
+  }
+  return null;
 }
 
 // "12.5" → 1250 puntos base (sin flotantes en la base). Nulo si no es válido.

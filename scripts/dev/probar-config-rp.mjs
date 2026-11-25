@@ -142,7 +142,10 @@ try {
   revisar(v?.estado === "consumio" && v.consumo_centavos === null && v.renglones === null, "solo estado: el RP ve que consumió, sin monto");
   ok(await B.gerente.c.rpc("config_rp_cambiar_visibilidad", { p_club: B.id, p_nivel: "estado_monto_botellas" }), "botellas");
   v = await ver();
-  revisar(Number(v?.consumo_centavos) === 123400 && v.renglones?.[0]?.concepto === "Botella Tequila", "estado, monto y botellas: ve el renglón «Botella Tequila»");
+  // Desde sql/post-junta-2/41: las botellas son solo las del catálogo (fase 2);
+  // un concepto libre («Botella Tequila») va sumado en «otros». Los renglones
+  // con producto los prueba scripts/dev/probar-rp-visibilidad.mjs.
+  revisar(Number(v?.consumo_centavos) === 123400 && Array.isArray(v.renglones) && v.renglones.length === 0 && Number(v.otros_centavos) === 123400, "estado, monto y botellas: el concepto libre «Botella Tequila» va en «otros consumos» ($1,234)");
   revisar(((await A.rp.c.rpc("rp_mis_reservas", { p_desde: hoy, p_hasta: hoy })).data ?? []).every((x) => x.nivel === "estado_monto"), "el cambio de B no afecta a los RPs de A");
 
   // ---------- Bitácora ----------

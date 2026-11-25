@@ -3,7 +3,6 @@
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { QRCodeSVG } from "qrcode.react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +22,12 @@ import {
 } from "@/components/ui/card";
 import { nocheOperativaMexico } from "@/lib/fechas";
 import { textoCover } from "@/lib/cover";
-import { enlaceCompartir, mensajeReserva } from "@/lib/domain/compartir";
+import { enlaceCompartir, fechaLarga, mensajeReserva } from "@/lib/domain/compartir";
+import { guardarBoleto } from "@/lib/boletos-guardados";
+import { EnLaPuerta } from "@/components/boleto/en-la-puerta";
+import { CompartirBoleto } from "@/components/boleto/compartir-boleto";
+import { AvisoBoletoGuardado } from "@/components/boleto/aviso-boleto-guardado";
+import { DatosBoleto, QrBoleto } from "@/components/boleto/datos-boleto";
 import type { Club } from "@/types";
 
 interface ReservaResumen {
@@ -31,6 +35,8 @@ interface ReservaResumen {
   fecha: string;
   personas: number;
   qr_code: string;
+  // Si quedó guardado en este teléfono (localStorage puede fallar).
+  guardado: boolean;
 }
 
 export default function ReservarPageWrapper() {
@@ -193,11 +199,22 @@ function ReservarPage() {
         throw insertError;
       }
 
+      // En este teléfono, para que quien reservó sin cuenta y recarga no
+      // pierda su QR (solo código, antro, fecha y personas).
+      const guardado = guardarBoleto({
+        qr: qrCode,
+        clubId: club.id,
+        clubNombre: club.nombre,
+        fecha,
+        personas,
+      });
+
       setReserva({
         cliente_nombre: nombre.trim(),
         fecha,
         personas,
         qr_code: qrCode,
+        guardado,
       });
     } catch (err) {
       console.error(err);
@@ -271,6 +288,9 @@ function ReservarPage() {
   }
 
   if (reserva) {
+    // Nace "pendiente": se dice "Lugar apartado", no "reserva confirmada".
+    const enlace = `${window.location.origin}/r/${reserva.qr_code}`;
+    const cover = textoCover(club);
     const whatsappHref = enlaceCompartir(
       mensajeReserva({
         quien: "cliente",
@@ -278,48 +298,59 @@ function ReservarPage() {
         cliente: reserva.cliente_nombre,
         fecha: reserva.fecha,
         personas: reserva.personas,
-        enlace: `${window.location.origin}/r/${reserva.qr_code}`,
+        enlace,
+        cover,
       }),
     );
 
     return (
       <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-16">
         <BackLink href={backHref} />
-        <Card className="w-full max-w-sm">
+        <Card className="w-full max-w-sm" data-prueba="confirmacion">
           <CardHeader>
-            <CardTitle>¡Reserva confirmada!</CardTitle>
+            <CardTitle>Lugar apartado</CardTitle>
             <CardDescription>
-              Muestra este código al llegar al antro.
+              Para el {fechaLarga(reserva.fecha)} en {club.nombre}. Muestra este
+              código en la puerta.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-6 px-6 pb-6">
-            <div className="rounded-md bg-white p-4 shadow-[0_0_0_6px_rgb(242_239_233/0.08)]">
-              <QRCodeSVG value={reserva.qr_code} size={200} />
+            <QrBoleto codigo={reserva.qr_code} tamano={200} />
+            <DatosBoleto
+              antro={club.nombre}
+              direccion={club.direccion}
+              fecha={reserva.fecha}
+              personas={reserva.personas}
+              nombre={reserva.cliente_nombre}
+            />
+            <EnLaPuerta
+              cover={cover}
+              toleranciaHora={club.tolerancia_hora}
+              edadMinima={club.edad_minima}
+              codigoVestimenta={club.codigo_vestimenta}
+            />
+            <div className="flex w-full flex-col gap-3">
+              <Button
+                render={<Link href={`/r/${reserva.qr_code}`} />}
+                nativeButton={false}
+                size="lg"
+                className="h-14 w-full text-base font-semibold"
+              >
+                Ver mi boleto
+              </Button>
+              <CompartirBoleto
+                enlace={enlace}
+                titulo={`Mi lugar en ${club.nombre}`}
+                mensajeWhatsApp={whatsappHref}
+              />
             </div>
-            <div className="w-full space-y-1.5 border-t border-dashed border-border pt-5 text-sm">
-              <p>
-                <span className="text-muted-foreground">Nombre:</span>{" "}
-                {reserva.cliente_nombre}
-              </p>
-              <p>
-                <span className="text-muted-foreground">Fecha:</span>{" "}
-                {reserva.fecha}
-              </p>
-              <p>
-                <span className="text-muted-foreground">Personas:</span>{" "}
-                {reserva.personas}
-              </p>
-            </div>
-            <Button
-              render={
-                <a href={whatsappHref} target="_blank" rel="noopener noreferrer" />
-              }
-              nativeButton={false}
-              size="lg"
-              className="h-14 w-full text-base font-semibold"
-            >
-              Compartir por WhatsApp
-            </Button>
+            <p className="w-full text-xs leading-relaxed text-muted-foreground" data-prueba="aviso-guardado">
+              {clienteId
+                ? "También lo encuentras en Mi perfil, en tus reservas."
+                : reserva.guardado
+                  ? "Tu boleto quedó guardado en este teléfono. Si cambias de teléfono o borras los datos del navegador, solo lo recuperas con el enlace: guárdalo."
+                  : "No pudimos guardarlo en este teléfono. Guarda el enlace: sin cuenta, es la única forma de volver a ver tu QR."}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -333,11 +364,13 @@ function ReservarPage() {
         <CardHeader>
           <CardTitle>Reservar en {club.nombre}</CardTitle>
           <CardDescription>
-            Llena tus datos para tu reserva. Apartar lugar no tiene costo.
-            {textoCover(club) && ` ${textoCover(club)} en la puerta.`}
+            Llena tus datos para apartar lugar. Apartar no tiene costo.
+            {textoCover(club) &&
+              ` ${textoCover(club)} en la puerta: lo cobra el antro, la app no cobra nada.`}
           </CardDescription>
         </CardHeader>
-        <CardContent className="px-6 pb-6">
+        <CardContent className="flex flex-col gap-4 px-6 pb-6">
+          <AvisoBoletoGuardado clubId={club.id} />
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="nombre">Nombre</Label>
@@ -383,7 +416,7 @@ function ReservarPage() {
               className="mt-2 h-14 w-full text-base font-semibold"
               disabled={submitting}
             >
-              {submitting ? "Reservando..." : "Confirmar reserva"}
+              {submitting ? "Apartando..." : "Apartar lugar"}
             </Button>
 
             {!clienteId && (
@@ -391,7 +424,7 @@ function ReservarPage() {
                 ¿Ya tienes cuenta?{" "}
                 <Link
                   href="/cliente/login"
-                  className="font-medium underline underline-offset-4"
+                  className="inline-flex min-h-10 items-center font-medium underline underline-offset-4"
                 >
                   Inicia sesión para ver tu historial
                 </Link>

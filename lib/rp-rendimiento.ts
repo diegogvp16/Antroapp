@@ -80,3 +80,30 @@ export function rangoQueCubre(...rangos: RangoNoches[]): RangoNoches {
     hasta: rangos.reduce((max, r) => (r.hasta > max ? r.hasta : max), rangos[0].hasta),
   };
 }
+
+// Fila de rp_mis_reservas que usa el resumen (el RP ya no lee la tabla
+// reservations directo: sql/post-junta-2/41-rp-visibilidad.sql).
+export interface FilaMisReservas {
+  reservation_id: string;
+  cliente_nombre: string;
+  fecha: string;
+  estado: "consumio" | "llego_sin_consumo" | "no_llego" | "por_llegar";
+  comision_centavos: number | string | null;
+  comision_estado: string | null;
+}
+
+// Reservas y comisiones del RP a partir de rp_mis_reservas. «Entró» es lo
+// mismo que en la pestaña Reservas (consumió o llegó sin consumo); la
+// comisión es la de cada reserva, con su noche.
+export function desdeMisReservas(filas: FilaMisReservas[]): { reservas: ReservaRp[]; comisiones: GananciaRp[] } {
+  const reservas: ReservaRp[] = [];
+  const comisiones: GananciaRp[] = [];
+  for (const f of filas) {
+    const entro = f.estado === "consumio" || f.estado === "llego_sin_consumo";
+    reservas.push({ id: f.reservation_id, cliente_nombre: f.cliente_nombre, fecha: f.fecha, status: entro ? "usada" : "pendiente" });
+    if (f.comision_estado !== null && f.comision_centavos !== null) {
+      comisiones.push({ noche: f.fecha, monto: Number(f.comision_centavos) / 100, status: f.comision_estado });
+    }
+  }
+  return { reservas, comisiones };
+}

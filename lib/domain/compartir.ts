@@ -34,6 +34,7 @@ export function mensajeReserva({
   fecha,
   personas,
   enlace,
+  cover = null,
 }: {
   // "rp": el RP se lo manda a su cliente; "cliente": el cliente lo comparte.
   quien: "rp" | "cliente";
@@ -42,6 +43,9 @@ export function mensajeReserva({
   fecha: string;
   personas: number;
   enlace: string;
+  // Texto de textoCover (lib/cover.ts), si el antro lo muestra. Opcional: el
+  // panel del RP no lo manda y su mensaje queda igual que antes.
+  cover?: string | null;
 }): string {
   const nombre = cliente.trim().split(/\s+/)[0] || cliente.trim();
   const inicio =
@@ -53,6 +57,7 @@ export function mensajeReserva({
     "Código QR para la puerta:",
     enlace,
     "",
+    ...(cover ? [`${cover} en la puerta (lo cobra el antro; la app no cobra nada).`, ""] : []),
     AVISO_QR,
   ].join("\n");
 }
