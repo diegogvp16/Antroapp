@@ -66,6 +66,9 @@ export interface CajaConsumo {
   anulado_por: string | null;
   anulado_en: string | null;
   motivo_anulacion: string | null;
+  // Clave de idempotencia con la que se registró: la cola de caja la usa
+  // para no sumar dos veces lo que ya llegó (lib/domain/caja-cola.ts).
+  clave_cliente?: string | null;
 }
 
 export interface CajaPago {
@@ -81,6 +84,7 @@ export interface CajaPago {
   anulado_por: string | null;
   anulado_en: string | null;
   motivo_anulacion: string | null;
+  clave_cliente?: string | null;
   // Fase 2 (bandera NEXT_PUBLIC_FASE2): propina aparte del monto. Sin la
   // bandera no se lee y queda indefinida.
   propina_centavos?: number;

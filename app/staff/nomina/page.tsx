@@ -39,7 +39,7 @@ export default function StaffNominaPage() {
         .eq("id", user.id)
         .maybeSingle();
       if (perfil?.activo === false) {
-        await cerrarSesionDadoDeBaja(supabase, router);
+        await cerrarSesionDadoDeBaja(supabase, router, { colaCaja: true });
         return;
       }
       if (error || !perfil || (perfil.role !== "staff" && perfil.role !== "gerente")) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowLeft, ChevronDown, Lock, MoreHorizontal } from "lucide-react";
+import { ArrowLeft, ChevronDown, CloudUpload, Lock, MoreHorizontal } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { FASE2_ACTIVA } from "@/lib/fase2";
@@ -9,6 +9,9 @@ import { propinas } from "@/lib/domain/inventario";
 import { BotonPrincipal } from "@/components/caja/hoja";
 import { MensajeError, useAccion } from "@/components/caja/accion";
 import { HojaCobro, HojaConsumo, HojaCuadrar, HojaMotivo, HojaRecibir, type RenglonNuevo } from "@/components/caja/hojas-mesa";
+import { AvisoColaMesa } from "@/components/caja/cola-caja";
+import { textoPorEnviar, type MovimientoPendiente, type NuevoMovimiento } from "@/lib/domain/caja-cola";
+import type { ResultadoEnvio } from "@/lib/use-cola-caja";
 import {
   armarConcepto,
   formatearCentavos,
@@ -43,15 +46,30 @@ export function DetalleMesa({
   esGerente,
   nocheCerrada,
   sinConexion,
+  movimientos = [],
+  onEnviar,
+  onDescartar,
+  onEnviarAhora,
+  enviandoCola = false,
   onVolver,
   onCambio,
 }: {
+  // Con lo pendiente de enviar ya sumado (consumo, cobrado y saldo).
   m: ResumenMesa;
   datos: DatosCaja;
   permisos: PermisosCaja;
   esGerente: boolean;
   nocheCerrada: boolean;
   sinConexion: boolean;
+  // Cola de caja de esta mesa (pendientes y rechazados).
+  movimientos?: MovimientoPendiente[];
+  // Guarda en el teléfono y manda a la base (lib/use-cola-caja.ts).
+  onEnviar: (nuevos: Omit<NuevoMovimiento, "clubId">[]) => Promise<ResultadoEnvio>;
+  onDescartar: (claves: string[]) => void;
+  // Mandar ya lo que esté en la cola (sin esperar el siguiente reintento).
+  onEnviarAhora?: () => void;
+  // La cola se está mandando en este momento.
+  enviandoCola?: boolean;
   onVolver: () => void;
   onCambio: () => Promise<void>;
 }) {
@@ -60,6 +78,8 @@ export function DetalleMesa({
   const [anulacion, setAnulacion] = useState<Anulacion>(null);
   const [menu, setMenu] = useState(false);
   const [verAnulados, setVerAnulados] = useState(false);
+  // "Guardado en este teléfono…" después de capturar sin señal.
+  const [avisoCola, setAvisoCola] = useState<string | null>(null);
 
   const sesion = m.estado === "cuadrada" ? null : m.sesion; // grupo actual (abierto o por cuadrar)
   const cuadradosNoche = m.estado === "cuadrada" && m.sesion ? [...m.anteriores, m.sesion] : m.anteriores;
@@ -69,10 +89,26 @@ export function DetalleMesa({
   // Fase 2: propinas del grupo actual (aparte del cobro y del saldo).
   const propinasMesa = FASE2_ACTIVA ? propinas(pagos).total : 0;
   const anulados = consumos.filter((c) => c.anulado);
+  // Lo capturado de este grupo que todavía no llega a la base.
+  const porEnviarConsumos = sesion ? movimientos.filter((x) => x.estado === "pendiente" && x.sesionId === sesion.id && x.tipo !== "pago") : [];
+  const porEnviarPagos = sesion ? movimientos.filter((x) => x.estado === "pendiente" && x.sesionId === sesion.id && x.tipo === "pago") : [];
+  // Cerrar o cuadrar con algo de este grupo todavía en el teléfono: la base
+  // cerraría la mesa sin eso y al llegar lo rechazaría ("la mesa ya está
+  // cerrada"): un consumo que nunca se cobra o un cobro que no aparece. Por
+  // eso primero se envía y después se cierra.
+  const pendientesGrupo = porEnviarConsumos.length + porEnviarPagos.length;
+  // m trae lo pendiente sumado; esto es lo que ya está en la base, que es lo
+  // que de verdad se cierra y se cuadra.
+  const consumoEnBase = m.consumo - porEnviarConsumos.reduce((s, x) => s + x.montoCentavos, 0);
+  const cobradoEnBase = m.cobrado - porEnviarPagos.reduce((s, x) => s + x.montoCentavos, 0);
+  const avisoPrimeroEnviar = `Para cerrar o cuadrar, primero tiene${pendientesGrupo === 1 ? "" : "n"} que llegar a la base ${
+    pendientesGrupo === 1 ? "el movimiento de esta mesa que sigue" : `los ${pendientesGrupo} movimientos de esta mesa que siguen`
+  } en este teléfono.`;
   const abierta = m.estado === "abierta" && !nocheCerrada;
   const puedeRecibir = (m.estado === "libre" || m.estado === "cuadrada") && permisos.abrir_mesa && !nocheCerrada;
 
   const cerrarHoja = () => {
+    setAvisoCola(null);
     setHoja(null);
     setAnulacion(null);
     accion.limpiarError();
@@ -82,17 +118,24 @@ export function DetalleMesa({
     cerrarHoja();
   };
   const rpc = createClient();
-  // Mientras no hay conexión no se manda nada: el botón se desactiva y lo
-  // capturado se queda en la hoja.
-  const bloqueado = accion.ocupado || sinConexion;
 
-  // Llama una función de caja con su clave de idempotencia (y, al cobrar, el
-  // saldo esperado). Si la base todavía no tiene la versión con esos
-  // parámetros (PGRST202: no se ejecutó nada), repite la llamada como antes.
-  async function rpcSeguro(nombre: string, args: Record<string, unknown>, extras: Record<string, unknown>) {
-    const r = await rpc.rpc(nombre, { ...args, ...extras });
-    if (r.error?.code === "PGRST202") return rpc.rpc(nombre, args);
-    return r;
+  // Consumos y cobros pasan por la cola de caja: se guardan en el teléfono
+  // y se mandan. Si la base los guardó, se cierra la hoja como siempre; si no
+  // hay señal (o se perdió la respuesta), se cierra con el aviso y se mandan
+  // solos después; si la base los rechaza, el motivo se queda en la hoja.
+  async function terminarEnvio(res: ResultadoEnvio): Promise<boolean> {
+    if (res.estado === "aplicado") {
+      await tras();
+      return true;
+    }
+    if (res.estado === "en_cola") {
+      cerrarHoja();
+      setAvisoCola("Guardado en este teléfono. Se envía solo al volver la señal; no lo captures otra vez.");
+      return true;
+    }
+    await onCambio();
+    accion.fallar(res.motivo);
+    return false;
   }
 
   // Estado real de la sesión en la base: para que repetir "Cerrar" o
@@ -134,54 +177,63 @@ export function DetalleMesa({
 
   function agregar(renglones: RenglonNuevo[], cuentaId: string) {
     // Un cargo por renglón ("N × producto" con su total), cada uno con su
-    // clave: si se reintenta, lo que ya entró no se duplica. Se detiene en
-    // el primer error y deja ver lo que sí entró.
-    return accion.correr(async (paso) => {
-      for (const r of renglones) {
-        const res = await paso(() =>
-          r.producto_id
-            ? // Fase 2: del catálogo. Precio y concepto los pone la base y descuenta existencias.
-              rpc.rpc("caja_registrar_consumo_producto", { p_cuenta_id: cuentaId, p_producto_id: r.producto_id, p_cantidad: r.cantidad, p_clave: r.clave })
-            : rpcSeguro(
-                "caja_registrar_consumo",
-                { p_cuenta_id: cuentaId, p_monto_centavos: r.cantidad * r.unitario, p_concepto: armarConcepto(r.cantidad, r.producto) },
-                { p_clave: r.clave },
-              ),
-        );
-        if (!res.ok) {
-          await onCambio();
-          return false;
-        }
-      }
-      await tras();
-      return true;
+    // clave: si se reintenta, lo que ya entró no se duplica.
+    if (!sesion) return;
+    return accion.correr(async () => {
+      const nuevos = renglones.map((r): Omit<NuevoMovimiento, "clubId"> => ({
+        clave: r.clave,
+        mesaId: m.mesa.id,
+        sesionId: sesion.id,
+        montoCentavos: r.cantidad * r.unitario,
+        descripcion: armarConcepto(r.cantidad, r.producto),
+        ...(r.producto_id
+          ? // Fase 2: del catálogo. Precio y concepto los pone la base y descuenta existencias.
+            { tipo: "consumo_producto" as const, args: { p_cuenta_id: cuentaId, p_producto_id: r.producto_id, p_cantidad: r.cantidad } }
+          : {
+              tipo: "consumo" as const,
+              args: { p_cuenta_id: cuentaId, p_monto_centavos: r.cantidad * r.unitario, p_concepto: armarConcepto(r.cantidad, r.producto) },
+            }),
+      }));
+      return terminarEnvio(await onEnviar(nuevos));
     });
   }
 
   function cobrar(metodo: MetodoPago, centavos: number, referencia: string, clave: string, saldoVisto: number, propina: number) {
     if (!sesion) return;
-    return accion.correr(async (paso) => {
-      const r = await paso(() =>
-        rpcSeguro(
-          "caja_registrar_pago",
-          { p_sesion_id: sesion.id, p_cuenta_id: null, p_metodo: metodo, p_monto_centavos: centavos, p_referencia: referencia || null },
-          // El saldo que el staff tiene en pantalla: si otro ya cobró o
-          // agregó consumo, la base lo rechaza en lugar de sobrepagar.
-          // La propina solo se manda con la fase 2 (sin ella la base puede no tener el parámetro).
-          { p_clave: clave, p_saldo_esperado: saldoVisto, ...(FASE2_ACTIVA ? { p_propina_centavos: propina } : {}) },
-        ),
-      );
-      if (!r.ok) {
-        await onCambio();
-        return false;
-      }
-      await tras();
-      return true;
-    });
+    return accion.correr(async () =>
+      terminarEnvio(
+        await onEnviar([
+          {
+            clave,
+            mesaId: m.mesa.id,
+            sesionId: sesion.id,
+            tipo: "pago",
+            montoCentavos: centavos,
+            descripcion:
+              (metodo === "efectivo" ? "Cobro en efectivo" : metodo === "tarjeta" ? "Cobro con tarjeta" : "Cobro") +
+              (FASE2_ACTIVA && propina > 0 ? ` · propina ${formatearCentavos(propina)}` : ""),
+            args: {
+              p_sesion_id: sesion.id,
+              p_cuenta_id: null,
+              p_metodo: metodo,
+              p_monto_centavos: centavos,
+              p_referencia: referencia || null,
+              // El saldo que el staff tiene en pantalla (con lo pendiente de
+              // enviar): si otro ya cobró o agregó consumo, la base lo
+              // rechaza en lugar de sobrepagar. Nunca se reintenta con otro.
+              p_saldo_esperado: saldoVisto,
+              // La propina solo se manda con la fase 2 (sin ella la base puede no tener el parámetro).
+              ...(FASE2_ACTIVA ? { p_propina_centavos: propina } : {}),
+            },
+          },
+        ]),
+      ),
+    );
   }
 
   function cerrarMesa() {
     if (!sesion) return;
+    if (pendientesGrupo > 0) return accion.fallar(avisoPrimeroEnviar);
     return accion.correr(async (paso) => {
       const r = await paso(() => rpc.rpc("caja_cerrar_mesa", { p_sesion_id: sesion.id }));
       if (!r.ok && (await estadoEnBase(sesion.id)) !== "cerrada") {
@@ -196,6 +248,7 @@ export function DetalleMesa({
 
   function cuadrar(notas: string) {
     if (!sesion) return;
+    if (pendientesGrupo > 0) return accion.fallar(avisoPrimeroEnviar);
     return accion.correr(async (paso) => {
       // Se parte del estado real en la base, no del de la pantalla: un
       // reintento después de perder la respuesta continúa donde se quedó.
@@ -247,21 +300,23 @@ export function DetalleMesa({
   }
 
   // ---------- Botón principal según el paso ----------
-  let principal: { texto: string; accion: () => void; tono?: "dorado" | "aviso" } | null = null;
+  // sinRed: la acción se puede hacer sin señal (va a la cola de caja).
+  // cierra: cerrar o cuadrar (esperan a que se envíe lo pendiente del grupo).
+  let principal: { texto: string; accion: () => void; tono?: "dorado" | "aviso"; sinRed?: boolean; cierra?: boolean } | null = null;
   let nota: string | null = null;
   if (nocheCerrada) nota = "La noche ya está cerrada.";
   else if (puedeRecibir) principal = { texto: m.estado === "cuadrada" ? "Recibir nuevo grupo" : "Recibir grupo", accion: () => setHoja("recibir") };
   else if (m.estado === "abierta" && m.cuentas.length === 0 && permisos.abrir_mesa) principal = { texto: "Sentar cliente", accion: () => setHoja("recibir") };
   else if (m.estado === "abierta" && m.saldo > 0) {
-    if (permisos.cobrar) principal = { texto: `Cobrar ${formatearCentavos(m.saldo)}`, accion: () => setHoja("cobro") };
+    if (permisos.cobrar) principal = { texto: `Cobrar ${formatearCentavos(m.saldo)}`, accion: () => setHoja("cobro"), sinRed: true };
   } else if (m.estado === "abierta" && m.consumo === 0 && m.cobrado === 0) {
     // Grupo recién sentado: lo siguiente es consumir, no cuadrar.
-    if (permisos.registrar_consumo) principal = { texto: "Agregar consumo", accion: () => setHoja("consumo") };
+    if (permisos.registrar_consumo) principal = { texto: "Agregar consumo", accion: () => setHoja("consumo"), sinRed: true };
   } else if (m.estado === "abierta") {
-    if (permisos.cuadrar_mesa) principal = { texto: "Cuadrar mesa", accion: () => setHoja("cuadrar") };
-    else if (permisos.cerrar_mesa) principal = { texto: "Cerrar mesa", accion: () => void cerrarMesa() };
+    if (permisos.cuadrar_mesa) principal = { texto: "Cuadrar mesa", accion: () => setHoja("cuadrar"), cierra: true };
+    else if (permisos.cerrar_mesa) principal = { texto: "Cerrar mesa", accion: () => void cerrarMesa(), cierra: true };
   } else if (m.estado === "por_cuadrar") {
-    if (permisos.cuadrar_mesa) principal = { texto: "Cuadrar mesa", tono: "aviso", accion: () => setHoja("cuadrar") };
+    if (permisos.cuadrar_mesa) principal = { texto: "Cuadrar mesa", tono: "aviso", accion: () => setHoja("cuadrar"), cierra: true };
     else nota = "Pagada y cerrada. Falta que el gerente la cuadre.";
   }
 
@@ -269,7 +324,7 @@ export function DetalleMesa({
   const totalMetodo = (metodo: MetodoPago) => porMetodo(metodo).filter((p) => !p.anulado).reduce((s, p) => s + p.monto_centavos, 0);
   const acciones = [
     abierta && permisos.abrir_mesa && m.cuentas.length > 0 && { texto: "Sentar a otro cliente", hacer: () => setHoja("recibir") },
-    abierta && permisos.cerrar_mesa && m.saldo <= 0 && permisos.cuadrar_mesa && { texto: "Solo cerrar (cuadrar después)", hacer: () => void cerrarMesa() },
+    abierta && permisos.cerrar_mesa && m.saldo <= 0 && permisos.cuadrar_mesa && pendientesGrupo === 0 && { texto: "Solo cerrar (cuadrar después)", hacer: () => void cerrarMesa() },
     m.estado === "por_cuadrar" && esGerente && permisos.reabrir_mesa && !nocheCerrada && { texto: "Abrir otra vez…", hacer: () => setHoja("reabrir") },
   ].filter(Boolean) as { texto: string; hacer: () => void }[];
 
@@ -365,7 +420,7 @@ export function DetalleMesa({
                 </button>
               )}
             </div>
-            {vigentes.length === 0 ? (
+            {vigentes.length === 0 && porEnviarConsumos.length === 0 ? (
               <p className="py-2 text-sm text-caja-secundario">Sin consumo todavía.</p>
             ) : (
               <ul className="divide-y divide-caja-borde rounded-lg border border-caja-borde bg-caja-superficie">
@@ -389,6 +444,9 @@ export function DetalleMesa({
                     </li>
                   );
                 })}
+                {porEnviarConsumos.map((x) => (
+                  <FilaPorEnviar key={x.clave} texto={x.descripcion} monto={x.montoCentavos} />
+                ))}
                 <li className="flex items-center justify-between px-3 py-2 text-sm font-medium">
                   <span>Total</span>
                   <span className="tabular-nums">{formatearCentavos(m.consumo)}</span>
@@ -421,10 +479,17 @@ export function DetalleMesa({
           </section>
 
           {/* Cobros por forma de pago */}
-          {pagos.length > 0 && (
+          {(pagos.length > 0 || porEnviarPagos.length > 0) && (
             <section className="mt-4">
               <h3 className="mb-1 text-sm font-medium">Cobros</h3>
               <div className="flex flex-col gap-2">
+                {porEnviarPagos.length > 0 && (
+                  <ul className="divide-y divide-caja-borde rounded-lg border border-dashed border-caja-aviso/60 bg-caja-superficie">
+                    {porEnviarPagos.map((x) => (
+                      <FilaPorEnviar key={x.clave} texto={x.descripcion} monto={x.montoCentavos} />
+                    ))}
+                  </ul>
+                )}
                 {(["efectivo", "tarjeta", "otro"] as const)
                   .filter((mt) => porMetodo(mt).length > 0)
                   .map((mt) => (
@@ -461,12 +526,35 @@ export function DetalleMesa({
         </>
       )}
 
+      <AvisoColaMesa movimientos={movimientos} sesionActual={sesion?.id ?? null} onDescartar={onDescartar} />
+
       {/* Acción principal fija abajo */}
       <div className="sticky bottom-0 mt-auto bg-caja-fondo pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
         {hoja === null && <MensajeError mensaje={accion.error} />}
-        {principal ? (
-          <BotonPrincipal tono={principal.tono} disabled={bloqueado} onClick={principal.accion}>
-            {sinConexion ? "Sin conexión" : accion.ocupado && hoja === null ? "Guardando..." : principal.texto}
+        {/* Solo mientras siga habiendo algo por enviar en esta mesa. */}
+        {hoja === null && avisoCola && movimientos.some((x) => x.estado === "pendiente") && (
+          <p role="status" className="mb-2 flex items-start gap-2 text-sm text-caja-aviso">
+            <CloudUpload className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            {avisoCola}
+          </p>
+        )}
+        {principal?.cierra && pendientesGrupo > 0 ? (
+          <div role="status" className="flex flex-col gap-2">
+            <p className="flex items-start gap-2 text-sm text-caja-aviso">
+              <CloudUpload className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              {avisoPrimeroEnviar}
+            </p>
+            <BotonPrincipal disabled={sinConexion || enviandoCola || !onEnviarAhora} onClick={() => onEnviarAhora?.()}>
+              {sinConexion
+                ? `Sin conexión · ${textoPorEnviar(pendientesGrupo)}`
+                : enviandoCola
+                  ? `Enviando · ${textoPorEnviar(pendientesGrupo)}`
+                  : `Enviar ahora · ${textoPorEnviar(pendientesGrupo)}`}
+            </BotonPrincipal>
+          </div>
+        ) : principal ? (
+          <BotonPrincipal tono={principal.tono} disabled={accion.ocupado || (sinConexion && !principal.sinRed)} onClick={principal.accion}>
+            {sinConexion && !principal.sinRed ? "Sin conexión" : accion.ocupado && hoja === null ? "Guardando..." : principal.texto}
           </BotonPrincipal>
         ) : (
           nota && <p className="text-center text-sm text-caja-secundario">{nota}</p>
@@ -514,8 +602,9 @@ export function DetalleMesa({
         <HojaCuadrar
           abierta
           onCerrar={cerrarHoja}
-          consumo={m.consumo}
-          cobrado={m.cobrado}
+          consumo={consumoEnBase}
+          cobrado={cobradoEnBase}
+          bloqueo={pendientesGrupo > 0 ? avisoPrimeroEnviar : null}
           propinas={propinasMesa}
           cerrarAntes={m.estado === "abierta"}
           ocupado={accion.ocupado}
@@ -558,6 +647,20 @@ export function DetalleMesa({
         />
       )}
     </div>
+  );
+}
+
+// Renglón capturado que sigue en el teléfono (cola de caja).
+function FilaPorEnviar({ texto, monto }: { texto: string; monto: number }) {
+  return (
+    <li className="flex min-h-11 items-center justify-between gap-3 px-3 py-2 text-sm">
+      <span className="flex min-w-0 items-center gap-1.5">
+        <CloudUpload className="size-3.5 shrink-0 text-caja-aviso" aria-hidden="true" />
+        <span className="truncate">{texto}</span>
+        <span className="shrink-0 text-xs text-caja-aviso">· por enviar</span>
+      </span>
+      <span className="shrink-0 tabular-nums">{formatearCentavos(monto)}</span>
+    </li>
   );
 }
 

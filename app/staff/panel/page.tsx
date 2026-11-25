@@ -33,6 +33,8 @@ import { FASE2_ACTIVA } from "@/lib/fase2";
 import { AvisoExistencias } from "@/components/inventario/aviso-existencias";
 import { esErrorDeRed, mensajeParaUsuario, MENSAJE_SIN_CONEXION, type ErrorBase } from "@/lib/errores-base";
 import type { Club, ClubTable, Profile, Reservation } from "@/types";
+import { contarPendientes } from "@/lib/caja-cola";
+import { conLimite } from "@/lib/domain/caja-cola";
 
 type RPListItem = Pick<Profile, "id" | "nombre" | "activo">;
 
@@ -235,7 +237,7 @@ export default function StaffPanelPage() {
         .eq("id", user.id)
         .maybeSingle();
       if (profile?.activo === false) {
-        await cerrarSesionDadoDeBaja(supabase, router);
+        await cerrarSesionDadoDeBaja(supabase, router, { colaCaja: true });
         return;
       }
 
@@ -574,7 +576,20 @@ export default function StaffPanelPage() {
 
   async function handleLogout() {
     const supabase = createClient();
-    await supabase.auth.signOut();
+    // Cola de caja: lo capturado sin señal se queda en el teléfono con tu
+    // usuario y se envía cuando vuelvas a entrar; se avisa antes de salir.
+    // Con mala señal getSession puede tardar (renueva el token): se le pone límite.
+    const session = await conLimite(
+      supabase.auth.getSession().then(({ data }) => data.session, () => null),
+      3_000,
+      null,
+    );
+    const n = session ? await contarPendientes(session.user.id).catch(() => 0) : 0;
+    if (n > 0 && !window.confirm(`Tienes ${n === 1 ? "1 movimiento" : `${n} movimientos`} de caja sin enviar en este teléfono. Se quedan guardados y se envían cuando vuelvas a entrar con tu cuenta y haya señal. ¿Cerrar sesión de todos modos?`)) return;
+    // Sin señal, signOut borra la sesión del teléfono aunque el servidor no
+    // conteste (auth-js 2.110). Con señal mala la petición puede quedarse
+    // colgada: no se deja el botón girando, se sale a los 8 s.
+    await conLimite(supabase.auth.signOut().then(() => undefined, () => undefined), 8_000, undefined);
     router.replace("/cliente/login");
   }
 

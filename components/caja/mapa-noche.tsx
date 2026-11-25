@@ -1,7 +1,7 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { memo, useDeferredValue, useMemo, useState } from "react";
+import { CloudUpload, Search, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   PESTANAS_MAPA,
@@ -33,11 +33,16 @@ function lineaInferior(m: ResumenMesa): { izquierda: string; derecha: string; to
   return { izquierda: formatearCentavos(m.consumo), derecha: grupos || m.rps[0] || "Sin RP", tono: "text-caja-secundario" };
 }
 
-export function MapaNoche({
+// memo: la caja se vuelve a pintar cuando cambia la cola o su estado
+// (enviando, reintentos); el mapa de 50 mesas solo si cambian sus datos.
+export const MapaNoche = memo(function MapaNoche({
   mesas,
+  porMesa = {},
   onAbrirMesa,
 }: {
   mesas: ResumenMesa[];
+  // Cola de caja: movimientos por enviar y rechazados de cada mesa.
+  porMesa?: Record<string, { pendientes: number; rechazados: number }>;
   onAbrirMesa: (mesaId: string) => void;
 }) {
   const [pestana, setPestana] = useState<PestanaMapa>("todas");
@@ -103,6 +108,12 @@ export function MapaNoche({
             const nombre = m.estado === "libre" ? "Libre" : (m.cliente ?? "Sin cliente");
             const extra = m.estado !== "libre" && m.otrosClientes ? ` +${m.otrosClientes}` : "";
             const principal = nombre + extra;
+            const cola = porMesa[m.mesa.id];
+            const avisoCola = cola?.rechazados
+              ? `${cola.rechazados} sin guardar`
+              : cola?.pendientes
+                ? `${cola.pendientes} por enviar`
+                : "";
             return (
               <li key={m.mesa.id}>
                 <button
@@ -112,9 +123,17 @@ export function MapaNoche({
                     "flex min-h-[92px] w-full flex-col gap-1 rounded-lg border px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-caja-dorado",
                     CUADRO[m.estado],
                   )}
-                  aria-label={`${nombreMesa(m.mesa.numero)}, ${principal}, ${ESTADO_TEXTO[m.estado]}${m.estado === "libre" ? "" : `, ${formatearCentavos(m.estado === "cuadrada" ? m.consumoNoche : m.consumo)}`}`}
+                  aria-label={`${nombreMesa(m.mesa.numero)}, ${principal}, ${ESTADO_TEXTO[m.estado]}${m.estado === "libre" ? "" : `, ${formatearCentavos(m.estado === "cuadrada" ? m.consumoNoche : m.consumo)}`}${avisoCola ? `, ${avisoCola}` : ""}`}
                 >
-                  <span className="text-xs text-caja-secundario">{nombreMesa(m.mesa.numero)}</span>
+                  <span className="flex items-center justify-between gap-2 text-xs text-caja-secundario">
+                    <span className="shrink-0 whitespace-nowrap">{nombreMesa(m.mesa.numero)}</span>
+                    {avisoCola && (
+                      <span className={cn("flex min-w-0 items-center gap-1", cola?.rechazados ? "text-caja-rojo" : "text-caja-aviso")}>
+                        {cola?.rechazados ? <TriangleAlert className="size-3 shrink-0" aria-hidden="true" /> : <CloudUpload className="size-3 shrink-0" aria-hidden="true" />}
+                        <span className="truncate">{avisoCola}</span>
+                      </span>
+                    )}
+                  </span>
                   <span className={cn("flex min-w-0 text-[15px] font-medium leading-snug", (m.estado === "libre" || m.estado === "cuadrada") && "text-caja-secundario")}>
                     <span className="truncate">{nombre}</span>
                     {extra && <span className="shrink-0 text-caja-secundario">{extra}</span>}
@@ -131,4 +150,4 @@ export function MapaNoche({
       )}
     </div>
   );
-}
+});

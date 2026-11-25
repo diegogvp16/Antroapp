@@ -81,8 +81,10 @@ export function useAccion() {
   );
 
   const limpiarError = useCallback(() => setError(null), []);
+  // Para un rechazo que no viene de una llamada directa (la cola de caja).
+  const fallar = useCallback((mensaje: string) => setError(mensaje), []);
 
-  return { ocupado, error, ejecutar, correr, limpiarError };
+  return { ocupado, error, ejecutar, correr, limpiarError, fallar };
 }
 
 export function MensajeError({ mensaje }: { mensaje: string | null }) {

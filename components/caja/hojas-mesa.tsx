@@ -150,8 +150,9 @@ export function HojaConsumo({
       pie={
         <div className="flex flex-col gap-2">
           <MensajeError mensaje={error} />
-          <BotonPrincipal disabled={ocupado || sinConexion || renglones.length === 0 || !cuentaId} onClick={enviar}>
-            {sinConexion ? "Sin conexión" : ocupado ? "Agregando..." : `Agregar a la mesa · ${formatearCentavos(total)}`}
+          {sinConexion && <AvisoSinRed />}
+          <BotonPrincipal disabled={ocupado || renglones.length === 0 || !cuentaId} onClick={enviar}>
+            {ocupado ? "Agregando..." : `${sinConexion ? "Guardar en el teléfono" : "Agregar a la mesa"} · ${formatearCentavos(total)}`}
           </BotonPrincipal>
         </div>
       }
@@ -265,6 +266,16 @@ export function HojaConsumo({
   );
 }
 
+// Sin señal, consumo y cobro se guardan en el teléfono (cola de caja) y se
+// mandan solos al volver: nada se pierde aunque se cierre la app.
+function AvisoSinRed() {
+  return (
+    <p className="text-xs text-caja-aviso" role="status">
+      Sin señal: se guarda en este teléfono y se envía solo al volver la señal.
+    </p>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Cobrar: por forma de pago, a toda la mesa.
 // ---------------------------------------------------------------------------
@@ -310,14 +321,17 @@ export function HojaCobro({
         <div className="flex flex-col gap-2">
           {/* Si el saldo cambió, el aviso de arriba explica qué pasó. */}
           {!saldoCambio && <MensajeError mensaje={error} />}
+          {sinConexion && !saldoCambio && <AvisoSinRed />}
           {saldoCambio && saldo <= 0 ? (
             <BotonPrincipal onClick={onCerrar}>Listo</BotonPrincipal>
           ) : (
             <BotonPrincipal
-              disabled={ocupado || sinConexion || !valido || saldoCambio || !propinaValida}
+              disabled={ocupado || !valido || saldoCambio || !propinaValida}
               onClick={() => cent !== null && onCobrar(metodo, cent, referencia, clave, saldoBase, FASE2_ACTIVA ? (propinaCent ?? 0) : 0)}
             >
-              {sinConexion ? "Sin conexión" : ocupado ? "Cobrando..." : `Cobrar ${valido && cent !== null ? formatearCentavos(cent) : ""}`}
+              {ocupado
+                ? "Cobrando..."
+                : `${sinConexion ? "Guardar cobro" : "Cobrar"} ${valido && cent !== null ? formatearCentavos(cent) : ""}`}
             </BotonPrincipal>
           )}
         </div>
@@ -559,10 +573,12 @@ export function HojaCuadrar({
   ocupado,
   sinConexion,
   error,
+  bloqueo = null,
   onCuadrar,
 }: {
   abierta: boolean;
   onCerrar: () => void;
+  // Lo que ya está en la base (sin lo pendiente de enviar): es lo que se cuadra.
   consumo: number;
   cobrado: number;
   propinas?: number;
@@ -570,6 +586,8 @@ export function HojaCuadrar({
   ocupado: boolean;
   sinConexion: boolean;
   error: string | null;
+  // Por qué todavía no se puede cuadrar (algo de la mesa sigue en el teléfono).
+  bloqueo?: string | null;
   onCuadrar: (notas: string) => void;
 }) {
   const [notas, setNotas] = useState("");
@@ -581,8 +599,13 @@ export function HojaCuadrar({
       pie={
         <div className="flex flex-col gap-2">
           <MensajeError mensaje={error} />
-          <BotonPrincipal disabled={ocupado || sinConexion} onClick={() => onCuadrar(notas)}>
-            {sinConexion ? "Sin conexión" : ocupado ? "Cuadrando..." : `Cuadrar mesa · ${formatearCentavos(consumo)}`}
+          {bloqueo && (
+            <p role="status" className="text-sm text-caja-aviso">
+              {bloqueo}
+            </p>
+          )}
+          <BotonPrincipal disabled={ocupado || sinConexion || !!bloqueo} onClick={() => onCuadrar(notas)}>
+            {sinConexion ? "Sin conexión" : bloqueo ? "Esperando el envío" : ocupado ? "Cuadrando..." : `Cuadrar mesa · ${formatearCentavos(consumo)}`}
           </BotonPrincipal>
         </div>
       }
