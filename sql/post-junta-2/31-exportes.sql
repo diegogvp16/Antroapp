@@ -31,10 +31,13 @@
 --   * Noche = reservations.fecha (reservas y comisiones de reserva),
 --     caja_noches.fecha_operacion (consumos) y rp_pagos_dia.fecha (pago por
 --     día). Las horas salen en la zona horaria DEL ANTRO ("AAAA-MM-DD HH:MM").
---   * Estado de la reserva (como rp_mis_reservas): consumio (su cuenta tiene
---     algún consumo no anulado) · llego_sin_consumo · en_puerta · no_llego
---     (la noche ya terminó: fecha anterior a la noche en curso del antro o la
---     caja se cerró) · por_llegar.
+--   * Estado de la reserva (los mismos conteos que reporte_cierre_noche, en
+--     este orden): consumio (su cuenta tiene algún consumo no anulado) ·
+--     llego_sin_consumo · no_llego (la noche ya terminó: fecha anterior a la
+--     noche en curso del antro o la caja se cerró; incluye a quien se quedó
+--     en la puerta) · en_puerta (solo con la noche abierta) · por_llegar.
+--     no_llego = cierre.no_llegaron, en_puerta = cierre.en_puerta y
+--     en_puerta + por_llegar = cierre.por_llegar.
 --   * Suma de consumos no anulados del rango = grupo_resumen.consumo_centavos
 --     = suma de reporte_cierre_noche.consumo.total_centavos por noche.
 --   * Suma de comisiones y pagos no anulados = grupo_resumen.comisiones_centavos.
@@ -124,12 +127,21 @@ begin
   if p_hasta - p_desde > 93 then
     raise exception 'El rango máximo es de 93 días.' using errcode = 'P0001';
   end if;
-  v_hoy := public.club_fecha_operacion(p_club_id);
+  -- Sin zona (no debería pasar) se toma la noche de México: el tope no queda en NULL.
+  v_hoy := coalesce(public.club_fecha_operacion(p_club_id), ((now() at time zone 'America/Mexico_City') - interval '8 hours')::date);
   if p_desde < date '2020-01-01' or p_hasta > v_hoy + 92 then
     raise exception 'Elige noches entre 2020 y los próximos 3 meses.' using errcode = 'P0001';
   end if;
   if p_despues is not null and p_despues !~ '^\d{4}-\d{2}-\d{2}\|' then
     raise exception 'Página inválida: vuelve a empezar la descarga.' using errcode = 'P0001';
+  end if;
+  -- "2026-13-45|..." pasa el patrón pero no es fecha: aviso claro, no error 22008.
+  if p_despues is not null then
+    begin
+      perform split_part(p_despues, '|', 1)::date;
+    exception when others then
+      raise exception 'Página inválida: vuelve a empezar la descarga.' using errcode = 'P0001';
+    end;
   end if;
   return v_nivel;
 end;
@@ -252,8 +264,10 @@ begin
          case
            when coalesce(con.n, 0) > 0 then 'consumio'
            when coalesce(coalesce(r.puerta_estado, case when r.status = 'usada' then 'entro' end) = 'entro', false) then 'llego_sin_consumo'
-           when coalesce(r.puerta_estado = 'en_puerta', false) then 'en_puerta'
+           -- Noche terminada antes que "en puerta": quien se quedó en la
+           -- puerta de una noche que ya acabó no llegó (igual que el cierre).
            when r.fecha < v_hoy or coalesce(n.estado = 'cerrada', false) then 'no_llego'
+           when coalesce(r.puerta_estado = 'en_puerta', false) then 'en_puerta'
            else 'por_llegar'
          end,
          to_char(r.entrada_en at time zone v_zona, 'YYYY-MM-DD HH24:MI'),

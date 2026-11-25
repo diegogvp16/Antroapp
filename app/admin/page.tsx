@@ -362,11 +362,25 @@ export default function AdminPage() {
           </Button>
         </div>
 
-        {mensualidadActiva() && (
-          <Button variant="outline" className="h-10 self-start" render={<Link href="/admin/mensualidad" />} nativeButton={false}>
-            Mensualidades y planes
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" className="h-10" render={<Link href="/admin/salud" />} nativeButton={false}>
+            Salud de la plataforma
           </Button>
-        )}
+          <Button variant="outline" className="h-10" render={<Link href="/grupo" />} nativeButton={false}>
+            Resumen por antro
+          </Button>
+          <Button variant="outline" className="h-10" render={<Link href="/grupo/noche" />} nativeButton={false}>
+            Cierre de la noche
+          </Button>
+          <Button variant="outline" className="h-10" render={<Link href="/grupo/exportar" />} nativeButton={false}>
+            Descargar reportes (CSV)
+          </Button>
+          {mensualidadActiva() && (
+            <Button variant="outline" className="h-10" render={<Link href="/admin/mensualidad" />} nativeButton={false}>
+              Mensualidades y planes
+            </Button>
+          )}
+        </div>
 
         <VerificacionesPendientes onCambio={fetchClubs} />
 

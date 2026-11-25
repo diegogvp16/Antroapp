@@ -196,6 +196,12 @@ function CierreNoche() {
 
   const antroActual = sesion.antros.find((a) => a.id === clubId);
   const cambiarNoche = (dias: number) => fecha && setFecha(sumarDiasISO(fecha, dias));
+  // El reporte en pantalla es de la noche y el antro elegidos. Mientras llega
+  // el de otra noche se sigue viendo el anterior (atenuado), pero CSV e
+  // Imprimir esperan: así nunca sale una hoja con la fecha nueva y las
+  // cifras de la noche anterior.
+  const vigente = !!reporte && reporte.fecha === fecha && reporte.club.id === clubId;
+  const puedeExportar = vigente && !cargando;
 
   return (
     <Contenedor>
@@ -270,12 +276,12 @@ function CierreNoche() {
                 <RefreshCw className={cn("size-4", cargando && "animate-spin")} aria-hidden="true" />
                 {cargando ? "..." : "Actualizar"}
               </Button>
-              <Button type="button" variant="outline" className="h-11" disabled={!reporte}
-                onClick={() => reporte && descargarArchivo(generarCsvCierre(reporte), nombreArchivoCierre(reporte.club.nombre, reporte.fecha))}>
+              <Button type="button" variant="outline" className="h-11" disabled={!puedeExportar}
+                onClick={() => reporte && puedeExportar && descargarArchivo(generarCsvCierre(reporte), nombreArchivoCierre(reporte.club.nombre, reporte.fecha))}>
                 <Download className="size-4" aria-hidden="true" />
                 CSV
               </Button>
-              <Button type="button" variant="outline" className="h-11" disabled={!reporte} onClick={() => window.print()}>
+              <Button type="button" variant="outline" className="h-11" disabled={!puedeExportar} onClick={() => puedeExportar && window.print()}>
                 <Printer className="size-4" aria-hidden="true" />
                 Imprimir
               </Button>
@@ -308,7 +314,14 @@ function CierreNoche() {
                   </Button>
                 </div>
               )}
-              <div className={cn("transition-opacity", cargando && "opacity-60")} aria-busy={cargando}>
+              {!vigente && (
+                <p className="text-sm text-muted-foreground print:hidden" role="status">
+                  {cargando ? "Cargando" : "Sin cargar"} la noche del {fecha ? etiquetaNoche(fecha) : ""}. Abajo sigue la del{" "}
+                  {etiquetaNoche(reporte.fecha)}.
+                </p>
+              )}
+              {/* Si alguien imprime con el navegador mientras carga otra noche, la hoja sale sin cifras viejas. */}
+              <div className={cn("transition-opacity", (cargando || !vigente) && "opacity-60", !vigente && "print:hidden")} aria-busy={cargando}>
                 <ReporteCierreNoche rep={reporte} />
               </div>
             </>

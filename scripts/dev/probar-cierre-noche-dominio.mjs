@@ -59,6 +59,19 @@ const conCuadre = d.generarCsvCierre({ ...rep, cuadre: { registrado_centavos: 1,
   contado_efectivo_centavos: 95000, contado_tarjeta_centavos: null, contado_otro_centavos: 0, diferencia_centavos: -5000, notas: "faltó, revisar", hecho_en: null, hecho_por_nombre: "Gerente" } });
 revisar(conCuadre.includes("Cuadre,Diferencia (contado − cobrado),-50.00") && conCuadre.includes('Cuadre,Notas,"faltó, revisar"') && conCuadre.includes("Cuadre,Contado tarjeta,\r\n"), "CSV: cuadre con diferencia negativa, notas con coma y contado vacío");
 revisar(!/telefono|cliente/i.test(csv), "CSV: sin columnas de clientes");
+// Horas en la zona del antro, no el ISO en UTC (defecto del revisor).
+revisar(csv.includes("Noche,Abierta en (hora del antro),2026-11-25 19:30\r\n"), "CSV: hora de apertura en la zona del antro (Tijuana), no en UTC",
+  csv.split("\r\n").find((l) => l.includes("Abierta en")));
+revisar(csv.includes("Noche,Cerrada en (hora del antro),\r\n"), "CSV: sin cierre la hora queda vacía");
+revisar(!/\d{4}-\d{2}-\d{2}T\d{2}:/.test(csv), "CSV: ningún instante ISO crudo");
+const cuadreHecho = d.generarCsvCierre({ ...rep, club: { ...rep.club, zona_horaria: "America/Mexico_City" },
+  noche: { ...rep.noche, estado: "cerrada", abierta_en: "2026-11-22T03:30:00+00:00", cerrada_en: "2026-11-25T03:14:32.951+00:00" },
+  cuadre: { registrado_centavos: 1, cobrado_efectivo_centavos: 0, cobrado_tarjeta_centavos: 0, cobrado_otro_centavos: 0, saldo_sin_cobrar_centavos: 0,
+    contado_efectivo_centavos: 0, contado_tarjeta_centavos: 0, contado_otro_centavos: 0, diferencia_centavos: 0, notas: null, hecho_en: "2026-11-22T09:05:00Z", hecho_por_nombre: "Gerente" } });
+revisar(cuadreHecho.includes("Noche,Abierta en (hora del antro),2026-11-21 21:30\r\n") && cuadreHecho.includes("Noche,Cerrada en (hora del antro),2026-11-24 21:14\r\n"),
+  "CSV: el caso del revisor (abierta 22/11 03:30 UTC = 21/11 21:30 en CDMX)", cuadreHecho.split("\r\n").filter((l) => l.includes(" en (hora")).join(" | "));
+revisar(cuadreHecho.includes("Cuadre,Hecho en (hora del antro),2026-11-22 03:05\r\n"), "CSV: hora del cuadre en la zona del antro");
+revisar(d.fechaHoraCsvEnZona("no es fecha", "America/Mexico_City") === "" && d.fechaHoraCsvEnZona(null, "America/Mexico_City") === "", "hora del CSV: vacía si no se entiende");
 
 revisar(d.nombreArchivoCierre("Club Ñandú & Bar", "2026-11-25") === "cierre-club-nandu-bar-2026-11-25.csv", "nombre del archivo", d.nombreArchivoCierre("Club Ñandú & Bar", "2026-11-25"));
 revisar(d.nombreArchivoCierre("", "x") === "cierre-antro-noche.csv", "nombre del archivo sin datos");

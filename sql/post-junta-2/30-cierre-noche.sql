@@ -39,6 +39,8 @@
 --   * La noche "ya terminó" si su fecha es anterior a la noche en curso del
 --     antro o si el gerente la cerró en caja. Solo entonces hay "no
 --     llegaron"; mientras sigue, quien no ha entrado está "por llegar".
+--   * En puerta: parte de "por llegar" (solo con la noche abierta). Si la
+--     noche ya terminó, quien se quedó en la puerta cuenta en "no llegaron".
 --
 -- Acceso (en la base, sin NULL que se cuele): admin, el dueño del antro, el
 -- dueño de su grupo y su gerente ACTIVO. Staff, RP, cliente, cuenta sin
@@ -135,7 +137,7 @@ begin
            count(*)::int as reservas,
            coalesce(sum(x.personas), 0)::int as personas,
            count(*) filter (where x.entro)::int as entraron,
-           count(*) filter (where not x.entro and x.en_puerta)::int as en_puerta,
+           count(*) filter (where not x.entro and x.en_puerta and not v_termino)::int as en_puerta,
            count(*) filter (where x.consumio)::int as consumieron,
            count(*) filter (where x.entro and not x.consumio)::int as entraron_sin_consumo,
            count(*) filter (where not x.entro and v_termino)::int as no_llegaron,

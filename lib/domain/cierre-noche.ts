@@ -301,6 +301,30 @@ export function fechaHoraEnZona(instante: string | null, zona: string): string {
   }
 }
 
+// Fecha y hora local del antro para el CSV ("2026-11-21 21:30"), el mismo
+// formato que los exportes (to_char(... at time zone zona, 'YYYY-MM-DD
+// HH24:MI') en 31-exportes.sql). Vacío si no hay instante o no se entiende.
+export function fechaHoraCsvEnZona(instante: string | null, zona: string): string {
+  if (!instante) return "";
+  const d = new Date(instante);
+  if (Number.isNaN(d.getTime())) return "";
+  try {
+    const partes = new Intl.DateTimeFormat("en-CA", {
+      timeZone: zona,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(d);
+    const p = (t: string) => partes.find((x) => x.type === t)?.value ?? "";
+    return `${p("year")}-${p("month")}-${p("day")} ${p("hour")}:${p("minute")}`;
+  } catch {
+    return "";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CSV: UTF-8 con BOM, separador coma, montos en pesos con dos decimales.
 // Primero un bloque "Sección, Concepto, Valor" con todo el resumen y después
@@ -319,9 +343,9 @@ export function generarCsvCierre(rep: ReporteCierre): string {
     ["Noche", "Estado", etiquetaEstado(rep)],
     ["Noche", "Cifras parciales", esParcial(rep) ? "Sí" : "No"],
     ["Noche", "Abierta por", rep.noche.abierta_por_nombre ?? ""],
-    ["Noche", "Abierta en", rep.noche.abierta_en ?? ""],
+    ["Noche", "Abierta en (hora del antro)", fechaHoraCsvEnZona(rep.noche.abierta_en, rep.club.zona_horaria)],
     ["Noche", "Cerrada por", rep.noche.cerrada_por_nombre ?? ""],
-    ["Noche", "Cerrada en", rep.noche.cerrada_en ?? ""],
+    ["Noche", "Cerrada en (hora del antro)", fechaHoraCsvEnZona(rep.noche.cerrada_en, rep.club.zona_horaria)],
     ["Reservas", "Total", n(rep.reservas.reservas)],
     ["Reservas", "Personas", n(rep.reservas.personas)],
   ];
@@ -366,6 +390,7 @@ export function generarCsvCierre(rep: ReporteCierre): string {
       ["Cuadre", "Contado otro", q.contado_otro_centavos === null ? "" : pesos(q.contado_otro_centavos)],
       ["Cuadre", "Diferencia (contado − cobrado)", pesos(q.diferencia_centavos)],
       ["Cuadre", "Hecho por", q.hecho_por_nombre ?? ""],
+      ["Cuadre", "Hecho en (hora del antro)", fechaHoraCsvEnZona(q.hecho_en, rep.club.zona_horaria)],
       ["Cuadre", "Notas", q.notas ?? ""],
     );
   } else {

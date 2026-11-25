@@ -238,6 +238,9 @@ type Celda = string | number | null;
 const t = (v: string | null) => campoCsv(v ?? "");
 const n = (v: number | null) => (v === null ? "" : String(v));
 const pesos = (c: number | null) => (c === null ? "" : centavosAPesosCsv(c));
+// Folio = primeros 8 del id de la reserva (hex). Con "#" Excel lo deja como
+// texto: "12345678" no pierde ceros ni "1234e567" se vuelve 1.2E+570.
+export const folioCsv = (f: string | null) => (f ? campoCsv("#" + f.toUpperCase()) : "");
 
 function armar(encabezado: string[], filas: Celda[][]): string {
   const lineas = [encabezado.map(campoCsv).join(",")];
@@ -255,7 +258,7 @@ export function csvReservas(filas: FilaReserva[], telefono: NivelTelefono): stri
   return armar(
     enc,
     filas.map((f) => [
-      t(f.noche), t(f.folio), t(f.creada_local), t(f.cliente_nombre),
+      t(f.noche), folioCsv(f.folio), t(f.creada_local), t(f.cliente_nombre),
       ...(conTel ? [t(f.telefono)] : []),
       n(f.personas), t(etiquetaOrigen(f.origen)), t(f.rp_nombre), t(etiquetaEstadoReserva(f.estado)),
       t(f.entrada_local), siNo(f.llegada_tarde), t(f.mesa), pesos(f.consumo_centavos),
@@ -270,7 +273,7 @@ export function csvConsumos(filas: FilaConsumo[]): string {
       "Concepto", "Monto", "Anulado", "Motivo de anulación", "Anulado a las", "Registró", "Anuló",
     ],
     filas.map((f) => [
-      t(f.noche), t(f.hora_local), t(f.mesa), n(f.grupo), t(f.cuenta), t(etiquetaCuenta(f.origen_cuenta)), t(f.folio_reserva),
+      t(f.noche), t(f.hora_local), t(f.mesa), n(f.grupo), t(f.cuenta), t(etiquetaCuenta(f.origen_cuenta)), folioCsv(f.folio_reserva),
       t(f.rp_nombre), t(f.concepto), pesos(f.monto_centavos), siNo(f.anulado), t(f.motivo_anulacion), t(f.anulado_local),
       t(f.registrado_por), t(f.anulado_por),
     ]),
@@ -284,7 +287,7 @@ export function csvComisiones(filas: FilaComision[]): string {
       "Monto", "Estado", "Creada (hora del antro)", "Pagada (hora del antro)", "Motivo de anulación",
     ],
     filas.map((f) => [
-      t(f.noche), t(etiquetaTipoComision(f.tipo)), t(f.rp_nombre), siNo(f.rp_activo), t(f.folio_reserva), t(f.cliente_nombre),
+      t(f.noche), t(etiquetaTipoComision(f.tipo)), t(f.rp_nombre), siNo(f.rp_activo), folioCsv(f.folio_reserva), t(f.cliente_nombre),
       pesos(f.consumo_base_centavos), n(f.posicion_dia), pesos(f.monto_centavos), t(etiquetaEstadoComision(f.estado)),
       t(f.creada_local), t(f.pagada_local), t(f.motivo_anulacion),
     ]),

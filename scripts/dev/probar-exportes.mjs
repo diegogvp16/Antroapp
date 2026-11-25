@@ -150,7 +150,8 @@ async function compararSumas(donde, c, clubId, desde, hasta, filasPor) {
   igual(`${donde}: reservas que consumieron = /grupo`, cuenta(R, (f) => f.estado === "consumio"), g.reservas_con_consumo);
   igual(`${donde}: consumo sin anulados = /grupo`, suma(K, "monto_centavos", (f) => !f.anulado), g.consumo_centavos);
   igual(`${donde}: consumo con reserva = /grupo`, suma(K, "monto_centavos", (f) => !f.anulado && f.origen_cuenta === "reserva"), g.consumo_con_reserva_centavos);
-  igual(`${donde}: cuentas con consumo = /grupo`, new Set(K.filter((f) => !f.anulado).map((f) => `${f.noche}|${f.mesa}|${f.grupo}|${f.cuenta}|${f.folio_reserva}`)).size >= 0 ? g.cuentas_con_consumo : -1, g.cuentas_con_consumo);
+  // En el escenario cada cuenta tiene nombre o folio distinto dentro de su grupo de mesa.
+  igual(`${donde}: cuentas con consumo = /grupo`, new Set(K.filter((f) => !f.anulado).map((f) => `${f.noche}|${f.mesa}|${f.grupo}|${f.cuenta}|${f.folio_reserva}`)).size, g.cuentas_con_consumo);
   igual(`${donde}: comisiones y pagos sin anulados = /grupo`, suma(C, "monto_centavos", (f) => f.estado !== "anulada"), g.comisiones_centavos);
   igual(`${donde}: consumo de las reservas = consumo con reserva`, suma(R, "consumo_centavos"), g.consumo_con_reserva_centavos);
   for (let f = desde; f <= hasta; f = sumarDias(f, 1)) {
@@ -163,6 +164,9 @@ async function compararSumas(donde, c, clubId, desde, hasta, filasPor) {
     igual(`${d}: entraron = cierre`, cuenta(r, (x) => x.estado === "consumio" || x.estado === "llego_sin_consumo"), rep.reservas.entraron);
     igual(`${d}: no llegaron = cierre`, cuenta(r, (x) => x.estado === "no_llego"), rep.reservas.no_llegaron);
     igual(`${d}: por llegar + en puerta = cierre`, cuenta(r, (x) => x.estado === "por_llegar" || x.estado === "en_puerta"), rep.reservas.por_llegar);
+    igual(`${d}: en puerta = cierre`, cuenta(r, (x) => x.estado === "en_puerta"), rep.reservas.en_puerta);
+    igual(`${d}: los estados suman el total`, cuenta(r, (x) => ["consumio", "llego_sin_consumo", "no_llego", "en_puerta", "por_llegar"].includes(x.estado)), rep.reservas.reservas);
+    revisar(`${d}: en puerta es parte de por llegar en el cierre`, rep.reservas.en_puerta <= rep.reservas.por_llegar, `${rep.reservas.en_puerta} > ${rep.reservas.por_llegar}`);
     igual(`${d}: consumo de reservas = cierre`, suma(r, "consumo_centavos"), rep.reservas.consumo_centavos);
     igual(`${d}: consumo en caja = cierre`, suma(k, "monto_centavos", (x) => !x.anulado), rep.consumo.total_centavos);
     igual(`${d}: renglones vigentes = cierre`, cuenta(k, (x) => !x.anulado), rep.consumo.renglones);
@@ -236,9 +240,11 @@ try {
                 'antro-' || gen_random_uuid(), ${inicio} - make_interval(secs => 100000 - i), 'entro', ${inicio} + make_interval(secs => i)
          from generate_series(1, $4) i`, [clubs.A.id, AYER, rp1, BLOQUE, TAG]);
       await db.q(
-        `insert into public.reservations (id, cliente_nombre, cliente_telefono, personas, status, source, rp_id, club_id, fecha, qr_code, created_at)
+        `insert into public.reservations (id, cliente_nombre, cliente_telefono, personas, status, source, rp_id, club_id, fecha, qr_code, created_at, puerta_estado)
          select gen_random_uuid(), 'Cliente ' || $3 || ' nl' || i, '3399999' || lpad(i::text, 3, '0'), 2, 'confirmada', 'organica', null, $1, $2::date,
-                'antro-' || gen_random_uuid(), ${inicio} - make_interval(days => 1, secs => i)
+                'antro-' || gen_random_uuid(), ${inicio} - make_interval(days => 1, secs => i),
+                -- Las 2 primeras se quedaron "en puerta" y la noche cerró: cuentan como no llegaron.
+                case when i <= 2 then 'en_puerta' end
          from generate_series(1, 5) i`, [clubs.A.id, AYER, TAG]);
       // Una cuenta por reserva, repartidas en los 3 grupos.
       await db.q(
@@ -367,7 +373,7 @@ try {
   }
   const G = D.gerentea;
   igual("reservas: 1045 de ayer + 5 de hoy + 1 de mañana", G.reservas.length, BLOQUE + 5 + 5 + 1);
-  igual("consumos: 1040 + 20 + 10 anulados de ayer + 6 de hoy", G.consumos.length, BLOQUE + 20 + 10 + 6);
+  igual("consumos: 1040 + 20 + 10 anulados de ayer + 5 de hoy (1 anulado)", G.consumos.length, BLOQUE + 20 + 10 + 5);
   igual("comisiones: 1040 de ayer + 1 pago por día + 2 de hoy", G.comisiones.length, BLOQUE + 1 + 2);
   for (const tipo of Object.keys(dom.FUNCION_EXPORTE)) {
     revisar(`${tipo}: orden estricto, sin repetidos`, ordenEstricto(G[tipo]));
@@ -380,9 +386,15 @@ try {
     revisar("dueño: teléfono completo", D.duenoa.reservas.some((f) => f.telefono === TEL));
     revisar("admin: solo los últimos 4 (***0777), nunca el completo", tels(D.admin.reservas).every((t) => t === null || /^\*\*\*\d{4}$/.test(t)) && tels(D.admin.reservas).includes("***0777"));
     revisar("dueño de grupo: sin teléfono", tels(D.grupo.reservas).every((t) => t === null));
-    const texto = JSON.stringify([D.admin, D.grupo]);
-    revisar("admin y dueño de grupo: ningún teléfono completo en ningún exporte", !texto.includes(TEL) && !/33\d{8}/.test(texto));
-    revisar("ningún exporte trae QR ni ids completos de clientes", !JSON.stringify(D).includes("antro-") && !JSON.stringify(D).includes(R1.id));
+    // `orden` es la llave de paginación (noche|hora UTC|id): lleva dígitos y el
+    // id interno del renglón, no datos del cliente. Se revisan los demás campos.
+    const sinOrden = (x) => JSON.stringify(x, (k, v) => (k === "orden" ? undefined : v));
+    const texto = sinOrden([D.admin, D.grupo]);
+    const tel = texto.match(/33\d{8}/);
+    revisar("admin y dueño de grupo: ningún teléfono completo en ningún exporte", !texto.includes(TEL) && !tel, tel?.[0]);
+    const todo = sinOrden(D);
+    const qr = todo.match(/.{30}antro-.{20}/);
+    revisar("ningún exporte trae QR ni ids completos de clientes", !qr && !todo.includes(R1.id), qr?.[0]);
   }
   {
     const r1 = G.reservas.find((f) => f.folio === R1.id.slice(0, 8));
@@ -390,6 +402,7 @@ try {
     const r5 = G.reservas.find((f) => f.folio === R5.id.slice(0, 8));
     revisar("reserva que entró sin consumir: 'llego_sin_consumo' en la mesa 2", r5?.estado === "llego_sin_consumo" && r5.mesa === "2", JSON.stringify(r5));
     revisar("hoy: la que no llegó sigue 'por_llegar'; ayer: 5 'no_llego'", cuenta(G.reservas, (f) => f.noche === F && f.estado === "por_llegar") === 1 && cuenta(G.reservas, (f) => f.noche === AYER && f.estado === "no_llego") === 5);
+    revisar("ayer (noche cerrada): ninguna 'en_puerta' aunque 2 se quedaron en la puerta", cuenta(G.reservas, (f) => f.noche === AYER && f.estado === "en_puerta") === 0);
     const anul = G.consumos.find((f) => f.anulado && f.noche === F);
     revisar("consumo anulado: motivo, quién y cuándo", anul?.motivo_anulacion === "Capturado dos veces" && anul.anulado_por === "T rep gerentea" && !!anul.anulado_local && anul.registrado_por === "T rep staffa", JSON.stringify(anul));
     const walk = G.consumos.find((f) => f.origen_cuenta === "walk_in");
@@ -454,6 +467,8 @@ try {
     revisar("más de 3 meses en el futuro: rechazado", lejos.error?.code === "P0001", lejos.error?.message);
     const cursor = await pedir(AYER, F, { p_despues: "'; drop table x; --" });
     revisar("cursor inválido: rechazado con aviso", cursor.error?.code === "P0001", cursor.error?.message);
+    const cursorFecha = await pedir(AYER, F, { p_despues: "2026-13-45|x" });
+    revisar("cursor con fecha imposible: aviso claro (P0001), no error de conversión", cursorFecha.error?.code === "P0001" && /Página inválida/.test(cursorFecha.error.message), cursorFecha.error?.code);
     const noExiste = await S.admin.rpc("reporte_reservas", { p_club_id: randomUUID(), p_desde: F, p_hasta: F });
     revisar("antro inexistente (admin): rechazado", noExiste.error?.code === "P0001", noExiste.error?.message);
     const b = await S.gerenteb.rpc("reporte_reservas", { p_club_id: clubs.B.id, p_desde: RB.fecha, p_hasta: RB.fecha });
@@ -477,6 +492,10 @@ try {
     const csvGr = dom.csvReservas(D.grupo.reservas.map(dom.normalizarReserva), "sin_telefono");
     revisar("CSV dueño de grupo: sin columna de teléfono", !csvGr.split("\r\n")[0].includes("Teléfono") && !csvGr.includes(TEL));
     revisar("CSV: un renglón por reserva más el encabezado", csvG.trimEnd().split("\r\n").length === res.length + 1);
+    const folioR1 = "#" + R1.id.slice(0, 8).toUpperCase();
+    revisar("CSV: el folio va con '#' (Excel no lo vuelve número) en reservas, consumo y comisiones",
+      csvG.includes(`,${folioR1},`) && dom.csvConsumos(G.consumos.map(dom.normalizarConsumo)).includes(`,${folioR1},`) &&
+      dom.csvComisiones(G.comisiones.map(dom.normalizarComision)).includes(`,${folioR1},`) && dom.folioCsv("12345678") === "#12345678" && dom.folioCsv(null) === "");
     revisar("CSV: el nombre que empieza con '=' lleva apóstrofo", csvG.includes(`'=HYPERLINK(""http://x"") ${TAG}`) && !csvG.includes(`,=HYPERLINK`));
     const csvK = dom.csvConsumos(G.consumos.map(dom.normalizarConsumo));
     revisar("CSV consumo: concepto con fórmula neutralizado y comillas escapadas", csvK.includes(`"'=HYPERLINK(""http://malo"",""clic"")"`) && csvK.includes(`"Botella, ""doble"""`));
@@ -501,7 +520,8 @@ try {
           const filas = [];
           let despues = null;
           for (;;) {
-            const p = await db.q(`select * from public.${fn}($1, $2::date, $3::date, $4, 1000)`, [CLUB_DEMO, desde, hasta, despues]);
+            // to_jsonb: las fechas llegan como texto "AAAA-MM-DD", igual que por la API.
+            const p = (await db.q(`select to_jsonb(t) j from public.${fn}($1, $2::date, $3::date, $4, 1000) t`, [CLUB_DEMO, desde, hasta, despues])).map((x) => x.j);
             filas.push(...p);
             if (p.length < 1000) return filas;
             despues = p[p.length - 1].orden;

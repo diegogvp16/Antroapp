@@ -122,6 +122,15 @@ try {
       nota("CSV: consumo y cobrado = base", csv.includes(`Consumo,Total en caja,${(esperado.consumo.total_centavos / 100).toFixed(2)}`) && csv.includes(`Cobros,Total cobrado,${(esperado.cobros.total_centavos / 100).toFixed(2)}`));
       nota("CSV: una fila por RP", esperado.rps.every((r) => csv.includes(r.rp_nombre)));
       nota("CSV: sin teléfonos", !/0000000\d{3}/.test(csv));
+      // Horas en la zona del antro ("AAAA-MM-DD HH:MM"), nunca el ISO en UTC.
+      const local = (iso) => {
+        if (!iso) return "";
+        const x = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: esperado.club.zona_horaria, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+          .formatToParts(new Date(iso)).map((q) => [q.type, q.value]));
+        return `${x.year}-${x.month}-${x.day} ${x.hour}:${x.minute}`;
+      };
+      nota("CSV: hora de apertura en la hora del antro", csv.includes(`Noche,Abierta en (hora del antro),${local(esperado.noche.abierta_en)}\r\n`), local(esperado.noche.abierta_en));
+      nota("CSV: ningún instante ISO crudo", !/\d{4}-\d{2}-\d{2}T\d{2}:/.test(csv));
       // Vista de impresión.
       await p.emulateMedia({ media: "print" });
       await p.waitForTimeout(800); // las insignias tienen transición de color
@@ -131,10 +140,26 @@ try {
       nota("impresión: sin botones ni selector", botonesOcultos);
       await p.screenshot({ path: `${SHOTS}cierre-gerente-25nov-impresion.png`, fullPage: true });
       await p.emulateMedia({ media: "screen" });
-      // Noche anterior con el botón.
+      // Noche anterior con el botón. La respuesta de la base se retrasa para
+      // ver el momento en que la pantalla sigue con la noche anterior: CSV e
+      // Imprimir deben esperar (antes salía la fecha nueva con cifras viejas).
+      await p.route("**/rest/v1/rpc/reporte_cierre_noche*", async (r) => { await new Promise((res) => setTimeout(res, 5000)); await r.continue().catch(() => {}); });
       await p.getByRole("button", { name: "Noche anterior" }).click();
+      await p.getByRole("status").filter({ hasText: "Cargando la noche" }).waitFor({ timeout: 2500 }).catch(() => {});
+      const csvMientras = await p.getByRole("button", { name: /CSV/ }).isDisabled();
+      const imprimirMientras = await p.getByRole("button", { name: /Imprimir/ }).isDisabled();
+      const avisoMientras = await p.getByRole("status").filter({ hasText: "Cargando la noche" }).isVisible().catch(() => false);
+      nota("cambio de noche: CSV e Imprimir deshabilitados mientras carga", csvMientras && imprimirMientras, `csv ${csvMientras}, imprimir ${imprimirMientras}`);
+      nota("cambio de noche: avisa que abajo sigue la noche anterior", avisoMientras);
+      await p.screenshot({ path: `${SHOTS}cierre-cambio-de-noche-cargando-390.png` });
+      await p.emulateMedia({ media: "print" });
+      nota("cambio de noche: al imprimir con el navegador no salen las cifras viejas", await p.locator("[aria-busy]").isHidden());
+      await p.emulateMedia({ media: "screen" });
       await p.waitForURL(/fecha=2026-11-24/, { timeout: 30000 }).catch(() => {});
       nota("noche anterior: cambia la fecha en la URL", p.url().includes("fecha=2026-11-24"), p.url());
+      await p.getByRole("status").filter({ hasText: "Cargando la noche" }).waitFor({ state: "hidden", timeout: 30000 }).catch(() => {});
+      await p.unroute("**/rest/v1/rpc/reporte_cierre_noche*");
+      nota("cambio de noche: al llegar la noche nueva se vuelven a habilitar", await p.getByRole("button", { name: /CSV/ }).isEnabled() && await p.getByRole("button", { name: /Imprimir/ }).isEnabled());
       // Noche cerrada (21/11) con cuadre.
       const cerrada = await reporteBase(cred.usuarios.gerente, CERRADA);
       await abrir(p, `/grupo/noche?club=${CLUB}&fecha=${CERRADA}`);
