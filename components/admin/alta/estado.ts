@@ -3,17 +3,26 @@
 
 import { z } from "zod";
 import { parsearPesosACentavos } from "@/lib/cover";
+import { porcentajeABp, type NivelVisibilidad, type TipoRegla } from "@/lib/domain/config-rp";
 import {
+  cambiosDePermisos,
   erroresPorCampo,
   esquemaAltaClub,
   esquemaCuenta,
   esquemaDatos,
   esquemaGrupo,
   esquemaMesas,
+  esquemaPermisosCaja,
   esquemaPersonal,
   esquemaPoliticas,
+  esquemaRp,
+  entradaRpDeTextos,
+  matrizPorDefecto,
   type EntradaAltaClub,
+  type MatrizPermisos,
   type Mesa,
+  type ModoPagoRp,
+  type PrecargaClon,
   type RolPersonal,
 } from "@/lib/domain/alta-club";
 import type { CoverModo } from "@/types";
@@ -34,6 +43,18 @@ export interface Borrador {
     tolerancia_hora: string;
   };
   mesas: FilaMesa[];
+  // Paso «Reglas de comisión y RPs» (texto tal como lo escribe el admin).
+  rp: {
+    modo_pago: ModoPagoRp;
+    tipo: TipoRegla;
+    monto_texto: string;
+    porcentaje_texto: string;
+    cuota_texto: string;
+    visibilidad: NivelVisibilidad;
+    tarifas: { clave: string; texto: string }[];
+  };
+  // Permisos de caja: sin personalizar = los de la plataforma.
+  permisos: { personalizar: boolean; matriz: MatrizPermisos };
   conDueno: boolean;
   dueno: { nombre: string; correo: string };
   personal: FilaPersonal[];
@@ -43,8 +64,14 @@ export interface Borrador {
     grupo_id: string;
     dueno_grupo: "ninguno" | "dueno_antro" | "cuenta_nueva";
     cuenta: { nombre: string; correo: string };
+    // Grupo existente (B3): «grupo» = el antro sigue la configuración del
+    // grupo (reemplaza lo de los pasos anteriores en lo que el grupo define);
+    // «alta» = se queda con lo de este alta.
+    config: "grupo" | "alta";
   };
   publicar: boolean;
+  // Clon (B2): de qué antro sale, qué catálogo copiará la base y qué revisar.
+  clon: { origen: PrecargaClon["origen"]; productos: PrecargaClon["productos"]; avisos: string[] } | null;
 }
 
 export const BORRADOR_INICIAL: Borrador = {
@@ -60,14 +87,46 @@ export const BORRADOR_INICIAL: Borrador = {
     tolerancia_hora: "",
   },
   mesas: [],
+  rp: {
+    modo_pago: "reserva",
+    tipo: "fijo",
+    monto_texto: "",
+    porcentaje_texto: "",
+    cuota_texto: "4",
+    visibilidad: "estado_monto",
+    tarifas: [{ clave: "t0", texto: "" }],
+  },
+  permisos: { personalizar: false, matriz: matrizPorDefecto() },
   conDueno: true,
   dueno: { nombre: "", correo: "" },
   personal: [],
-  grupo: { modo: "ninguno", nombre: "", grupo_id: "", dueno_grupo: "dueno_antro", cuenta: { nombre: "", correo: "" } },
+  grupo: { modo: "ninguno", nombre: "", grupo_id: "", dueno_grupo: "dueno_antro", cuenta: { nombre: "", correo: "" }, config: "grupo" },
   publicar: false,
+  clon: null,
 };
 
-export const PASOS = ["Datos", "Cover y políticas", "Mesas", "Equipo", "Grupo", "Resumen"] as const;
+// Borrador de un clon: la configuración del origen ya precargada; nombre,
+// dirección y equipo vacíos (el antro nuevo es otro lugar con otra gente).
+// Si el origen está en un grupo, se propone el mismo grupo, sin tocar a su
+// dueño. Nace en borrador como cualquier alta.
+export function borradorDesdeClon(pre: PrecargaClon): Borrador {
+  return {
+    ...BORRADOR_INICIAL,
+    datos: { ...BORRADOR_INICIAL.datos, ...pre.datos, nombre: "", direccion: "" },
+    politicas: { ...pre.politicas },
+    mesas: pre.mesas.map((m) => ({ ...m, clave: nuevaClave() })),
+    rp: { ...pre.rp, tarifas: pre.rp.tarifas.map((texto) => ({ clave: nuevaClave(), texto })) },
+    permisos: pre.permisos,
+    grupo: pre.grupo_id
+      ? { ...BORRADOR_INICIAL.grupo, modo: "existente", grupo_id: pre.grupo_id, dueno_grupo: "ninguno" }
+      : BORRADOR_INICIAL.grupo,
+    clon: { origen: pre.origen, productos: pre.productos, avisos: pre.avisos },
+  };
+}
+
+export const PASOS = ["Datos", "Cover y políticas", "Mesas", "Reglas de comisión y RPs", "Equipo", "Grupo", "Resumen"] as const;
+// Índices con nombre (el orden de PASOS manda).
+export const PASO = { datos: 0, politicas: 1, mesas: 2, reglas: 3, equipo: 4, grupo: 5, resumen: 6 } as const;
 
 let contador = 0;
 export const nuevaClave = () => `f${Date.now().toString(36)}${(contador++).toString(36)}`;
@@ -76,6 +135,15 @@ export const nuevaClave = () => `f${Date.now().toString(36)}${(contador++).toStr
 function pesosDeTexto(texto: string): number {
   const centavos = parsearPesosACentavos(texto);
   return centavos == null ? Number.NaN : centavos / 100;
+}
+
+// Lo del modo elegido viaja siempre; lo del otro modo, si está completo
+// (entradaRpDeTextos): así un clon guarda la regla Y las tarifas del origen.
+export function aEntradaRp(r: Borrador["rp"]): EntradaAltaClub["rp"] {
+  return entradaRpDeTextos(
+    { ...r, tarifas: r.tarifas.map((t) => t.texto) },
+    { centavos: parsearPesosACentavos, bp: porcentajeABp },
+  );
 }
 
 export function aEntrada(b: Borrador): EntradaAltaClub {
@@ -95,6 +163,7 @@ export function aEntrada(b: Borrador): EntradaAltaClub {
             grupo_id: b.grupo.grupo_id,
             dueno_grupo: b.grupo.dueno_grupo,
             cuenta: b.grupo.dueno_grupo === "cuenta_nueva" ? b.grupo.cuenta : null,
+            config: b.grupo.config,
           };
   return {
     datos: b.datos,
@@ -109,10 +178,13 @@ export function aEntrada(b: Borrador): EntradaAltaClub {
       tolerancia_hora: p.tolerancia_hora || null,
     },
     mesas: b.mesas.map(({ numero, capacidad }) => ({ numero, capacidad })),
+    rp: aEntradaRp(b.rp),
+    caja_permisos: b.permisos.personalizar ? cambiosDePermisos(b.permisos.matriz) : [],
     dueno: b.conDueno ? b.dueno : null,
     personal: b.personal.map(({ nombre, correo, rol }) => ({ nombre, correo, rol })),
     grupo,
     publicar: b.publicar,
+    clonar_de: b.clon?.origen.id ?? null,
   };
 }
 
@@ -129,13 +201,18 @@ export function erroresDelPaso(i: number, b: Borrador): Record<string, string> {
     return salida;
   };
   switch (i) {
-    case 0:
+    case PASO.datos:
       return conPrefijo("datos", esquemaDatos.safeParse(e.datos));
-    case 1:
+    case PASO.politicas:
       return conPrefijo("politicas", esquemaPoliticas.safeParse(e.politicas));
-    case 2:
+    case PASO.mesas:
       return conPrefijo("mesas", esquemaMesas.safeParse(e.mesas));
-    case 3: {
+    case PASO.reglas:
+      return {
+        ...conPrefijo("rp", esquemaRp.safeParse(e.rp)),
+        ...conPrefijo("caja_permisos", esquemaPermisosCaja.safeParse(e.caja_permisos)),
+      };
+    case PASO.equipo: {
       const r = esquemaEquipo.safeParse({ dueno: e.dueno, personal: e.personal });
       if (!r.success) return erroresPorCampo(r.error);
       // Correos repetidos (la regla completa vive en esquemaAltaClub).
@@ -146,7 +223,7 @@ export function erroresDelPaso(i: number, b: Borrador): Record<string, string> {
       }
       return {};
     }
-    case 4: {
+    case PASO.grupo: {
       const r = conPrefijo("grupo", esquemaGrupo.safeParse(e.grupo));
       if (Object.keys(r).length) return r;
       const total = esquemaAltaClub.safeParse(e);
@@ -165,10 +242,11 @@ export function erroresDelPaso(i: number, b: Borrador): Record<string, string> {
 
 // Paso donde está el primer error de una ruta (para regresar al admin ahí).
 export function pasoDeRuta(ruta: string): number {
-  if (ruta.startsWith("datos")) return 0;
-  if (ruta.startsWith("politicas")) return 1;
-  if (ruta.startsWith("mesas")) return 2;
-  if (ruta.startsWith("dueno") || ruta.startsWith("personal")) return 3;
-  if (ruta.startsWith("grupo")) return 4;
-  return 5;
+  if (ruta.startsWith("datos")) return PASO.datos;
+  if (ruta.startsWith("politicas")) return PASO.politicas;
+  if (ruta.startsWith("mesas")) return PASO.mesas;
+  if (ruta.startsWith("rp") || ruta.startsWith("caja_permisos")) return PASO.reglas;
+  if (ruta.startsWith("dueno") || ruta.startsWith("personal")) return PASO.equipo;
+  if (ruta.startsWith("grupo")) return PASO.grupo;
+  return PASO.resumen;
 }

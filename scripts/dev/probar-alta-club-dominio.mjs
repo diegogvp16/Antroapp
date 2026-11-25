@@ -10,7 +10,15 @@ import {
   generarMesas,
   leerListaPersonal,
   erroresPorCampo,
+  esquemaReglaComision,
+  cambiosDePermisos,
+  matrizPorDefecto,
+  permisoPorDefecto,
+  PERMISOS_CAJA_ALTA,
+  entradaRpDeTextos,
+  esquemaRp,
 } from "../../lib/domain/alta-club.ts";
+import { validarRegla, porcentajeABp } from "../../lib/domain/config-rp.ts";
 
 let pasan = 0, fallan = 0;
 function revisar(cond, texto) {
@@ -22,6 +30,7 @@ const base = () => ({
   datos: { nombre: "Club Prueba", direccion: "Calle 1, Centro", ciudad: "Guadalajara", zona_horaria: "America/Mexico_City", horario: "Jue a Sáb 10pm a 3am" },
   politicas: { cover_modo: "oculto", cover_monto: null, deposito_monto: 0, edad_minima: 18, codigo_vestimenta: "", tipo_musica: "", ambiente: "", tolerancia_hora: null },
   mesas: [{ numero: "1", capacidad: 8 }, { numero: "VIP 1", capacidad: 15 }],
+  rp: { modo_pago: "reserva", regla: { tipo: "fijo", cuota: 0, porcentaje_bp: null, monto_centavos: 15000 }, visibilidad: "estado_monto", tarifas_dia: [] },
   dueno: { nombre: "Dueña Prueba", correo: "Duena@Example.com " },
   personal: [
     { nombre: "Gerente Uno", correo: "g1@example.com", rol: "gerente" },
@@ -165,6 +174,133 @@ const mensajes = (r) => (r.success ? {} : erroresPorCampo(r.error));
   const y = base(); y.club_id = "otro"; y.datos.estado_verificacion = "verificado";
   const r = valida(y);
   revisar(r.success && !("club_id" in r.data) && !("estado_verificacion" in r.data.datos), "campos extra se descartan");
+}
+
+// 7. Reglas de comisión y RPs (sql/post-junta-2/10-alta-club-reglas.sql).
+{
+  const r = valida(base());
+  const ids = new Map(cuentasNuevas(r.data).map((c, i) => [c.correo, "id" + i]));
+  const p = payloadSql(r.data, ids, "11111111-1111-4111-8111-111111111111");
+  revisar(p.rp?.modo_pago === "reserva" && p.rp.regla?.tipo === "fijo" && p.rp.regla.monto_centavos === 15000 && p.rp.visibilidad === "estado_monto", "el payload lleva la regla y lo que ven los RPs");
+  revisar(Array.isArray(p.caja_permisos) && p.caja_permisos.length === 0, "sin permisos personalizados: lista vacía (valen los de la plataforma)");
+  const sinRp = base(); delete sinRp.rp;
+  revisar(!!mensajes(valida(sinRp)).rp, "el alta sin reglas de RPs se rechaza (no nace con las columnas viejas)");
+}
+{
+  const x = base(); x.rp.regla = null;
+  revisar(mensajes(valida(x))["rp.regla"] === "Configura la regla de comisión por reserva.", "pago por reserva sin regla se rechaza");
+  x.rp = { modo_pago: "dia", regla: null, visibilidad: "estado", tarifas_dia: [] };
+  revisar(mensajes(valida(x))["rp.tarifas_dia"] === "Escribe al menos la tarifa del día 1.", "pago por día sin tarifas se rechaza");
+  x.rp.tarifas_dia = [30000, 30000, 50000];
+  const r = valida(x);
+  revisar(r.success, "pago por día con 3 tarifas y sin regla es válido");
+  const p = payloadSql(r.data, new Map(cuentasNuevas(r.data).map((c, i) => [c.correo, "id" + i])), "11111111-1111-4111-8111-111111111111");
+  revisar(JSON.stringify(p.rp.tarifas_dia) === JSON.stringify([{ posicion: 1, monto_centavos: 30000 }, { posicion: 2, monto_centavos: 30000 }, { posicion: 3, monto_centavos: 50000 }]), "las tarifas viajan con su día (1, 2, 3)");
+  x.rp.tarifas_dia = [0];
+  revisar(valida(x).success, "tarifa de $0 permitida (día sin pago)");
+  x.rp.tarifas_dia = Array(8).fill(100);
+  revisar(!!mensajes(valida(x))["rp.tarifas_dia"], "más de 7 tarifas se rechaza");
+  x.rp.tarifas_dia = [Number.NaN];
+  revisar(mensajes(valida(x))["rp.tarifas_dia.0"] === "Cada tarifa va de $0 a $100,000.", "tarifa vacía da mensaje en español en su fila");
+  x.rp.tarifas_dia = [10_000_001];
+  revisar(!valida(x).success, "tarifa arriba de $100,000 se rechaza");
+  x.rp.tarifas_dia = [100.5];
+  revisar(!valida(x).success, "tarifa con fracción de centavo se rechaza");
+}
+{
+  const x = base(); x.rp.modo_pago = "semana";
+  revisar(!!mensajes(valida(x))["rp.modo_pago"], "modo de pago desconocido se rechaza");
+  x.rp.modo_pago = "reserva"; x.rp.visibilidad = "todo";
+  revisar(!!mensajes(valida(x))["rp.visibilidad"], "visibilidad desconocida se rechaza");
+}
+// La misma regla que el editor del dueño (validarRegla) y la base (config_rp_cambiar_regla).
+{
+  const casos = [
+    [{ tipo: "porcentaje", cuota: 0, porcentaje_bp: 1000, monto_centavos: null }, true],
+    [{ tipo: "porcentaje", cuota: 0, porcentaje_bp: 0, monto_centavos: null }, false],
+    [{ tipo: "porcentaje", cuota: 0, porcentaje_bp: 10001, monto_centavos: null }, false],
+    [{ tipo: "porcentaje", cuota: 0, porcentaje_bp: null, monto_centavos: null }, false],
+    [{ tipo: "fijo", cuota: 0, porcentaje_bp: null, monto_centavos: 1 }, true],
+    [{ tipo: "fijo", cuota: 0, porcentaje_bp: null, monto_centavos: 0 }, false],
+    [{ tipo: "fijo", cuota: 0, porcentaje_bp: null, monto_centavos: 10_000_000 }, true],
+    [{ tipo: "fijo", cuota: 0, porcentaje_bp: null, monto_centavos: 10_000_001 }, false],
+    [{ tipo: "cuota", cuota: 4, porcentaje_bp: null, monto_centavos: 20000 }, true],
+    [{ tipo: "cuota", cuota: 0, porcentaje_bp: null, monto_centavos: 20000 }, false],
+    [{ tipo: "cuota", cuota: 101, porcentaje_bp: null, monto_centavos: 20000 }, false],
+    [{ tipo: "cuota", cuota: 100, porcentaje_bp: null, monto_centavos: null }, false],
+  ];
+  const coinciden = casos.every(([regla, esperado]) => esquemaReglaComision.safeParse(regla).success === esperado && (validarRegla(regla) === null) === esperado);
+  revisar(coinciden, `regla: ${casos.length} casos dan lo mismo en el alta y en el editor del dueño`);
+  const mismosMensajes = casos.filter(([, ok]) => !ok).every(([regla]) => {
+    const r = esquemaReglaComision.safeParse(regla);
+    return !r.success && r.error.issues[0].message === validarRegla(regla);
+  });
+  revisar(mismosMensajes, "y con los mismos mensajes de error");
+  const n = esquemaReglaComision.safeParse({ tipo: "fijo", cuota: 9, porcentaje_bp: 500, monto_centavos: 15000 });
+  revisar(n.success && n.data.cuota === 0 && n.data.porcentaje_bp === null, "lo que no usa el tipo se manda vacío (la tabla lo exige)");
+  const t = esquemaReglaComision.safeParse({ tipo: "otro", cuota: 0, porcentaje_bp: null, monto_centavos: 100 });
+  revisar(!t.success, "tipo de regla desconocido se rechaza");
+}
+// Permisos de caja por rol.
+{
+  const m = matrizPorDefecto();
+  revisar(PERMISOS_CAJA_ALTA.length === 9 && Object.values(m.gerente).every(Boolean), "por defecto el gerente puede los 9 permisos");
+  const staffSi = Object.entries(m.staff).filter(([, v]) => v).map(([k]) => k).sort().join(",");
+  revisar(staffSi === "abrir_mesa,cerrar_mesa,cobrar,puerta,registrar_consumo", "por defecto el staff: puerta, abrir, consumo, cobrar y cerrar (igual que caja_tiene_permiso)");
+  revisar(cambiosDePermisos(m).length === 0, "sin cambios no se manda nada");
+  m.staff.cobrar = false; m.staff.anular = true; m.gerente.cerrar_noche = false;
+  const c = cambiosDePermisos(m);
+  revisar(c.length === 3 && c.some((x) => x.rol === "staff" && x.permiso === "cobrar" && x.permitido === false) && c.some((x) => x.rol === "gerente" && x.permiso === "cerrar_noche" && !x.permitido), "solo viajan las casillas que cambian");
+  const x = base(); x.caja_permisos = c;
+  revisar(valida(x).success, "alta con 3 permisos cambiados es válida");
+  x.caja_permisos = [...c, c[0]];
+  revisar(!valida(x).success, "permiso repetido se rechaza");
+  x.caja_permisos = [{ permiso: "cobrar", rol: "rp", permitido: true }];
+  revisar(!valida(x).success, "permisos para RP no existen");
+  x.caja_permisos = [{ permiso: "borrar_todo", rol: "staff", permitido: true }];
+  revisar(!valida(x).success, "permiso desconocido se rechaza");
+  x.caja_permisos = [{ permiso: "cobrar", rol: "staff", permitido: "si" }];
+  revisar(!valida(x).success, "«permitido» tiene que ser sí o no");
+  revisar(permisoPorDefecto("staff", "cuadrar_mesa") === false && permisoPorDefecto("gerente", "cuadrar_mesa") === true, "cuadrar: el staff no, el gerente sí");
+}
+
+// ---------- Configuración del grupo en el alta (B3, sql/post-junta-2/12) ----------
+{
+  const GID = "0de70000-0000-4000-8000-0000000000aa";
+  const idsDe = (a) => new Map(cuentasNuevas(a).map((c, i) => [c.correo, `0de70000-0000-4000-8000-00000000010${i}`]));
+  const conGrupo = (extra) => ({ ...base(), grupo: { modo: "existente", grupo_id: GID, dueno_grupo: "ninguno", cuenta: null, ...extra } });
+  const porDefecto = esquemaAltaClub.parse(conGrupo({}));
+  revisar(porDefecto.grupo.config === "grupo" && payloadSql(porDefecto, idsDe(porDefecto), GID).grupo_config === "heredar", "grupo existente: por defecto sigue la configuración del grupo («heredar»)");
+  const propia = esquemaAltaClub.parse(conGrupo({ config: "alta" }));
+  revisar(payloadSql(propia, idsDe(propia), GID).grupo_config === "propio", "«usar lo de este alta» manda «propio»");
+  revisar(!valida(conGrupo({ config: "otra" })).success, "otro valor de config se rechaza");
+  revisar(payloadSql(esquemaAltaClub.parse(base()), idsDe(esquemaAltaClub.parse(base())), GID).grupo_config === "heredar", "sin grupo: «heredar» (la base no hace nada)");
+}
+
+// ---------- Texto del paso de reglas → entrada (aEntradaRp del asistente) ----------
+// Lo del otro modo viaja si está completo: un clon guarda la regla y las
+// tarifas del origen aunque solo use una (revisión del carril b-alta).
+{
+  const conv = { centavos: (t) => (/^\d+(\.\d{1,2})?$/.test(t.trim()) ? Math.round(Number(t) * 100) : null), bp: porcentajeABp };
+  const textos = (extra) => ({ modo_pago: "reserva", tipo: "fijo", monto_texto: "150", porcentaje_texto: "", cuota_texto: "4", visibilidad: "estado", tarifas: [""], ...extra });
+  const e1 = entradaRpDeTextos(textos({}), conv);
+  revisar(e1.regla?.monto_centavos === 15000 && e1.tarifas_dia.length === 0 && esquemaRp.safeParse(e1).success, "por reserva con la casilla de tarifa vacía: regla $150, sin tarifas");
+  const e2 = entradaRpDeTextos(textos({ tarifas: ["300", "450.50"] }), conv);
+  revisar(e2.tarifas_dia.join(",") === "30000,45050" && e2.regla?.monto_centavos === 15000 && esquemaRp.safeParse(e2).success, "por reserva con tarifas completas: viajan las dos cosas");
+  const e3 = entradaRpDeTextos(textos({ tarifas: ["300", "abc"] }), conv);
+  revisar(e3.tarifas_dia.length === 0 && esquemaRp.safeParse(e3).success, "por reserva con una tarifa mal escrita (campo oculto): no viajan tarifas y no se marca error");
+  const e4 = entradaRpDeTextos(textos({ tarifas: ["300", ""] }), conv);
+  revisar(e4.tarifas_dia.join(",") === "30000", "por reserva: la casilla vacía del final no cuenta");
+  const d1 = entradaRpDeTextos(textos({ modo_pago: "dia", tarifas: ["300"] }), conv);
+  revisar(d1.regla?.tipo === "fijo" && d1.regla.monto_centavos === 15000 && d1.tarifas_dia.join(",") === "30000" && esquemaRp.safeParse(d1).success, "por día con regla completa: viajan la regla y las tarifas");
+  const d2 = entradaRpDeTextos(textos({ modo_pago: "dia", monto_texto: "", tarifas: ["300"] }), conv);
+  revisar(d2.regla === null && esquemaRp.safeParse(d2).success, "por día con la regla vacía: no viaja regla (como antes)");
+  const d3 = entradaRpDeTextos(textos({ modo_pago: "dia", tipo: "porcentaje", porcentaje_texto: "12.5", tarifas: ["300"] }), conv);
+  revisar(d3.regla?.porcentaje_bp === 1250 && d3.regla.monto_centavos === null, "por día con porcentaje 12.5: viaja 1250 bp");
+  const d4 = entradaRpDeTextos(textos({ modo_pago: "dia", tarifas: [""] }), conv);
+  revisar(!esquemaRp.safeParse(d4).success, "por día sin tarifas: zod lo marca (como antes)");
+  const r5 = entradaRpDeTextos(textos({ monto_texto: "" }), conv);
+  revisar(!esquemaRp.safeParse(r5).success, "por reserva sin monto: zod lo marca (como antes)");
 }
 
 console.log(`\n${pasan} pasan, ${fallan} fallan`);

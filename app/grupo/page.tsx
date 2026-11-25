@@ -53,6 +53,8 @@ export default function GrupoPage() {
   const [filas, setFilas] = useState<ResumenAntro[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
+  // Grupos que esta cuenta puede configurar (dueño del grupo o admin).
+  const [gruposConfig, setGruposConfig] = useState(0);
   // Solo cuenta la respuesta de la última consulta.
   const ultimaCarga = useRef(0);
 
@@ -79,6 +81,9 @@ export default function GrupoPage() {
       const rol = perfil.role as Rol;
       if (esPermitido(rol)) {
         setSesion({ estado: "permitido", rol });
+        // Sin el SQL de configuración por grupo, simplemente no sale el enlace.
+        const { data: mios } = await supabase.rpc("grupo_config_mis_grupos");
+        setGruposConfig(Array.isArray(mios) ? mios.length : 0);
       } else {
         setSesion({ estado: "sin_acceso", panel: PANEL_DE[rol] ?? "/cliente" });
       }
@@ -184,6 +189,15 @@ export default function GrupoPage() {
             </Button>
           </div>
         </div>
+
+        {gruposConfig > 0 && (
+          <Link
+            href="/grupo/configuracion"
+            className="inline-flex min-h-10 w-fit items-center rounded-lg border border-border px-3 text-sm font-medium hover:bg-muted"
+          >
+            Configuración del grupo
+          </Link>
+        )}
 
         <SelectorRango
           atajo={atajo}

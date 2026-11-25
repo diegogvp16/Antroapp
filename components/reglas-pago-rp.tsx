@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { ConfigRpAntro } from "@/components/config-rp/config-rp-antro";
+import { OrigenConfigAntro } from "@/components/grupo/origen-config-antro";
+import { mensajeParaUsuario, type ErrorBase } from "@/lib/errores-base";
 import type {
   Club,
   ClubDiaTarifa,
@@ -37,6 +39,13 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
   const [modoSubmitting, setModoSubmitting] = useState(false);
   const [modoError, setModoError] = useState<string | null>(null);
   const [modoSaved, setModoSaved] = useState(false);
+  // Para releer «del grupo / propio» tras un cambio aquí (versionOrigen) y
+  // la configuración de RPs tras un cambio de origen (versionRp).
+  const [versionOrigen, setVersionOrigen] = useState(0);
+  const [versionRp, setVersionRp] = useState(0);
+  // Nombre del grupo si bloqueó el modo de pago (y sus tarifas) para sus
+  // antros: la base lo rechaza (P0001), así que aquí no se deja editar.
+  const [bloqueoModo, setBloqueoModo] = useState<string | null>(null);
 
   const [tarifas, setTarifas] = useState<ClubDiaTarifa[]>([]);
   const [loadingTarifas, setLoadingTarifas] = useState(true);
@@ -44,6 +53,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
   const [tarifaMonto, setTarifaMonto] = useState("");
   const [tarifaSubmitting, setTarifaSubmitting] = useState(false);
   const [tarifaError, setTarifaError] = useState<string | null>(null);
+  const [tarifaBorrarError, setTarifaBorrarError] = useState<string | null>(null);
   const [deletingTarifaId, setDeletingTarifaId] = useState<string | null>(
     null,
   );
@@ -197,9 +207,11 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
 
       await onUpdate();
       setModoSaved(true);
+      setVersionOrigen((v) => v + 1);
     } catch (err) {
       console.error("Error guardando modo de pago:", err);
-      setModoError("No pudimos guardar. Intenta de nuevo.");
+      // P0001 = aviso de la base (por ejemplo, el grupo lo bloqueó).
+      setModoError(mensajeParaUsuario(err as ErrorBase, "No pudimos guardar. Intenta de nuevo."));
     } finally {
       setModoSubmitting(false);
     }
@@ -239,15 +251,19 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
       setTarifaPosicion("");
       setTarifaMonto("");
       await fetchTarifas();
+      // Cambiar una tarifa vuelve «propio» el modo de pago si el antro seguía al grupo.
+      setVersionOrigen((v) => v + 1);
     } catch (err) {
       console.error("Error guardando tarifa:", err);
-      setTarifaError("No pudimos guardar la tarifa. Intenta de nuevo.");
+      // P0001 = aviso de la base (por ejemplo, el grupo lo bloqueó).
+      setTarifaError(mensajeParaUsuario(err as ErrorBase, "No pudimos guardar la tarifa. Intenta de nuevo."));
     } finally {
       setTarifaSubmitting(false);
     }
   }
 
   async function handleDeleteTarifa(tarifa: ClubDiaTarifa) {
+    setTarifaBorrarError(null);
     setDeletingTarifaId(tarifa.id);
     try {
       const supabase = createClient();
@@ -259,8 +275,12 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
       if (error) throw error;
 
       setTarifas((prev) => prev.filter((t) => t.id !== tarifa.id));
+      setVersionOrigen((v) => v + 1);
     } catch (err) {
       console.error("Error borrando tarifa:", err);
+      setTarifaBorrarError(
+        mensajeParaUsuario(err as ErrorBase, `No pudimos borrar la tarifa del día ${tarifa.posicion}. Intenta de nuevo.`),
+      );
     } finally {
       setDeletingTarifaId(null);
     }
@@ -430,6 +450,18 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
 
   return (
     <>
+      {/* Solo si el antro está en un grupo: qué viene del grupo y qué es
+          propio (sql/post-junta-2/12-config-grupo.sql). */}
+      <OrigenConfigAntro
+        clubId={club.id}
+        version={versionOrigen}
+        onCambio={() => {
+          setVersionRp((v) => v + 1);
+          void onUpdate();
+        }}
+        onBloqueos={(b) => setBloqueoModo(b.modo_pago ?? null)}
+      />
+
       <Card>
         <CardContent className="flex flex-col gap-4 px-6 py-6">
           <div className="flex flex-col gap-1.5">
@@ -437,6 +469,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
             <select
               id="pago_rp_modo"
               className={SELECT_CLASSES}
+              disabled={bloqueoModo !== null}
               value={modo}
               onChange={(e) =>
                 setModo(e.target.value as "reserva" | "dia")
@@ -447,6 +480,11 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
             </select>
           </div>
 
+          {bloqueoModo !== null && (
+            <p className="text-sm break-words text-status-warn" role="status">
+              El modo de pago y las tarifas por día los define el grupo «{bloqueoModo}» para todos sus antros. Pídele al dueño del grupo que los cambie.
+            </p>
+          )}
           {modoError && (
             <p className="text-sm text-destructive" role="alert">
               {modoError}
@@ -460,7 +498,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
             type="button"
             size="sm"
             onClick={handleSaveModo}
-            disabled={modoSubmitting || modo === club.pago_rp_modo}
+            disabled={modoSubmitting || modo === club.pago_rp_modo || bloqueoModo !== null}
           >
             {modoSubmitting ? "Guardando..." : "Guardar modo de pago"}
           </Button>
@@ -469,7 +507,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
 
       {/* Qué ven los RPs y regla de comisión del antro: con vigencia desde el
           lunes siguiente y bitácora (sql/post-junta/07-config-rp.sql). */}
-      <ConfigRpAntro clubId={club.id} />
+      <ConfigRpAntro key={`config-rp-${versionRp}`} clubId={club.id} onGuardado={() => setVersionOrigen((v) => v + 1)} />
 
       {modo === "dia" && (
         <>
@@ -490,6 +528,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
                     min={1}
                     value={tarifaPosicion}
                     onChange={(e) => setTarifaPosicion(e.target.value)}
+                    disabled={bloqueoModo !== null}
                     required
                   />
                 </div>
@@ -502,10 +541,11 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
                     min={0}
                     value={tarifaMonto}
                     onChange={(e) => setTarifaMonto(e.target.value)}
+                    disabled={bloqueoModo !== null}
                     required
                   />
                 </div>
-                <Button type="submit" disabled={tarifaSubmitting}>
+                <Button type="submit" disabled={tarifaSubmitting || bloqueoModo !== null}>
                   {tarifaSubmitting ? "Guardando..." : "Guardar tarifa"}
                 </Button>
               </form>
@@ -525,6 +565,11 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
 
           {loadingTarifas && (
             <p className="text-sm text-muted-foreground">Cargando...</p>
+          )}
+          {tarifaBorrarError && (
+            <p className="text-sm break-words text-destructive" role="alert">
+              {tarifaBorrarError}
+            </p>
           )}
           {!loadingTarifas && tarifas.length === 0 && (
             <p className="text-sm text-muted-foreground">
@@ -546,7 +591,7 @@ export function ReglasPagoRP({ club, onUpdate }: ReglasPagoRPProps) {
                         variant="outline"
                         size="sm"
                         onClick={() => handleDeleteTarifa(t)}
-                        disabled={deletingTarifaId === t.id}
+                        disabled={deletingTarifaId === t.id || bloqueoModo !== null}
                       >
                         {deletingTarifaId === t.id
                           ? "Borrando..."

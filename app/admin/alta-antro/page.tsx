@@ -6,20 +6,30 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { aEntrada, BORRADOR_INICIAL, erroresDelPaso, PASOS, pasoDeRuta, type Borrador } from "@/components/admin/alta/estado";
+import { mensajeParaUsuario } from "@/lib/errores-base";
+import { esquemaPlantilla, precargaDesdePlantilla } from "@/lib/domain/alta-club";
+import { aEntrada, BORRADOR_INICIAL, borradorDesdeClon, erroresDelPaso, PASO, PASOS, pasoDeRuta, type Borrador } from "@/components/admin/alta/estado";
 import { PasoDatos } from "@/components/admin/alta/paso-datos";
 import { PasoPoliticas } from "@/components/admin/alta/paso-politicas";
 import { PasoMesas } from "@/components/admin/alta/paso-mesas";
+import { PasoReglas } from "@/components/admin/alta/paso-reglas";
 import { PasoEquipo } from "@/components/admin/alta/paso-equipo";
 import { PasoGrupo, type GrupoExistente } from "@/components/admin/alta/paso-grupo";
 import { PasoResumen } from "@/components/admin/alta/paso-resumen";
 import { ResultadoAlta, type Credencial } from "@/components/admin/alta/resultado-alta";
+import { AvisoClon } from "@/components/admin/alta/aviso-clon";
 
 // Asistente de alta de un antro nuevo. La pantalla solo deja entrar al
 // admin, pero quien manda es POST /api/admin/alta-club (y la función de la
 // base), que vuelven a validar todo y a exigir admin.
+//
+// Con ?desde=<antro> es un CLON (B2): el asistente se precarga con la
+// configuración del origen (admin_club_plantilla, solo admin) y el admin la
+// revisa paso a paso como en cualquier alta. Al dar de alta, la base copia
+// además el catálogo de productos del origen, sin existencias.
 
-type Resultado = { nombre: string; publicado: boolean; credenciales: Credencial[] };
+type Resultado = { nombre: string; publicado: boolean; credenciales: Credencial[]; aviso: string | null };
+type EstadoClon = { estado: "cargando" } | { estado: "error"; mensaje: string } | null;
 
 export default function AltaAntroPage() {
   const router = useRouter();
@@ -31,6 +41,8 @@ export default function AltaAntroPage() {
   const [enviando, setEnviando] = useState(false);
   const [errorEnvio, setErrorEnvio] = useState<string | null>(null);
   const [resultado, setResultado] = useState<Resultado | null>(null);
+  const [clon, setClon] = useState<EstadoClon>(null);
+  const [intentoClon, setIntentoClon] = useState(0);
   const titulo = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
@@ -42,11 +54,51 @@ export default function AltaAntroPage() {
       if (!user) return router.replace("/admin/login");
       const { data: perfil } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
       if (perfil?.role !== "admin") return router.replace("/admin/login");
+      // Sin parpadeo del asistente vacío mientras se lee la plantilla.
+      if (new URLSearchParams(window.location.search).get("desde")) setClon({ estado: "cargando" });
       setListo(true);
       const { data } = await supabase.from("grupos").select("id, nombre, grupo_clubs(club_id)").order("nombre");
       setGrupos((data ?? []).map((g) => ({ id: g.id, nombre: g.nombre, antros: g.grupo_clubs?.length ?? 0 })));
     })();
   }, [router]);
+
+  // Clon: lee la plantilla del origen (se lee de la URL aquí para no
+  // necesitar un Suspense con useSearchParams).
+  useEffect(() => {
+    if (!listo) return;
+    const desde = new URLSearchParams(window.location.search).get("desde");
+    if (!desde) return;
+    let vigente = true;
+    setClon({ estado: "cargando" });
+    (async () => {
+      const { data, error } = await createClient().rpc("admin_club_plantilla", { p_club: desde });
+      if (!vigente) return;
+      if (error) {
+        setClon({ estado: "error", mensaje: mensajeParaUsuario(error, "No se pudo leer la configuración del antro de origen.") });
+        return;
+      }
+      const plantilla = esquemaPlantilla.safeParse(data);
+      if (!plantilla.success) {
+        console.error("Plantilla de clon inesperada", plantilla.error.issues[0]);
+        setClon({ estado: "error", mensaje: "La configuración del antro de origen llegó incompleta. Intenta de nuevo." });
+        return;
+      }
+      setB(borradorDesdeClon(precargaDesdePlantilla(plantilla.data)));
+      setPaso(0);
+      setClon(null);
+    })();
+    return () => {
+      vigente = false;
+    };
+  }, [listo, intentoClon]);
+
+  function altaEnBlanco() {
+    setClon(null);
+    setB(BORRADOR_INICIAL);
+    setPaso(0);
+    setErrores({});
+    router.replace("/admin/alta-antro");
+  }
 
   // Al cambiar de paso, el foco va al título (lectores de pantalla y teclado).
   useEffect(() => {
@@ -86,7 +138,9 @@ export default function AltaAntroPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(aEntrada(b)),
       });
-      const cuerpo: { ok?: boolean; error?: string; campos?: Record<string, string>; credenciales?: Credencial[] } = await res.json().catch(() => ({}));
+      const cuerpo: { ok?: boolean; error?: string; aviso?: string; campos?: Record<string, string>; credenciales?: Credencial[] } = await res
+        .json()
+        .catch(() => ({}));
       if (!res.ok || !cuerpo.ok) {
         if (cuerpo.campos && Object.keys(cuerpo.campos).length) {
           const primero = Object.keys(cuerpo.campos)[0];
@@ -96,7 +150,7 @@ export default function AltaAntroPage() {
         setErrorEnvio(cuerpo.error ?? "No se pudo dar de alta el antro. No se guardó nada; intenta de nuevo.");
         return;
       }
-      setResultado({ nombre: b.datos.nombre.trim(), publicado: b.publicar, credenciales: cuerpo.credenciales ?? [] });
+      setResultado({ nombre: b.datos.nombre.trim(), publicado: b.publicar, credenciales: cuerpo.credenciales ?? [], aviso: cuerpo.aviso ?? null });
     } catch {
       setErrorEnvio("Sin conexión: no se guardó nada. Revisa tu internet e intenta de nuevo.");
     } finally {
@@ -125,24 +179,51 @@ export default function AltaAntroPage() {
                 nombreAntro={resultado.nombre}
                 publicado={resultado.publicado}
                 credenciales={resultado.credenciales}
+                aviso={resultado.aviso}
                 onOtro={() => {
                   setResultado(null);
-                  setB(BORRADOR_INICIAL);
-                  setPaso(0);
+                  altaEnBlanco();
                 }}
               />
+            </CardContent>
+          </Card>
+        ) : clon ? (
+          <Card>
+            <CardContent className="flex flex-col gap-4 px-5 py-5">
+              <h1 ref={titulo} tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">
+                Clonar antro
+              </h1>
+              {clon.estado === "cargando" ? (
+                <p role="status" className="text-sm text-muted-foreground">
+                  Leyendo la configuración del antro de origen…
+                </p>
+              ) : (
+                <>
+                  <p role="alert" className="rounded-lg border border-status-err/40 bg-status-err/10 p-3 text-sm text-status-err">
+                    {clon.mensaje}
+                  </p>
+                  <div className="flex flex-wrap gap-3">
+                    <Button type="button" className="h-11 px-5" onClick={() => setIntentoClon((n) => n + 1)}>
+                      Intentar de nuevo
+                    </Button>
+                    <Button type="button" variant="outline" className="h-11 px-4" onClick={altaEnBlanco}>
+                      Hacer un alta en blanco
+                    </Button>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         ) : (
           <>
             <header className="flex flex-col gap-3">
               <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                Alta de antro · paso {paso + 1} de {PASOS.length}
+                {b.clon ? "Clon de antro" : "Alta de antro"} · paso {paso + 1} de {PASOS.length}
               </p>
               <h1 ref={titulo} tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">
                 {PASOS[paso]}
               </h1>
-              <ol className="grid grid-cols-6 gap-1" aria-label="Pasos">
+              <ol className="grid grid-cols-7 gap-1" aria-label="Pasos">
                 {PASOS.map((nombre, i) => (
                   <li key={nombre}>
                     <button
@@ -161,20 +242,31 @@ export default function AltaAntroPage() {
               </ol>
             </header>
 
+            {b.clon && paso === PASO.datos && <AvisoClon clon={b.clon} onEnBlanco={altaEnBlanco} />}
+
             <Card>
               <CardContent className="px-5 py-5">
-                {paso === 0 && <PasoDatos datos={b.datos} errores={errores} onCambio={(datos) => actualizar({ ...b, datos })} />}
-                {paso === 1 && <PasoPoliticas politicas={b.politicas} errores={errores} onCambio={(politicas) => actualizar({ ...b, politicas })} />}
-                {paso === 2 && <PasoMesas mesas={b.mesas} errores={errores} onCambio={(mesas) => actualizar({ ...b, mesas })} />}
-                {paso === 3 && (
+                {paso === PASO.datos && <PasoDatos datos={b.datos} errores={errores} onCambio={(datos) => actualizar({ ...b, datos })} />}
+                {paso === PASO.politicas && <PasoPoliticas politicas={b.politicas} errores={errores} onCambio={(politicas) => actualizar({ ...b, politicas })} />}
+                {paso === PASO.mesas && <PasoMesas mesas={b.mesas} errores={errores} onCambio={(mesas) => actualizar({ ...b, mesas })} />}
+                {paso === PASO.reglas && (
+                  <PasoReglas
+                    rp={b.rp}
+                    permisos={b.permisos}
+                    errores={errores}
+                    onCambio={(rp) => actualizar({ ...b, rp })}
+                    onPermisos={(permisos) => actualizar({ ...b, permisos })}
+                  />
+                )}
+                {paso === PASO.equipo && (
                   <PasoEquipo
                     equipo={{ conDueno: b.conDueno, dueno: b.dueno, personal: b.personal }}
                     errores={errores}
                     onCambio={(eq) => actualizar({ ...b, ...eq })}
                   />
                 )}
-                {paso === 4 && <PasoGrupo grupo={b.grupo} grupos={grupos} hayDueno={b.conDueno} errores={errores} onCambio={(grupo) => actualizar({ ...b, grupo })} />}
-                {paso === 5 && <PasoResumen borrador={b} grupos={grupos} onIrA={irA} onPublicar={(publicar) => setB({ ...b, publicar })} />}
+                {paso === PASO.grupo && <PasoGrupo grupo={b.grupo} grupos={grupos} hayDueno={b.conDueno} errores={errores} onCambio={(grupo) => actualizar({ ...b, grupo })} />}
+                {paso === PASO.resumen && <PasoResumen borrador={b} grupos={grupos} onIrA={irA} onPublicar={(publicar) => setB({ ...b, publicar })} />}
               </CardContent>
             </Card>
 

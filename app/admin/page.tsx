@@ -556,7 +556,8 @@ export default function AdminPage() {
               <CardDescription>
                 Asistente en pasos: datos, cover y políticas, mesas, equipo
                 (dueño, gerentes, staff y RPs) y grupo. Queda en borrador o
-                publicado; si algo falla no se guarda nada.
+                publicado; si algo falla no se guarda nada. Para partir de
+                la configuración de otro antro, usa «Clonar» en su tarjeta.
               </CardDescription>
             </CardHeader>
             <CardContent className="px-6 pb-6">
@@ -808,6 +809,20 @@ function TarjetaAntro({ club }: { club: Club }) {
               {cover}
             </span>
           )}
+        </div>
+        {/* Clon (B2): abre el asistente de alta precargado con la
+            configuración de este antro (solo admin; lo exige la base). */}
+        <div className="flex w-full justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-10 px-3"
+            render={<Link href={`/admin/alta-antro?desde=${club.id}`} />}
+            nativeButton={false}
+            aria-label={`Clonar ${club.nombre}`}
+          >
+            Clonar
+          </Button>
         </div>
       </CardContent>
     </Card>

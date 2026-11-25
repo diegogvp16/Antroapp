@@ -1,6 +1,9 @@
 // Pruebas del alta de antros (POST /api/admin/alta-club y admin_alta_club)
 // contra el servidor local de dev (node scripts/dev/servidor-dev.mjs, puerto
-// 3001) y antroapp-dev. Requiere sql/post-junta/01-alta-club.sql en dev.
+// 3001) y antroapp-dev. Requiere sql/post-junta/01-alta-club.sql y
+// sql/post-junta-2/10-alta-club-reglas.sql en dev (las reglas de RPs se
+// prueban a fondo en scripts/dev/probar-alta-reglas.mjs). Datos con prefijo
+// t_alta_ / «T alta Prueba».
 //
 //   node scripts/dev/probar-alta-club.mjs [--base=http://localhost:3001]
 //
@@ -71,21 +74,22 @@ const altaBase = (nombre, extra = {}) => ({
   datos: { nombre, direccion: "Calle Ficticia 9, Centro", ciudad: "Querétaro", zona_horaria: "America/Mexico_City", horario: "Vie y Sáb 10pm a 3am" },
   politicas: { cover_modo: "monto", cover_monto: 250, deposito_monto: 0, edad_minima: 18, codigo_vestimenta: "Casual", tipo_musica: "", ambiente: "", tolerancia_hora: "23:30" },
   mesas: [{ numero: "1", capacidad: 8 }, { numero: "2", capacidad: 8 }, { numero: "VIP 1", capacidad: 15 }],
-  dueno: { nombre: "Dueña Alta Prueba", correo: `alta_dueno_${sufijo}@example.com` },
+  rp: { modo_pago: "reserva", regla: { tipo: "fijo", cuota: 0, porcentaje_bp: null, monto_centavos: 15000 }, visibilidad: "estado_monto", tarifas_dia: [] },
+  dueno: { nombre: "Dueña Alta Prueba", correo: `t_alta_dueno_${sufijo}@example.com` },
   personal: [
-    { nombre: "Gerente Alta Prueba", correo: `alta_gerente_${sufijo}@example.com`, rol: "gerente" },
-    { nombre: "Staff Alta Prueba", correo: `alta_staff_${sufijo}@example.com`, rol: "staff" },
-    { nombre: "RP Alta Uno", correo: `alta_rp1_${sufijo}@example.com`, rol: "rp" },
-    { nombre: "RP Alta Dos", correo: `alta_rp2_${sufijo}@example.com`, rol: "rp" },
+    { nombre: "Gerente Alta Prueba", correo: `t_alta_gerente_${sufijo}@example.com`, rol: "gerente" },
+    { nombre: "Staff Alta Prueba", correo: `t_alta_staff_${sufijo}@example.com`, rol: "staff" },
+    { nombre: "RP Alta Uno", correo: `t_alta_rp1_${sufijo}@example.com`, rol: "rp" },
+    { nombre: "RP Alta Dos", correo: `t_alta_rp2_${sufijo}@example.com`, rol: "rp" },
   ],
-  grupo: { modo: "nuevo", nombre: `Grupo Alta Prueba ${sufijo}`, dueno_grupo: "dueno_antro", cuenta: null },
+  grupo: { modo: "nuevo", nombre: `T alta Grupo ${sufijo}`, dueno_grupo: "dueno_antro", cuenta: null },
   publicar: false,
   ...extra,
 });
 
 const clubsCreados = [];
 const gruposCreados = [];
-const NOMBRE_PREFIJO = `Alta Prueba ${sufijo}`;
+const NOMBRE_PREFIJO = `T alta Prueba ${sufijo}`;
 async function clubPorNombre(nombre) {
   const { data } = await svc.from("clubs").select("*").eq("nombre", nombre);
   return data ?? [];
@@ -174,9 +178,9 @@ try {
   const nombre2 = `${NOMBRE_PREFIJO} publicado`;
   const r2 = await alta(sAdmin.galletas, altaBase(nombre2, {
     dueno: null,
-    personal: [{ nombre: "Staff Publicado", correo: `alta_staff2_${sufijo}@example.com`, rol: "staff" }],
+    personal: [{ nombre: "Staff Publicado", correo: `t_alta_staff2_${sufijo}@example.com`, rol: "staff" }],
     mesas: [],
-    grupo: { modo: "existente", grupo_id: r1.cuerpo.resultado?.grupo_id, dueno_grupo: "cuenta_nueva", cuenta: { nombre: "Dueño de Grupo Prueba", correo: `alta_grupo_${sufijo}@example.com` } },
+    grupo: { modo: "existente", grupo_id: r1.cuerpo.resultado?.grupo_id, dueno_grupo: "cuenta_nueva", cuenta: { nombre: "Dueño de Grupo Prueba", correo: `t_alta_grupo_${sufijo}@example.com` } },
     publicar: true,
   }));
   revisar(r2.status === 200 && r2.cuerpo.ok, "admin da de alta publicado, sin dueño ni mesas, en el grupo existente");
@@ -193,9 +197,9 @@ try {
   const antes = (await usuariosConSufijo()).length;
   const nombre3 = `${NOMBRE_PREFIJO} correo repetido`;
   const r3 = await alta(sAdmin.galletas, altaBase(nombre3, {
-    dueno: { nombre: "Dueño Tres", correo: `alta_dueno3_${sufijo}@example.com` },
+    dueno: { nombre: "Dueño Tres", correo: `t_alta_dueno3_${sufijo}@example.com` },
     personal: [
-      { nombre: "RP Tres", correo: `alta_rp3_${sufijo}@example.com`, rol: "rp" },
+      { nombre: "RP Tres", correo: `t_alta_rp3_${sufijo}@example.com`, rol: "rp" },
       { nombre: "Staff Existente", correo: "dev_staff@example.com", rol: "staff" },
     ],
     grupo: { modo: "ninguno" },
@@ -210,7 +214,7 @@ try {
   // Falla a la mitad de la transacción: el antro y las mesas ya se insertaron
   // cuando la segunda cuenta resulta no ser nueva.
   const ca = await clienteDe("dev_admin@example.com", PASS_DEV);
-  const nueva = await svc.auth.admin.createUser({ email: `alta_mitad_${sufijo}@example.com`, password: "Prueba-" + randomUUID(), email_confirm: true, app_metadata: { alta_club: true } });
+  const nueva = await svc.auth.admin.createUser({ email: `t_alta_mitad_${sufijo}@example.com`, password: "Prueba-" + randomUUID(), email_confirm: true, app_metadata: { alta_club: true } });
   const { data: staffDev } = await svc.from("profiles").select("id").eq("role", "staff").eq("nombre", "Staff Dev").maybeSingle();
   const nombre4 = `${NOMBRE_PREFIJO} a medias`;
   const r4 = await ca.rpc("admin_alta_club", {
@@ -230,7 +234,7 @@ try {
 
   // Una cuenta de Auth sin perfil que NO creó el alta (registro público,
   // cuenta vieja) no se puede ligar al antro aunque el admin lo pida directo.
-  const ajena = await svc.auth.admin.createUser({ email: `alta_ajena_${sufijo}@example.com`, password: "Prueba-" + randomUUID(), email_confirm: true });
+  const ajena = await svc.auth.admin.createUser({ email: `t_alta_ajena_${sufijo}@example.com`, password: "Prueba-" + randomUUID(), email_confirm: true });
   const rAjena = await ca.rpc("admin_alta_club", { p: { alta_id: randomUUID(), club: { nombre: `${NOMBRE_PREFIJO} ajena`, direccion: "Calle 1", ciudad: "Querétaro", horario: "Vie 10pm" }, usuarios: [{ id: ajena.data.user.id, nombre: "Ajena", rol: "dueno" }] } });
   revisar(!!rAjena.error && /no es nueva/.test(rAjena.error.message) && (await clubPorNombre(`${NOMBRE_PREFIJO} ajena`)).length === 0, "una cuenta de Auth que no creó el alta no se puede ligar");
   await svc.auth.admin.deleteUser(ajena.data.user.id);
@@ -262,7 +266,7 @@ try {
   // ---------- 5. Alta masiva (opcional: --masivo) ----------
   if (process.argv.includes("--masivo")) {
     const nombre6 = `${NOMBRE_PREFIJO} masivo`;
-    const rps = Array.from({ length: 130 }, (_, i) => ({ nombre: `RP Masivo ${i + 1}`, correo: `alta_masivo${i}_${sufijo}@example.com`, rol: "rp" }));
+    const rps = Array.from({ length: 130 }, (_, i) => ({ nombre: `RP Masivo ${i + 1}`, correo: `t_alta_masivo${i}_${sufijo}@example.com`, rol: "rp" }));
     const tm = performance.now();
     const r6 = await alta(sAdmin.galletas, altaBase(nombre6, { dueno: null, personal: rps, grupo: { modo: "ninguno" } }));
     const seg = (performance.now() - tm) / 1000;
