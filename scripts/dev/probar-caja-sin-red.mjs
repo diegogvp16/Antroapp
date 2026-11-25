@@ -20,6 +20,8 @@
 //   PLAYWRIGHT_DESDE=<carpeta con node_modules/playwright> \
 //     node scripts/dev/probar-caja-sin-red.mjs [http://localhost:3001] [--fase2]
 //
+// --limpiar-restos: solo borra lo que haya dejado una corrida interrumpida
+// (antros "T caja …" y cuentas t_caja_…@example.com) y termina.
 // --fase2: el servidor corre con NEXT_PUBLIC_FASE2=1; además prueba sin red
 // un consumo del catálogo (descuenta existencias una vez) y un cobro con
 // propina.
@@ -55,6 +57,27 @@ const SHOTS = path.join(RAIZ, "screenshots-b-caja") + path.sep;
 mkdirSync(SHOTS, { recursive: true });
 const opciones = { auth: { persistSession: false, autoRefreshToken: false } };
 const svc = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, opciones);
+
+// Restos de una corrida interrumpida (Ctrl+C, proceso muerto): sin el
+// finally no se borró nada. Solo toca el prefijo de esta prueba.
+if (process.argv.includes("--limpiar-restos")) {
+  const db = await conectarDevEscritura();
+  const clubs = (await db.q("select id from public.clubs where nombre like 'T caja %'")).map((r) => r.id);
+  const users = (await db.q("select id, email from auth.users where email like 't\\_caja\\_%@example.com'"));
+  await db.q("begin");
+  await db.q("set local antroapp.borrado_pruebas = 'on'");
+  for (const c of clubs)
+    for (const t of ["producto_movimientos", "caja_eventos", "caja_cuadres", "caja_pagos", "caja_consumos", "mesa_cuentas", "mesa_sesiones", "caja_noches", "caja_permisos", "productos", "club_tables"])
+      await db.q(`delete from public.${t} where club_id = $1`, [c]);
+  if (users.length) await db.q("delete from public.profiles where id = any($1::uuid[])", [users.map((u) => u.id)]);
+  for (const c of clubs) await db.q("delete from public.clubs where id = $1", [c]);
+  await db.q("commit");
+  await db.fin();
+  for (const u of users) await svc.auth.admin.deleteUser(u.id);
+  if (users.length) await svc.from("login_intentos").delete().in("email_hash", users.map((u) => createHash("sha256").update(u.email.toLowerCase()).digest("hex")));
+  console.log(`Restos borrados: ${clubs.length} antros, ${users.length} cuentas.`);
+  process.exit(0);
+}
 
 const TAG = randomUUID().slice(0, 6);
 const PASS = "Prueba-" + randomUUID();
