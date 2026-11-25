@@ -380,6 +380,9 @@ export default function AdminPage() {
               Mensualidades y planes
             </Button>
           )}
+          <Button variant="outline" className="h-10" render={<Link href="/admin/correos" />} nativeButton={false}>
+            Bandeja de correos
+          </Button>
         </div>
 
         <VerificacionesPendientes onCambio={fetchClubs} />

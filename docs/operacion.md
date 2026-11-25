@@ -11,6 +11,7 @@ marcado **(pase 2)** existe solo después de aplicar el SQL y el código de
 |---|---|---|
 | Salud **(pase 2)** | `https://antroapp.vercel.app/api/salud` | 200 = app y base bien; 503 = la app responde pero la base no. Sin datos personales. |
 | Errores recientes | `/admin` → «Errores recientes» | Errores que vieron los usuarios en pantalla, agrupados, con conteo de 24 h. **(pase 2)**: sin correos, teléfonos ni tokens. |
+| Bandeja de correos | `/admin` → «Bandeja de correos» | Cada correo que la app mandó, archivó o no pudo mandar (30 días), con el modo de envío actual. No incluye los de Supabase. |
 | Logs | Vercel → proyecto → **Logs** (filtro **Level: Error**) | Errores del servidor. Los nuevos **(pase 2)** registran solo código y tipo, sin datos personales (`lib/log.ts`). |
 | Mensualidades **(pase 2, con bandera)** | `/admin/mensualidad` | Antros en gracia o vencidos. |
 | Humo | `node scripts/humo-produccion.mjs https://antroapp.vercel.app` | Solo GET, sin sesión: páginas, cabeceras, manifiestos. |
@@ -77,16 +78,29 @@ diaria **despublica** antros vencidos. Cada tipo, máximo una vez por hora
    | Nombre | Valor | Tipo |
    |---|---|---|
    | `ALERTAS_CORREO` | `1` | Plain |
-   | `RESEND_API_KEY` | la llave del paso 3 | **Sensitive** |
    | `ALERTAS_PARA` | tu correo | Plain |
-   | `ALERTAS_DE` | `alertas@tu-dominio` (o `onboarding@resend.dev`) | Plain |
+   | `CORREO_MODO` | `enviar` | Plain |
+   | `RESEND_API_KEY` | la llave del paso 3 | **Sensitive** |
+   | `CORREO_DE` | `alertas@tu-dominio` (o `onboarding@resend.dev`; `ALERTAS_DE` también sirve) | Plain |
 
 5. Redeploy.
 
+**Ojo (desde post-junta-2, B7)**: todos los correos de la app salen por un
+solo punto (`lib/correo.ts`) y quedan en la **bandeja** `/admin/correos`. Sin
+`CORREO_MODO=enviar` el modo es **archivo**: la alerta se guarda en la
+bandeja pero **no llega a tu correo**. Y aunque pongas `enviar`, en vista
+previa, dev o local solo se manda a los correos de `CORREO_LISTA_BLANCA`
+(separados por coma); a los demás se archiva. `CORREO_MODO=apagado` no
+manda ni guarda nada. Los correos de Supabase (recuperar contraseña,
+confirmar registro) **no** pasan por aquí.
+
 **Qué deberías ver**: nada hasta que haya un problema. Para probar en una
-vista previa con las mismas variables, provoca 10 errores (por ejemplo,
-abriendo 10 veces una página que falle en esa vista previa) y revisa tu
-correo. Apagarlas: quita `ALERTAS_CORREO`.
+vista previa: pon ahí `ALERTAS_CORREO=1`, `ALERTAS_PARA` y, si quieres que
+llegue, `CORREO_MODO=enviar`, la llave, `CORREO_DE` y tu correo en
+`CORREO_LISTA_BLANCA`. Provoca 10 errores (por ejemplo, abriendo 10 veces
+una página que falle en esa vista previa) y revisa `/admin/correos` (y tu
+correo, si lo pusiste en la lista blanca; el asunto llega con «[Prueba]»).
+Apagarlas: quita `ALERTAS_CORREO`.
 
 ## Si algo se cae
 

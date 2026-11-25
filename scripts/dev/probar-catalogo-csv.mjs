@@ -11,7 +11,9 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { verificarEnvDev, conectarDevEscritura } from "../db/conexion.mjs";
-import { leerCatalogoCsv, partirLinea, pesosACentavos } from "../../lib/domain/catalogo-csv.ts";
+import { importarTs } from "./cargar-ts.mjs";
+// catalogo-csv importa el lector compartido sin extensión: se carga con el gancho.
+const { leerCatalogoCsv, partirLinea, pesosACentavos } = await importarTs("../../lib/domain/catalogo-csv.ts", import.meta.url);
 
 const env = verificarEnvDev();
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");

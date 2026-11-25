@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { EquipoPersonal } from "@/components/equipo/equipo-personal";
+import { ImportarMesas } from "@/components/mesas/importar-mesas";
 import { mensualidadActiva } from "@/lib/mensualidad/bandera";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -486,6 +487,11 @@ export default function DuenoPanelPage() {
         capacidad: capacidadNum,
       });
 
+      if (insertError?.code === "23505") {
+        // Índice único por antro y nombre (sql/post-junta-2/22-importar-mesas.sql).
+        setTableError("Ya tienes una mesa con ese nombre.");
+        return;
+      }
       if (insertError) throw insertError;
 
       setTableNumero("");
@@ -848,7 +854,7 @@ export default function DuenoPanelPage() {
             variant="outline"
             className="h-10 self-start"
           >
-            Ver actividad del antro
+            Invitar por correo, permisos y actividad
           </Button>
         </section>
 
@@ -964,6 +970,8 @@ export default function DuenoPanelPage() {
               )}
             </CardContent>
           </Card>
+
+          <ImportarMesas clubId={club.id} existentes={tables} onListo={() => fetchTables(club.id)} />
 
           {tables.length > 0 && (
             <div className="flex flex-col gap-2">

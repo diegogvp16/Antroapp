@@ -6,6 +6,14 @@
 // El encabezado es opcional. Un campo con comas va entre comillas: "Whisky, 750 ml".
 // Precio en pesos con punto decimal: 350 o 350.50 (con coma de miles solo si
 // el separador no es coma, o entre comillas: "1,250.50").
+//
+// El lector (separador, comillas, BOM) vive en lib/domain/lector-csv.ts y lo
+// comparten mesas y personal; aquí se reexporta para no cambiar a quien ya
+// lo usaba desde este archivo.
+
+import { lineasCsv, quitarAcentos } from "./lector-csv";
+
+export { partirLinea, separadorDe } from "./lector-csv";
 
 export interface FilaCatalogo {
   nombre: string;
@@ -16,35 +24,6 @@ export interface FilaCatalogo {
 }
 
 export const MAX_FILAS_CSV = 500;
-
-function separadorDe(linea: string): string {
-  const cuenta = (c: string) => linea.split(c).length - 1;
-  if (cuenta("\t") > 0) return "\t";
-  return cuenta(";") > cuenta(",") ? ";" : ",";
-}
-
-// Divide una línea respetando comillas dobles ("" dentro de comillas = ").
-export function partirLinea(linea: string, sep: string): string[] {
-  const campos: string[] = [];
-  let actual = "";
-  let comillas = false;
-  for (let i = 0; i < linea.length; i++) {
-    const c = linea[i];
-    if (comillas) {
-      if (c === '"' && linea[i + 1] === '"') {
-        actual += '"';
-        i++;
-      } else if (c === '"') comillas = false;
-      else actual += c;
-    } else if (c === '"') comillas = true;
-    else if (c === sep) {
-      campos.push(actual.trim());
-      actual = "";
-    } else actual += c;
-  }
-  campos.push(actual.trim());
-  return campos;
-}
 
 // "350" → 35000; "1,250.50" → 125050; "$350" → 35000. Nulo si no es válido.
 export function pesosACentavos(texto: string): number | null {
@@ -59,19 +38,12 @@ const entero = (t: string | undefined, def: number): number | null => {
   if (t === undefined || t.trim() === "") return def;
   return /^\d{1,6}$/.test(t.trim()) ? Number(t.trim()) : null;
 };
-const quitarAcentos = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 export function leerCatalogoCsv(texto: string): { filas: FilaCatalogo[]; errores: string[] } {
-  const lineas = texto.replace(/^﻿/, "").split(/\r?\n/);
   const filas: FilaCatalogo[] = [];
   const errores: string[] = [];
   const vistos = new Map<string, number>();
-  let sep: string | null = null;
-  lineas.forEach((linea, i) => {
-    if (!linea.trim()) return;
-    sep ??= separadorDe(linea);
-    const c = partirLinea(linea, sep);
-    const n = i + 1;
+  lineasCsv(texto).forEach(({ n, campos: c }) => {
     // Encabezado: primera línea con "nombre" y "precio".
     if (filas.length === 0 && errores.length === 0 && /nombre/.test(quitarAcentos(c[0] ?? "")) && c.some((x) => /precio/.test(quitarAcentos(x)))) return;
     const [nombre = "", categoria = "", precio = "", minimo, existencias] = c;
