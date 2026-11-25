@@ -9,6 +9,9 @@ import { RefreshCw, WifiOff } from "lucide-react";
 import { CuadreNoche } from "@/components/caja/cuadre-noche";
 import { MapaNoche } from "@/components/caja/mapa-noche";
 import { DetalleMesa } from "@/components/caja/detalle-mesa";
+import { AvisoCola } from "@/components/caja/cola-caja";
+import { useColaCaja } from "@/lib/use-cola-caja";
+import { conPendientes, conteoPorMesa, sinLoYaGuardado, type NuevoMovimiento } from "@/lib/domain/caja-cola";
 import { etiquetaNoche } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
 import { cn } from "@/lib/utils";
@@ -17,6 +20,7 @@ import { useEnLinea } from "@/lib/use-en-linea";
 import { FASE2_ACTIVA } from "@/lib/fase2";
 import {
   formatearCentavos,
+  nombreMesa,
   resumirMesa,
   totalesNoche,
   PERMISOS_CAJA,
@@ -48,9 +52,9 @@ const COLUMNAS_SESION =
 const COLUMNAS_CUENTA =
   "id, sesion_id, reservation_id, rp_id, origen, cliente_nombre, personas, creada_en";
 const COLUMNAS_CONSUMO =
-  "id, sesion_id, cuenta_id, monto_centavos, concepto, registrado_por, registrado_en, anulado, anulado_por, anulado_en, motivo_anulacion";
+  "id, sesion_id, cuenta_id, monto_centavos, concepto, registrado_por, registrado_en, anulado, anulado_por, anulado_en, motivo_anulacion, clave_cliente";
 const COLUMNAS_PAGO =
-  "id, sesion_id, cuenta_id, metodo, monto_centavos, referencia, registrado_por, registrado_en, anulado, anulado_por, anulado_en, motivo_anulacion" +
+  "id, sesion_id, cuenta_id, metodo, monto_centavos, referencia, registrado_por, registrado_en, anulado, anulado_por, anulado_en, motivo_anulacion, clave_cliente" +
   // Fase 2: la propina solo se lee con la bandera (sin ella la base puede no tenerla).
   (FASE2_ACTIVA ? ", propina_centavos" : "");
 const COLUMNAS_PRODUCTO = "id, nombre, categoria, precio_centavos, existencias, existencias_minimas, activo";
@@ -209,6 +213,7 @@ export default function StaffCajaPage() {
   const [vista, setVista] = useState<Vista>("mesas");
   const [mesaId, setMesaId] = useState<string | null>(null);
   const [esGerente, setEsGerente] = useState(false);
+  const [usuarioId, setUsuarioId] = useState<string | null>(null);
   // Solo cuenta la respuesta de la última recarga (si se piden dos seguidas).
   const ultimaCarga = useRef(0);
   const enVuelo = useRef(false);
@@ -253,6 +258,7 @@ export default function StaffCajaPage() {
       }
       const club = perfil.club_id as string;
       setEsGerente(perfil.role === "gerente");
+      setUsuarioId(user.id);
 
       // Todos los permisos en una llamada (caja_mis_permisos). Si la base aún
       // no tiene esa función, se piden uno por uno como antes.
@@ -328,6 +334,22 @@ export default function StaffCajaPage() {
   );
   const recargar = useCallback(() => cargar(false), [cargar]);
 
+  // Consumos y cobros capturados (con o sin señal): primero al teléfono y de
+  // ahí a la base. Lo que la base ya tiene (misma clave) no se suma dos veces.
+  const cola = useColaCaja({ usuarioId, enLinea: !sinConexion, onCambioEnBase: recargar });
+  const { quedan: movimientos, yaGuardados } = useMemo(() => {
+    const delClub = cola.movimientos.filter((x) => x.clubId === clubId);
+    return datos ? sinLoYaGuardado(delClub, [...datos.consumos, ...datos.pagos]) : { quedan: delClub, yaGuardados: [] as string[] };
+  }, [cola.movimientos, clubId, datos]);
+  const { descartar } = cola;
+  useEffect(() => {
+    if (yaGuardados.length) void descartar(yaGuardados);
+  }, [yaGuardados, descartar]);
+  const enviarMovimientos = useCallback(
+    (nuevos: Omit<NuevoMovimiento, "clubId">[]) => cola.enviar(nuevos.map((n) => ({ ...n, clubId: clubId ?? "" }))),
+    [cola, clubId],
+  );
+
   useEffect(() => {
     recargar();
   }, [recargar]);
@@ -353,9 +375,40 @@ export default function StaffCajaPage() {
   const nocheCerrada = datos?.noche?.estado === "cerrada";
   // Una sola pasada por render de datos (no por tecla del buscador: la
   // búsqueda vive dentro del mapa).
-  const resumenes = useMemo(() => (datos ? datos.mesas.map((m) => resumirMesa(m, datos)) : []), [datos]);
+  // Con lo pendiente de enviar sumado al saldo de las mesas abiertas: es lo
+  // que el staff tiene enfrente (y el saldo esperado de un cobro sin señal).
+  const resumenes = useMemo(
+    () =>
+      datos
+        ? datos.mesas.map((m) => {
+            const r = resumirMesa(m, datos);
+            return r.estado === "abierta" ? conPendientes(r, r.sesion?.id ?? null, movimientos) : { ...r, porEnviar: 0 };
+          })
+        : [],
+    [datos, movimientos],
+  );
+  const porMesa = useMemo(() => conteoPorMesa(movimientos), [movimientos]);
+  const nombreDeMesa = useCallback(
+    (id: string) => {
+      const mesa = datos?.mesas.find((x) => x.id === id);
+      return mesa ? nombreMesa(mesa.numero) : "Mesa";
+    },
+    [datos],
+  );
   const actual = mesaId ? resumenes.find((r) => r.mesa.id === mesaId) : undefined;
-  const totales = datos ? totalesNoche(datos) : null;
+  // Totales de la noche con lo pendiente de enviar (igual que las mesas).
+  const totales = useMemo(() => {
+    if (!datos) return null;
+    const t = totalesNoche(datos);
+    let consumo = t.consumo;
+    let cobrado = t.cobrado;
+    for (const x of movimientos) {
+      if (x.estado !== "pendiente") continue;
+      if (x.tipo === "pago") cobrado += x.montoCentavos;
+      else consumo += x.montoCentavos;
+    }
+    return { consumo, cobrado, porCobrar: Math.max(0, consumo - cobrado) };
+  }, [datos, movimientos]);
 
   return (
     <div className="theme-caja flex flex-1 flex-col items-center px-4 pt-3 pb-4 font-sans">
@@ -410,10 +463,28 @@ export default function StaffCajaPage() {
             <p>
               <span className="font-medium">Sin conexión · reconectando…</span>
               <span className="block text-xs text-caja-secundario">
-                {actualizado.current ? `Los montos son de las ${horaMinSeg(actualizado.current)} y pueden haber cambiado. ` : ""}No se guarda nada hasta que vuelva la señal; lo que capturaste no se pierde.
+                {actualizado.current ? `Los montos son de las ${horaMinSeg(actualizado.current)} y pueden haber cambiado. ` : ""}
+                Consumos y cobros de mesas abiertas se guardan en este teléfono y se envían solos al volver la señal. Abrir, sentar,
+                cerrar y cuadrar necesitan señal.
               </span>
             </p>
           </div>
+        )}
+
+        {!actual && (
+          <AvisoCola
+            movimientos={movimientos}
+            persistente={cola.persistente}
+            enviando={cola.enviando}
+            sinConexion={sinConexion}
+            nombreDeMesa={nombreDeMesa}
+            onVerMesa={(id) => {
+              setVista("mesas");
+              setMesaId(id);
+            }}
+            onDescartar={(c) => void cola.descartar(c)}
+            onEnviarAhora={cola.sincronizar}
+          />
         )}
 
         {errorCarga && !(datos && sinConexion) && (
@@ -436,11 +507,14 @@ export default function StaffCajaPage() {
             esGerente={esGerente}
             nocheCerrada={nocheCerrada}
             sinConexion={sinConexion}
+            movimientos={movimientos.filter((x) => x.mesaId === actual.mesa.id)}
+            onEnviar={enviarMovimientos}
+            onDescartar={(c) => void cola.descartar(c)}
             onVolver={() => setMesaId(null)}
             onCambio={recargar}
           />
         ) : (
-          <MapaNoche mesas={resumenes} onAbrirMesa={setMesaId} />
+          <MapaNoche mesas={resumenes} porMesa={porMesa} onAbrirMesa={setMesaId} />
         )}
       </div>
     </div>

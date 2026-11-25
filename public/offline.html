@@ -23,8 +23,28 @@
   <h1>Sin conexión</h1>
   <p>AntroApp necesita internet para abrir esta pantalla. Revisa la señal o el wifi y vuelve a intentar.</p>
   <button type="button" onclick="location.reload()">Reintentar</button>
-  <small>Si estabas capturando algo en la caja, no se guardó nada nuevo mientras no hubo señal.</small>
+  <small id="caja">Los consumos y cobros que capturaste en la caja se quedan guardados en este teléfono y se envían solos al volver la señal.</small>
 </main>
-<script>window.addEventListener("online", function () { location.reload(); });</script>
+<script>
+window.addEventListener("online", function () { location.reload(); });
+// Cuántos movimientos de caja esperan en este teléfono (lib/caja-cola.ts).
+// Solo el número: aquí no se lee nada más. Si la base local no existe, no se crea.
+(function () {
+  try {
+    var r = indexedDB.open("antroapp-caja");
+    r.onupgradeneeded = function () { r.transaction.abort(); };
+    r.onsuccess = function () {
+      var db = r.result;
+      if (!db.objectStoreNames.contains("pendientes")) { db.close(); return; }
+      var g = db.transaction("pendientes", "readonly").objectStore("pendientes").getAll();
+      g.onsuccess = function () {
+        var n = g.result.filter(function (x) { return x.estado === "pendiente"; }).length;
+        db.close();
+        if (n > 0) document.getElementById("caja").textContent = (n === 1 ? "Hay 1 movimiento de caja guardado" : "Hay " + n + " movimientos de caja guardados") + " en este teléfono. Se envían solos en cuanto vuelva la señal; no los captures otra vez.";
+      };
+    };
+  } catch (e) {}
+})();
+</script>
 </body>
 </html>

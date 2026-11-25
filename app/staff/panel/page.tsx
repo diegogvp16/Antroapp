@@ -32,6 +32,7 @@ import { FASE2_ACTIVA } from "@/lib/fase2";
 import { AvisoExistencias } from "@/components/inventario/aviso-existencias";
 import { esErrorDeRed, mensajeParaUsuario, MENSAJE_SIN_CONEXION, type ErrorBase } from "@/lib/errores-base";
 import type { Club, ClubTable, Profile, Reservation } from "@/types";
+import { contarPendientes } from "@/lib/caja-cola";
 
 type RPListItem = Pick<Profile, "id" | "nombre" | "activo">;
 
@@ -573,6 +574,11 @@ export default function StaffPanelPage() {
 
   async function handleLogout() {
     const supabase = createClient();
+    // Cola de caja: lo capturado sin señal se queda en el teléfono con tu
+    // usuario y se envía cuando vuelvas a entrar; se avisa antes de salir.
+    const { data: { session } } = await supabase.auth.getSession();
+    const n = session ? await contarPendientes(session.user.id).catch(() => 0) : 0;
+    if (n > 0 && !window.confirm(`Tienes ${n === 1 ? "1 movimiento" : `${n} movimientos`} de caja sin enviar en este teléfono. Se quedan guardados y se envían cuando vuelvas a entrar con tu cuenta y haya señal. ¿Cerrar sesión de todos modos?`)) return;
     await supabase.auth.signOut();
     router.replace("/cliente/login");
   }

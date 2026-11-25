@@ -8,7 +8,8 @@
 // llamadas a Supabase o /api: reservas, caja y nómina cambian todo el tiempo
 // y tienen datos personales; nunca deben salir de una caché. Lo único que se
 // guarda es /offline.html, que es estática y no tiene datos de nadie.
-const VERSION = "antroapp-v2";
+// v3: /offline.html dice cuántos movimientos de caja esperan en el teléfono.
+const VERSION = "antroapp-v3";
 const OFFLINE = "/offline.html";
 
 self.addEventListener("install", (event) => {
