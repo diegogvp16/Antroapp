@@ -4,7 +4,7 @@
 //   node scripts/dev/ensayo-pase.mjs a-prod        # rollbacks en orden inverso: dev queda como el catálogo de producción
 //   node scripts/dev/ensayo-pase.mjs comparar      # extrae dev y prod (prod en solo lectura) y los compara
 //   node scripts/dev/ensayo-pase.mjs diagnosticos  # paso 2 (solo lectura en dev)
-//   node scripts/dev/ensayo-pase.mjs paso <n>      # aplica el paso n (3,4,5,6,7,7b,9) y lo verifica
+//   node scripts/dev/ensayo-pase.mjs paso <n>      # aplica el paso n (2b,3,4,5,6,7,7b,7c,7d,9) y lo verifica
 //   node scripts/dev/ensayo-pase.mjs rollback <n>  # revierte el paso n y verifica que quedó revertido
 //
 // Cada paso imprime cuánto tardó (aplicar + verificar) para el reporte.
@@ -20,6 +20,13 @@ const SQL = (f) => path.join(RAIZ, "sql", f);
 
 // Paso → archivos a aplicar, rollback (en orden) y verificación.
 const PASOS = {
+  "2b": {
+    nombre: "el anónimo ya no ejecuta registrar_* (hueco crítico de producción)",
+    aplicar: ["2026-11-24-registrar-sin-anon.sql"],
+    revertir: ["2026-11-24-registrar-sin-anon-rollback.sql"],
+    verificar: `select not has_function_privilege('anon', 'public.registrar_comision_reserva(uuid,uuid,uuid,numeric,timestamptz,timestamptz)', 'execute')
+                  and not has_function_privilege('anon', 'public.registrar_pago_dia(uuid,uuid,uuid,date,timestamptz,timestamptz)', 'execute') as ok`,
+  },
   3: {
     nombre: "cover",
     aplicar: ["2026-11-20-cover.sql"],
@@ -61,6 +68,19 @@ const PASOS = {
                   and (select count(*) from pg_proc where proname in ('caja_firma_noche', 'grupo_rendimiento_rp')) = 2
                   and exists (select 1 from pg_proc where proname = 'grupo_resumen' and pg_get_function_result(oid) like '%reservas_noches_cerradas%') as ok`,
   },
+  "7c": {
+    nombre: "autorización sin NULL en funciones del pase 1 (10a)",
+    aplicar: ["post-junta/10a-pase1-autorizacion-sin-nulos.sql"],
+    revertir: ["post-junta/10a-pase1-autorizacion-sin-nulos-rollback.sql"],
+    verificar: `select count(*) = 6 as ok from pg_proc where proname in ('caja_tiene_permiso', 'caja_configurar_permiso', 'grupo_rendimiento_rp', 'es_gerente_o_dueno', 'caja_puede_ver', 'puede_ver_club')
+                  and (pg_get_functiondef(oid) like '%, false)%' or pg_get_functiondef(oid) like '%v_rol is null or%')`,
+  },
+  "7d": {
+    nombre: "registrar_* con autorización sin NULL",
+    aplicar: ["2026-11-24-registrar-sin-nulos.sql"],
+    revertir: ["2026-11-24-registrar-sin-nulos-rollback.sql"],
+    verificar: `select count(*) = 2 as ok from pg_proc where proname in ('registrar_comision_reserva', 'registrar_pago_dia') and pg_get_functiondef(oid) like '%if not coalesce(public.es_gerente_o_dueno%'`,
+  },
   9: {
     nombre: "candado de puerta",
     aplicar: ["2026-11-20-caja-candado-puerta.sql"],
@@ -68,7 +88,7 @@ const PASOS = {
     verificar: `select exists (select 1 from pg_trigger where tgname like '%candado_puerta%') as ok`,
   },
 };
-const ORDEN = ["3", "4", "5", "6", "7", "7b", "9"];
+const ORDEN = ["2b", "3", "4", "5", "6", "7", "7b", "7c", "7d", "9"];
 
 function aplicarArchivo(archivo) {
   const r = spawnSync(process.execPath, [path.join(RAIZ, "scripts/db/aplicar-dev.mjs"), SQL(archivo)], { encoding: "utf8" });

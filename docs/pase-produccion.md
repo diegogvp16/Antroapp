@@ -39,28 +39,72 @@
   los rollbacks, del último al primero) se probó en dev el 19/11/2026 y dejó
   el esquema **idéntico** al de producción.
 
-## Orden (final, rama `candidato-pase`)
+## Orden (final, rama `pase-final`, 24/11/2026)
 
-`candidato-pase` = `desarrollo` + `noche2` (sin `fase2`), con el tema oscuro
-y la conversión solo con noches cerradas. Tiempos medidos en el ensayo en
-dev (ver `docs/reporte-pase.md`); en producción sumar el tiempo de pegar
+`pase-final` = `candidato-pase` (`d7b2e7f`) + **únicamente**
+`sql/post-junta/10a-pase1-autorizacion-sin-nulos.sql` y su rollback. Nada
+más de `post-junta`, ni `fase2`. `candidato-pase` = `desarrollo` + `noche2`
+(sin `fase2`), con el tema oscuro y la conversión solo con noches cerradas.
+Tiempos medidos en el ensayo en dev; en producción sumar el tiempo de pegar
 cada archivo en el SQL Editor.
+
+**El 10a** corrige un hueco alto del SQL del pase 1: varias funciones
+autorizaban con `if not (...) then raise`, que en plpgsql no rechaza cuando
+la condición da NULL. Así una cuenta de Auth **sin perfil** leía la nómina y
+el rendimiento por RP de cualquier antro (probado en dev). Va justo después
+del 7b y antes del merge.
 
 | # | Paso | Tipo | Rollback exacto | Tiempo |
 |---|---|---|---|---|
-| 0 | Restablecer la contraseña de la base de producción y actualizarla donde se use (ver `docs/seguridad-manual.md`) | — | — | 5 min |
-| 1 | Respaldo del día (Database → Backups) | — | — | 10 min |
+| 0 | ~~Restablecer la contraseña de la base de producción~~ — **no se hace en este pase** (Diego: no cambiar contraseñas ni llaves) | — | — | — |
+| 1 | Respaldo del día (Database → Backups) **y** respaldo de datos a `backups/` (lectura con la service role, solo GET) | — | — | 10 min |
 | 2 | Diagnósticos de solo lectura y comparación del catálogo | — | — | 5 min |
+| 2b | `sql/2026-11-24-registrar-sin-anon.sql` — **el primer SQL**: cierra el hueco crítico vigente (el anónimo ya no ejecuta `registrar_*`) | REVERSIBLE (no deberías querer) | `sql/2026-11-24-registrar-sin-anon-rollback.sql` (reabre el hueco) | 1 min |
 | 3 | `sql/2026-11-20-cover.sql` | REVERSIBLE | `sql/2026-11-20-cover-rollback.sql` | 1 min |
 | 4 | `sql/2026-11-20-caja-por-mesa.sql` | REVERSIBLE CON CUIDADO | `sql/2026-11-20-caja-por-mesa-rollback.sql` (borra lo registrado en caja) | 2 min |
 | 5 | `sql/2026-11-20-estabilidad.sql` — **inicia la ventana**: de aquí al paso 8, minutos | REVERSIBLE | `sql/2026-11-20-estabilidad-rollback.sql` | 1 min |
 | 6 | `sql/2026-11-20-nomina-y-grupo.sql` | REVERSIBLE | `sql/2026-11-20-nomina-y-grupo-rollback.sql` | 1 min |
 | 7 | `sql/2026-11-21-rp-panel.sql` y `sql/2026-11-21-caja-permisos.sql` | REVERSIBLE | `drop function if exists public.caja_mis_permisos(uuid);` y `sql/2026-11-21-rp-panel-rollback.sql` | 1 min |
 | 7b | `sql/2026-11-21-caja-idempotencia.sql` y `sql/2026-11-21-grupo-conversion.sql` — **antes** del merge | REVERSIBLE | `sql/2026-11-21-grupo-conversion-rollback.sql` y `sql/2026-11-21-caja-idempotencia-rollback.sql` (en ese orden) | 1 min |
-| 8 | Merge `candidato-pase` → `master` (auto-deploy de Vercel) | REVERSIBLE | Vercel → Instant Rollback al deploy anterior (código viejo; ver nota del paso 5) | 3–5 min (build) |
+| 7c | `sql/post-junta/10a-pase1-autorizacion-sin-nulos.sql` — **antes** del merge | REVERSIBLE | `sql/post-junta/10a-pase1-autorizacion-sin-nulos-rollback.sql` (regresa las 6 funciones del pase 1, verificado idénticas) | 1 min |
+| 7d | `sql/2026-11-24-registrar-sin-nulos.sql` — `registrar_*` del paso 5 sin autorización en NULL | REVERSIBLE | `sql/2026-11-24-registrar-sin-nulos-rollback.sql` (cuerpos del paso 5) | 1 min |
+| 8 | Merge `pase-final` → `master` (auto-deploy de Vercel) | REVERSIBLE | Vercel → Instant Rollback al deploy anterior (código viejo; ver nota del paso 5) | 3–5 min (build) |
 | 9 | `sql/2026-11-20-caja-candado-puerta.sql` — **solo con el paso 8 Ready** | REVERSIBLE | `sql/2026-11-20-caja-candado-puerta-rollback.sql` | 1 min |
 | 10 | Humo (`node scripts/humo-produccion.mjs https://antroapp.vercel.app`) y recorrido de los 6 roles | — | — | 5 + 30 min |
 | 11 | Datos demo para la junta (después de las 08:00 del día de la junta) | IRREVERSIBLE para lo demo | el respaldo del paso 1 | 10 min |
+
+### Ensayo final (dev, 24/11/2026, rama `pase-final`)
+
+1. Dev llevado al estado de producción con los rollbacks: 15 s. Comparación
+   con el catálogo de producción **idéntica** (888 líneas). Diagnósticos en 0.
+2. Pasos en orden, cada uno aplicado y verificado por catálogo con
+   `node scripts/dev/ensayo-pase.mjs paso <n>`:
+
+   | Paso | Tiempo |
+   |---|---|
+   | 2b, 3, 5, 6, 7c, 7d | 1.3–1.4 s cada uno |
+   | 4 | 1.6 s |
+   | 7, 7b | 2.6 s cada uno |
+   | 9 | 1.3 s |
+
+3. Build de producción de `pase-final` contra dev:
+   - humo 73/74 (la única falla es HSTS, que en local no existe porque la
+     agrega Vercel);
+   - recorrido de los 6 roles 32/32, antes y después del paso 9 (76 s).
+4. Regresión: caja 167/167, concurrencia 29/29, visibilidad 68/68, login
+   15/15.
+5. Huecos cerrados:
+   - autorización en NULL (10a): 18/18;
+   - `registrar_*` (7d): 5/5;
+   - el anónimo ya no inserta comisiones (2b).
+6. Rollback del 7c (10a) y reaplicación: sin él el hueco vuelve (4 fallas),
+   con él 18/18 y recorrido 32/32. El 7d y el 2b también se revirtieron y
+   reaplicaron con sus pruebas.
+7. Dev se regresó a su estado normal: esquema idéntico al respaldo previo
+   (0 líneas) y datos de 43 tablas idénticos.
+
+El rollback del 7c regresa **exactamente** las 6 funciones del pase 1
+(comparadas una por una con el catálogo de dev en estado pase 1).
 
 ### Tiempos del ensayo (dev, 23/11/2026)
 
@@ -158,6 +202,26 @@ El diagnóstico completo de duplicados, con sus variantes por teléfono,
 está en `sql/2026-11-borrador-una-reserva-por-dia.sql`, **PASO 0**. Solo
 ese paso: es SELECT puro. El resto de ese archivo **no se corre** (el
 índice ya viene en estabilidad).
+
+## 2b. El anónimo ya no ejecuta `registrar_*` — `sql/2026-11-24-registrar-sin-anon.sql`
+
+**Hueco crítico vigente en producción** (24/11/2026). Hoy
+`registrar_comision_reserva` y `registrar_pago_dia` son `SECURITY
+DEFINER`, el anónimo tiene EXECUTE, y su autorización `if not (... or rol =
+'admin') then raise` da NULL para el anónimo y **no rechaza**. Cualquiera
+con la anon key (que es pública) inserta comisiones y pagos por día
+saltándose RLS. Se demostró en dev con un esquema idéntico al de producción.
+El paso 5 ya reemplaza esas funciones y le quita el permiso al anónimo; el
+2b lo cierra **antes**, por si el pase se detiene, y protege si algún día se
+revierte el paso 5 (su rollback le devuelve el permiso al anónimo: en ese
+caso, volver a correr el 2b).
+
+- **Verificar** (solo lectura):
+  ```sql
+  select has_function_privilege('anon', 'public.registrar_comision_reserva(uuid,uuid,uuid,numeric,timestamptz,timestamptz)', 'execute'),
+         has_function_privilege('anon', 'public.registrar_pago_dia(uuid,uuid,uuid,date,timestamptz,timestamptz)', 'execute');  -- false, false
+  ```
+- **Rollback**: `sql/2026-11-24-registrar-sin-anon-rollback.sql` (reabre el hueco).
 
 ## 3. Cover informativo — `sql/2026-11-20-cover.sql`
 
@@ -301,12 +365,47 @@ funcionando sin esas cifras.
 
 La rama `fase2` (inventario y propinas, `sql/fase2/`) **no** forma parte del pase.
 
+## 7c. Autorización que no queda en NULL — `sql/post-junta/10a-pase1-autorizacion-sin-nulos.sql`
+
+Va **antes** del merge. Seis funciones del pase 1 (`es_gerente_o_dueno`,
+`caja_puede_ver`, `puede_ver_club`, `caja_tiene_permiso`,
+`caja_configurar_permiso`, `grupo_rendimiento_rp`) autorizaban con
+condiciones que dan NULL para una cuenta autenticada sin perfil o un gerente
+sin antro. En plpgsql eso no rechaza: en dev, esas cuentas leían la nómina y
+el rendimiento por RP de cualquier antro. Cambia solo esas líneas
+(`coalesce(…, false)`, `v_rol is null or …`).
+
+- **Verificar** (solo lectura):
+  ```sql
+  select count(*) from pg_proc where proname in ('caja_tiene_permiso', 'caja_configurar_permiso', 'grupo_rendimiento_rp',
+    'es_gerente_o_dueno', 'caja_puede_ver', 'puede_ver_club')
+    and (pg_get_functiondef(oid) like '%, false)%' or pg_get_functiondef(oid) like '%v_rol is null or%');  -- 6
+  ```
+- **Rollback**: `sql/post-junta/10a-pase1-autorizacion-sin-nulos-rollback.sql`
+  (regresa las 6 funciones del pase 1, comparadas idénticas).
+
+## 7d. `registrar_*` sin autorización en NULL — `sql/2026-11-24-registrar-sin-nulos.sql`
+
+Va **después del 7c** (usa `es_gerente_o_dueno` corregida) y antes del merge.
+Las versiones del paso 5 autorizan con `if not (es_gerente_o_dueno(club) or
+(rol = 'staff' and …))`: una cuenta autenticada sin perfil pasaba (`false or
+NULL`), y un staff dado de baja también. En dev, una cuenta sin perfil generó
+un pago por día. Cambia solo esa condición (una por función): `coalesce(…,
+false)` y la revisión de `activo` para el staff.
+
+- **Verificar**:
+  ```sql
+  select count(*) from pg_proc where proname in ('registrar_comision_reserva', 'registrar_pago_dia')
+    and pg_get_functiondef(oid) like '%if not coalesce(public.es_gerente_o_dueno%';  -- 2
+  ```
+- **Rollback**: `sql/2026-11-24-registrar-sin-nulos-rollback.sql` (cuerpos del paso 5).
+
 ## 8. Merge a `master` (publica el código)
 
 ```bash
 git checkout master
 git pull
-git merge --no-ff origin/candidato-pase -m "Pase a producción: caja por mesa, panel RP, nómina, estabilidad, caja en condiciones reales"
+git merge --no-ff origin/pase-final -m "Pase a producción: caja por mesa, panel RP, nómina, estabilidad, caja en condiciones reales y autorización sin NULL"
 git push origin master
 git checkout desarrollo
 git merge --ff-only master     # desarrollo queda igual a lo publicado
