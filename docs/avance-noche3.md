@@ -32,7 +32,7 @@ Reglas: nada se escribe en producción; nada de merge ni push a `master`.
     `node scripts/demo-datos.mjs --fecha=2026-11-25` y luego lo mismo con `--si`.
 - **Typecheck y lint de `post-junta-2` después del merge:** limpios.
 
-## Actualización 23:00
+## Actualización 22:00
 
 - **Hueco CRÍTICO vigente en producción** (auditoría C2):
   - **El hueco:** `profiles_insert_propio` deja que una cuenta recién registrada cree su propio perfil como `dueno` con el `club_id` de cualquier antro.
