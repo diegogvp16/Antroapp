@@ -6,6 +6,8 @@
 // columnas, PostgREST, red) puede traer nombres de tablas o políticas, así
 // que se cambia por un mensaje genérico y el detalle va a la consola.
 
+import { sinDatosPersonales } from "./domain/sanitizar";
+
 export type ErrorBase = { message: string; code?: string } | null | undefined;
 
 const CODIGOS: Record<string, string> = {
@@ -37,6 +39,8 @@ export function mensajeParaUsuario(
   if (error.code === "P0001" && error.message) return error.message;
   if (esErrorDeRed(error)) return MENSAJE_SIN_CONEXION;
   const conocido = error.code ? CODIGOS[error.code] : undefined;
-  console.error("Error de la base:", error);
+  // Solo código y mensaje limpio: "details" puede traer la fila completa
+  // (nombre, teléfono, QR) y la consola del dispositivo la ve cualquiera.
+  console.error("Error de la base:", error.code ?? "", sinDatosPersonales(error.message ?? ""));
   return conocido ?? generico;
 }

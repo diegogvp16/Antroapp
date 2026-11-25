@@ -48,7 +48,12 @@ export async function POST(request: Request) {
       const r = texto(cuerpo.ruta, 300);
       return r ? sinDatosPersonales(rutaSinParametros(r)) : null;
     })(),
-    digest: texto(cuerpo.digest, 100),
+    // El digest de Next es un identificador corto; lo manda un cliente sin sesión,
+    // así que solo se aceptan letras, números y guiones.
+    digest: (() => {
+      const d = texto(cuerpo.digest, 100);
+      return d && /^[A-Za-z0-9_-]+$/.test(d) ? d : null;
+    })(),
     navegador: (request.headers.get("user-agent") ?? "").slice(0, 300),
     usuario_id: user?.id ?? null,
     ip_hash: ipHash,
