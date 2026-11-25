@@ -462,8 +462,14 @@ try {
     await debeFallar("ni la service role mete un consumo en una noche cerrada", svc.from("caja_consumos").insert({ club_id: clubs.A.id, noche_id: cerrada.id, sesion_id: S1, mesa_id: M1, cuenta_id: C1, monto_centavos: 7777, registrado_por: U.staffA.id }), "mesa abierta");
     await debeFallar("ni la service role quita la liquidación de una cuenta", svc.from("mesa_cuentas").update({ liquidada_en: null }).eq("id", C1), "liquidada");
 
-    const ret = await S.duenoB.from("clubs").insert({ nombre: `Prueba RETURNING ${TAG}`, direccion: "x", horario: "x", dueno_id: U.duenoB.id }).select("id, cover_modo, estado_verificacion").single();
+    // Con un dueño SIN antro: desde sql/post-junta-2/62 un dueño que ya tiene
+    // uno no puede crear un segundo (eso se revisa justo abajo).
+    await usuario("duenoSinAntro", "dueno");
+    const SN = await sesion("duenoSinAntro");
+    const ret = await SN.from("clubs").insert({ nombre: `Prueba RETURNING ${TAG}`, direccion: "x", horario: "x", dueno_id: U.duenoSinAntro.id }).select("id, cover_modo, estado_verificacion").single();
     revisar("dueño: INSERT de antro con RETURNING sigue pasando", !ret.error && ret.data?.estado_verificacion === "borrador", ret.error?.message ?? "");
+    const seg = await S.duenoB.from("clubs").insert({ nombre: `Prueba segundo ${TAG}`, direccion: "x", horario: "x", dueno_id: U.duenoB.id }).select("id").single();
+    revisar("dueño con antro: un segundo antro se rechaza (62)", !!seg.error, seg.error?.message ?? "NO falló");
 
     const evStaff = ok(await S.staffA.from("caja_eventos").select("tipo").eq("club_id", clubs.A.id).like("tipo", "nomina%"), "eventos staff");
     const evGer = ok(await S.gerenteA.from("caja_eventos").select("tipo").eq("club_id", clubs.A.id).like("tipo", "nomina%"), "eventos gerente");

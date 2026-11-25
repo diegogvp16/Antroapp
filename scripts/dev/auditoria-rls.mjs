@@ -63,6 +63,16 @@ const ok = (r, d) => {
   if (r.error) throw new Error(`${d}: ${r.error.code ?? ""} ${r.error.message}`);
   return r.data;
 };
+// Lecturas de la service role con reintento: la base de dev la comparten
+// varios agentes y un DDL ajeno (aplicar-dev en una transacción) puede tener
+// la tabla bloqueada unos segundos (57014 statement timeout / 55P03 lock).
+async function leer(fn, d) {
+  for (let i = 0; ; i++) {
+    const r = await fn();
+    if (!r.error || i >= 4 || !["57014", "55P03"].includes(r.error.code)) return ok(r, d);
+    await espera(5000 * (i + 1));
+  }
+}
 
 // ---------------------------------------------------------------- actores
 // tipo: anon | sinperfil | normal | baja | temp | anomalo.
@@ -120,6 +130,7 @@ const PATRONES = [
 const VEREDICTOS = {
   "actividad_club(uuid,date,date)": "seguro: es_gerente_o_dueno() nunca devuelve NULL (coalesce y ramas booleanas)",
   "admin_alta_club(jsonb)": "seguro: solo admin (is distinct from 'admin'); un rol nulo del payload no cae en el if pero el INSERT en profiles.role (not null) lo rechaza y revierte todo. Endurecer cuando se redefina (lo hace el carril del alta)",
+  "_admin_alta_club_base(jsonb)": "seguro: es el cuerpo de admin_alta_club renombrado por b-alta 12; solo service_role lo ejecuta y repite la puerta de admin (is distinct from), con el mismo «v_rol not in» que rechaza el INSERT en profiles.role (not null)",
   "caja_abrir_mesa(uuid)": "seguro: caja_tiene_permiso() solo es NULL si el permiso es NULL; aquí es una constante",
   "caja_anular_consumo(uuid,text)": "seguro: caja_tiene_permiso() con permiso constante",
   "caja_anular_pago(uuid,text)": "seguro: caja_tiene_permiso() con permiso constante",
@@ -169,8 +180,45 @@ async function escaneoEstatico(db) {
     if (!v) avisos.push(`función sin veredicto: ${firma} (${golpes.join(", ")})`);
     else if (/^explotable/.test(v)) anotar("NULL", firma, "-", false, true, v);
   }
-  return { total: funcs.length, filas };
+  // Ayudantes que devuelven boolean: ¿pueden dar NULL?, ¿se usan en políticas
+  // o en «if not f(…)»? En una política NULL ya niega (permisiva o
+  // restrictiva, también con NOT), así que el riesgo real es el «if not».
+  const politicas = await db.q(`select coalesce(qual, '') || ' ' || coalesce(with_check, '') as e from pg_policies`);
+  const booleanas = await db.q(`select p.proname, p.oid::regprocedure::text as firma from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.prokind = 'f' and p.prorettype = 'bool'::regtype order by 1`);
+  const bool = [];
+  for (const b of booleanas) {
+    const firma = b.firma.replace(/^public\./, "");
+    const enPoliticas = politicas.filter((p) => p.e.includes(b.proname + "(")).length;
+    const enIfNot = funcs.filter((f) => !f.firma.replace(/^public[.]/, "").startsWith(`${b.proname}(`) && new RegExp(`if\\s+not\\s+(public\\.)?${b.proname}\\s*\\(`, "i").test(f.def))
+      .map((f) => f.firma.replace(/^public\./, "").split("(")[0]);
+    const v = VEREDICTOS_BOOL[firma];
+    bool.push({ firma, enPoliticas, enIfNot, veredicto: v ?? "SIN REVISAR" });
+    if (!v && (enPoliticas || enIfNot.length)) avisos.push(`ayudante boolean sin veredicto: ${firma}`);
+    else if (v && /^explotable/.test(v)) anotar("NULL", firma, "-", false, true, v);
+  }
+  return { total: funcs.length, filas, bool };
 }
+const VEREDICTOS_BOOL = {
+  "caja_puede_ver(uuid)": "nunca NULL: coalesce(…, false)",
+  "caja_tiene_permiso(uuid,text)": "NULL solo si p_permiso es NULL («return p_permiso in (…)»); todos los que llaman pasan una constante y caja_permisos.permitido es not null",
+  "club_es_dueno(uuid)": "nunca NULL: «uid is not null and rol is not null and exists(…)»",
+  "club_es_dueno_grupo(uuid)": "nunca NULL: «uid is not null and rol is not null and exists(…)»",
+  "dueno_tiene_club()": "nunca NULL: exists(…) (sql/post-junta-2/62)",
+  "es_gerente_o_dueno(uuid)": "nunca NULL: coalesce y ramas booleanas",
+  "invitacion_puede(uuid,text)": "nunca NULL: returns false / coalesce en cada rama",
+  "nomina_transicion_valida(text,text)": "nunca NULL desde sql/post-junta-2/60 (antes NULL con estados nulos)",
+  "puede_ver_club(uuid)": "nunca NULL: coalesce",
+  "puerta_es_tarde(uuid,date,timestamp with time zone)": "NULL a propósito (antro sin tolerancia); no autoriza: solo llena reservations.llegada_tarde",
+  "rp_es_del_club(uuid,uuid)": "nunca NULL: coalesce(exists(…), false) (sql/post-junta-2/64)",
+  "sesion_sin_acceso()": "nunca NULL: «uid is not null and (exists(…) or coalesce(…))» (sql/post-junta-2/61)",
+  "soy_rp_dado_de_baja()": "nunca NULL: exists(…)",
+  // b-alta 12 (configuración por grupo; solo postgres los ejecuta, se llaman desde funciones definer).
+  "_club_config_puede(uuid,text)": "nunca NULL: cada rama en coalesce(…, false)",
+  "_config_aplicar_club(uuid,text,jsonb,uuid,date)": "no autoriza: devuelve si hubo cambio; solo lo ejecuta postgres (lo llaman funciones que ya autorizaron)",
+  "es_dueno_de_grupo(uuid)": "nunca NULL: coalesce(uid is not null and rol = dueno and exists(…), false)",
+  "grupo_puede_editar(uuid)": "nunca NULL: coalesce(… admin, false) or es_dueno_de_grupo() (nunca NULL)",
+};
 
 // ---------------------------------------------------------------- escenario
 const filas = {}; // tabla -> [{ id, club, rp, cliente, perfil, upd, del, etiqueta }]
@@ -292,6 +340,19 @@ async function escenario() {
     fila("rp_dia_tarifa_overrides", { id: od[1].id, club: k, del: true, etiqueta: "odia-borrar" + k });
     const doc = ok(await svc.from("verificacion_documentos").insert({ club_id: club, tipo: "comprobante_fiscal", storage_path: `${club}/comprobante_fiscal-${TAG}.pdf` }).select("id").single(), "doc");
     fila("verificacion_documentos", { id: doc.id, club: k, upd: true, etiqueta: "doc" + k });
+    // Invitaciones (carril b-equipo) y bandeja de correos: filas sembradas con la service role.
+    for (const rol of ["rp", "gerente"]) {
+      const inv = ok(await svc.from("invitaciones").insert({ club_id: club, rol, correo: `${TAG}_inv_${rol}_${k.toLowerCase()}@example.com`, nombre: `Invitado ${TAG}` }).select("id").single(), "invitación");
+      fila("invitaciones", { id: inv.id, club: k, rolInv: rol, upd: true, etiqueta: `inv-${rol}${k}` });
+    }
+    // Lotes de invitaciones (b-equipo, etapa 2): solo si la tabla existe en dev.
+    for (const rol of ["rp", "gerente"]) {
+      const lote = await svc.from("invitacion_lotes").insert({ id: randomUUID(), club_id: club, rol, total: 1 }).select("id").single();
+      if (lote.error && ["PGRST205", "42P01"].includes(lote.error.code)) break;
+      fila("invitacion_lotes", { id: ok(lote, "lote").id, club: k, rolInv: rol, upd: true, etiqueta: `lote-${rol}${k}` });
+    }
+    const cor = ok(await svc.from("correos_salida").insert({ club_id: club, plantilla: "t_rls", destinatario: `${TAG}@example.com`, asunto: "Prueba t_rls", cuerpo: "t_rls", estado: "archivado", entorno: "development" }).select("id").single(), "correo");
+    fila("correos_salida", { id: cor.id, club: k, upd: true, etiqueta: "correo" + k });
     ok(await svc.from("suscripciones").insert({ club_id: club, estado: "activa" }), "suscripción");
     fila("suscripciones", { id: club, pk: "club_id", club: k, upd: true, etiqueta: "sus" + k });
     const pm = ok(await svc.from("pagos_mensualidad").insert({ club_id: club, stripe_invoice_id: `in_${TAG}_${k}`, monto_centavos: 250000, moneda: "mxn", estado: "pagado" }).select("id").single(), "pago mensualidad");
@@ -401,7 +462,8 @@ const SPEC = {
     upd: { col: "nombre", puede: (a, f) => adm(a) || del(a, f, ...STAFF) || f.perfil === a.key },
   },
   reservations: {
-    ver: (a, f) => adm(a) || del(a, f, ...STAFF) || suyo(a, f, "rp") || suyo(a, f, "cliente"),
+    // Con b-cliente 41 (rp-visibilidad) el RP ya no lee reservations directo: todo lo suyo sale de rp_mis_reservas.
+    ver: (a, f) => adm(a) || del(a, f, ...STAFF) || (RP_LEE_RESERVAS && suyo(a, f, "rp")) || suyo(a, f, "cliente"),
     ins: {
       fila: (a, k) => ({ cliente_nombre: `Ins ${TAG}`, cliente_telefono: "0000000998", personas: 2, fecha: HOY, club_id: C(k), qr_code: `antro-${randomUUID()}`, status: "pendiente",
         ...(a.role === "rp" ? { source: "rp", rp_id: a.id } : { source: "organica", ...(a.id ? { cliente_id: a.id } : {}) }) }),
@@ -469,6 +531,22 @@ const SPEC = {
     ins: { fila: (a, k) => ({ club_id: C(k) }), puede: nadie },
     upd: { col: t === "club_config_rp" ? "nivel_visibilidad" : "club_id", puede: nadie },
   }])),
+  // invitacion_puede(): admin; dueño de su antro (cualquier rol); gerente o staff solo RPs de su antro.
+  invitaciones: {
+    ver: (a, f) => adm(a) || del(a, f, "dueno") || (del(a, f, "gerente", "staff") && f.rolInv === "rp"),
+    ins: { fila: (a, k) => ({ club_id: C(k), rol: "rp", correo: `${TAG}_ins_${a.key.toLowerCase()}@example.com`, nombre: "Ins t_rls" }), puede: nadie },
+    upd: { col: "nombre", puede: nadie },
+  },
+  invitacion_lotes: {
+    ver: (a, f) => adm(a) || del(a, f, "dueno") || (del(a, f, "gerente", "staff") && f.rolInv === "rp"),
+    ins: { fila: (a, k) => ({ id: randomUUID(), club_id: C(k), rol: "rp", total: 1 }), puede: nadie },
+    upd: { col: "total", puede: nadie },
+  },
+  correos_salida: {
+    ver: adm,
+    ins: { fila: (a, k) => ({ club_id: C(k), plantilla: "t_rls", destinatario: `${TAG}@example.com`, asunto: "x", cuerpo: "x", estado: "archivado", entorno: "development" }), puede: nadie },
+    upd: { col: "estado", puede: nadie },
+  },
   personal_movimientos: { ver: gerVe, ins: { fila: (a, k) => ({ club_id: C(k) }), puede: nadie }, upd: { col: "motivo", puede: nadie } },
   suscripciones: { ver: (a, f) => adm(a) || del(a, f, "dueno"), ins: { fila: (a, k) => ({ club_id: C(k) }), puede: nadie }, upd: { col: "estado", puede: nadie } },
   pagos_mensualidad: { ver: (a, f) => adm(a) || del(a, f, "dueno"), ins: { fila: (a, k) => ({ club_id: C(k) }), puede: nadie }, upd: { col: "estado", puede: nadie } },
@@ -517,6 +595,9 @@ const GLOBALES = {
   registro_intentos: { ver: nadie, ins: { ip_hash: IPH, tipo: "cliente" }, upd: ["ip_hash", IPH, "tipo"] },
   stripe_eventos: { ver: nadie, ins: { id: `evt_${TAGX}x`, tipo: "prueba" }, upd: ["id", `evt_${TAGX}`, "tipo"] },
   alertas_enviadas: { ver: nadie, ins: { tipo: TAG + "x" }, upd: ["tipo", TAG, "tipo"] },
+  reserva_intentos: { ver: nadie, ins: { telefono_hash: TAG, club_id: randomUUID(), fecha: HOY } },
+  invitacion_intentos: { ver: nadie, ins: { ip_hash: IPH, accion: "consultar" } },
+  invitacion_envios: { ver: nadie, ins: { hecho_por: randomUUID(), invitacion_id: randomUUID(), tipo: "crear" } },
 };
 
 // ---------------------------------------------------------------- matriz
@@ -561,7 +642,7 @@ async function correrTabla(t, spec) {
   // UPDATE (mismo valor: mide el permiso sin cambiar datos)
   if (spec.upd) {
     const blancos = fs.filter((f) => f.upd);
-    const cols = ok(await svc.from(t).select(`${pk}, ${spec.upd.col}`).in(pk, blancos.map((f) => f.id)), "valores " + t);
+    const cols = await leer(() => svc.from(t).select(`${pk}, ${spec.upd.col}`).in(pk, blancos.map((f) => f.id)), "valores " + t);
     await Promise.all(ACTORES().map(async (a) => {
       for (const f of blancos) {
         const valor = cols.find((x) => String(x[pk]) === String(f.id))?.[spec.upd.col];
@@ -580,7 +661,7 @@ async function correrTabla(t, spec) {
   const objetivo = blancosDel.length ? blancosDel : fs.filter((f) => f.upd);
   const puedeBorrar = spec.del?.puede ?? nadie;
   for (const f of objetivo) {
-    const original = ok(await svc.from(t).select("*").eq(pk, f.id).maybeSingle(), "respaldo " + t);
+    const original = await leer(() => svc.from(t).select("*").eq(pk, f.id).maybeSingle(), "respaldo " + t);
     for (const a of ACTORES()) {
       const r = await a.c.from(t).delete({ count: "exact" }).eq(pk, f.id);
       const obt = !r.error && (r.count ?? 0) > 0;
@@ -608,7 +689,7 @@ async function correrGlobal(t, g) {
     const i = await a.c.from(t).insert(g.ins);
     const io = permitidoPorRls(i.error);
     anotar(t, "INSERT", a.key, false, io, i.error ? i.error.code : "");
-    if (io) { c.I = "✓"; c.mal.push("I"); await svc.from(t).delete().eq(Object.keys(g.ins)[0], Object.values(g.ins)[0]); }
+    if (io) { c.I = "✓"; c.mal.push("I"); if (Object.keys(g.ins).length) await svc.from(t).delete().eq(Object.keys(g.ins)[0], Object.values(g.ins)[0]); }
     if (!g.upd) return;
     const [filtro, valor, col] = g.upd;
     const actual = (await svc.from(t).select(col).eq(filtro, valor).maybeSingle()).data;
@@ -669,6 +750,14 @@ async function correrFunciones() {
   const yaActivo = (r) => /ya está/.test(r.error?.message ?? "");
   await rpc("RPC", "personal_cambiar_estado", { p_profile_id: A.staffA.id, p_activo: true, p_motivo: "prueba t_rls" }, gerA, { autorizado: yaActivo, etiqueta: "personal_cambiar_estado (staff de A)" });
   await rpc("RPC", "personal_cambiar_estado", { p_profile_id: A.staffB.id, p_activo: true, p_motivo: "prueba t_rls" }, (a) => adm(a) || (es(a, ...GER) && a.club === "B"), { autorizado: yaActivo, etiqueta: "personal_cambiar_estado (staff de B)" });
+  // Invitaciones (b-equipo): cada sesión intenta invitar a un RP y a un gerente en A (correo propio por sesión).
+  for (const rol of ["rp", "gerente"]) {
+    await Promise.all(ACTORES().map(async (a) => {
+      const r = await a.c.rpc("invitacion_crear", { p_club_id: cA, p_rol: rol, p_correo: `${TAG}_rpc_${rol}_${a.key.toLowerCase()}@example.com`, p_nombre: "Invitado t_rls" });
+      const deb = adm(a) || (es(a, "dueno") && a.club === "A") || (rol === "rp" && es(a, "gerente", "staff") && a.club === "A");
+      anotar("RPC", `invitacion_crear ${rol} en A`, a.key, deb, !r.error, r.error ? `${r.error.code} ${r.error.message.slice(0, 80)}` : "");
+    }));
+  }
   // grupo_resumen: qué antros nuestros devuelve a cada quien.
   await Promise.all(ACTORES().map(async (a) => {
     const r = await a.c.rpc("grupo_resumen", { p_desde: diaMenos(7), p_hasta: HOY });
@@ -760,6 +849,26 @@ async function storage() {
       anotar(g, `verificacion-docs subir a ${k}`, a.key, es(a, "dueno") && a.club === k, await subir(a, "verificacion-docs", doc, pdf, "application/pdf"));
     }
     for (const k of ["A", "B"]) {
+      // club-photos: listar la raíz, listar la carpeta del antro (list y
+      // list-v2). Las carpetas de un antro no publicado (B) solo las listan el
+      // admin, su dueño y su personal (67).
+      const fotoVe = adm(a) || k === "A" || (N(a) && a.club === "B");
+      const raiz = await a.c.storage.from("club-photos").list("", { limit: 1000, search: C(k) });
+      anotar(g, `club-photos listar raíz (carpeta de ${k})`, a.key, fotoVe, (raiz.data ?? []).some((o) => o.name === C(k)), raiz.error?.message ?? "");
+      const lf = await a.c.storage.from("club-photos").list(C(k));
+      anotar(g, `club-photos listar ${k}`, a.key, fotoVe, (lf.data ?? []).some((o) => o.name.includes(TAG)), lf.error?.message ?? "");
+      const token = (await a.c.auth.getSession()).data.session?.access_token ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      const v2 = await fetch(`${env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/list-v2/club-photos`, {
+        method: "POST", headers: { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ prefix: "", limit: 1000, with_delimiter: false }),
+      }).then((r) => r.json()).catch(() => ({}));
+      anotar(g, `club-photos list-v2 sin carpeta (archivos de ${k})`, a.key, fotoVe, (v2.objects ?? []).some((o) => o.name?.startsWith(`${C(k)}/${TAG}`)));
+      // Por ruta EXACTA, Storage sirve los archivos de un bucket público sin
+      // pasar por RLS (también por /object/authenticated/): es la limitación
+      // conocida de club-photos. Lo que cierra el 67 es que la ruta (con su
+      // uuid) ya no se descubre listando. Si esto cambia, la auditoría avisa.
+      const df = await a.c.storage.from("club-photos").download(`${C(k)}/${TAG}-borrar.png`);
+      anotar(g, `club-photos leer de ${k} por ruta exacta (bucket público)`, a.key, true, !df.error && !!df.data);
       const d = await a.c.storage.from("verificacion-docs").download(`${C(k)}/comprobante_fiscal-${TAG}.pdf`);
       anotar(g, `verificacion-docs leer de ${k}`, a.key, adm(a) || (es(a, "dueno") && a.club === k), !d.error && !!d.data);
       const l = await a.c.storage.from("verificacion-docs").list(C(k));
@@ -835,9 +944,10 @@ async function limpiar() {
       where c.contype = 'f' and c.connamespace = 'public'::regnamespace and c.confrelid::regclass::text in ('profiles', 'clubs', 'grupos', 'planes')`);
     await db.q("begin");
     await db.q("set local antroapp.borrado_pruebas = 'on'");
+    let ultimoError = "";
     const borrar = async (sql, p) => {
       await db.q("savepoint s");
-      try { const r = await db.cliente.query(sql, p); borradas += r.rowCount; await db.q("release savepoint s"); return true; } catch { await db.q("rollback to savepoint s"); return false; }
+      try { const r = await db.cliente.query(sql, p); borradas += r.rowCount; await db.q("release savepoint s"); return true; } catch (e) { ultimoError = `${e.code} ${e.message}`; await db.q("rollback to savepoint s"); return false; }
     };
     const conjuntos = { profiles: perfiles, clubs: clubIds, grupos: creados.grupos, planes: creados.planes };
     for (let vuelta = 0; vuelta < 8; vuelta++) {
@@ -850,7 +960,9 @@ async function limpiar() {
       }
       if (!pendientes) break;
     }
-    await borrar("delete from public.clubs where id = any($1::uuid[]) or nombre like $2", [clubIds, `T rls nuevo ${TAG}%`]);
+    if (!(await borrar("delete from public.clubs where id = any($1::uuid[]) or nombre like $2", [clubIds, `T rls nuevo ${TAG}%`]))) {
+      console.log("Limpieza: los antros no se borraron en la primera vuelta: " + ultimoError);
+    }
     await borrar("delete from public.grupos where id = any($1::uuid[]) or nombre like $2", [creados.grupos, `${TAG}%`]);
     await borrar("delete from public.planes where clave like $1", [`${TAG}%`]);
     await borrar("delete from public.app_errores where mensaje like $1 or ruta like $2", [`%${TAG}%`, `%${TAG}%`]);
@@ -858,6 +970,9 @@ async function limpiar() {
     await borrar("delete from public.alertas_enviadas where tipo like $1", [`${TAG}%`]);
     await borrar("delete from public.stripe_eventos where id = $1", [`evt_${TAGX}`]);
     await borrar("delete from public.alertas_enviadas where tipo = $1", [TAG]);
+    await borrar("delete from public.reserva_intentos where club_id = any($1::uuid[]) or telefono_hash = $2", [clubIds, TAG]);
+    await borrar("delete from public.invitacion_intentos where ip_hash = $1", [IPH]);
+    await borrar("delete from public.correos_salida where destinatario like $1", [`${TAG}%`]);
     await borrar("delete from public.profiles where id = any($1::uuid[])", [perfiles]);
     await db.q("commit");
     for (const b of ["club-photos", "verificacion-docs"]) for (const id of clubIds) {
@@ -866,6 +981,14 @@ async function limpiar() {
       if (rutas.length) await svc.storage.from(b).remove(rutas);
     }
     for (const id of perfiles) await svc.auth.admin.deleteUser(id);
+    // Segunda vuelta: lo que borró la cascada de auth.users pudo liberar a los antros.
+    if ((await db.q("select count(*)::int as n from public.clubs where id = any($1::uuid[])", [clubIds]))[0].n) {
+      await db.q("begin");
+      await db.q("set local antroapp.borrado_pruebas = 'on'");
+      for (const f of refs) if (f.ref === "clubs" && !(f.tabla === "clubs" && f.col === "dueno_id")) await borrar(`delete from ${f.tabla} where ${f.col} = any($1::uuid[])`, [clubIds]);
+      if (!(await borrar("delete from public.clubs where id = any($1::uuid[])", [clubIds]))) console.log("Limpieza: segunda vuelta de antros falló: " + ultimoError);
+      await db.q("commit");
+    }
     const quedan = await db.q("select (select count(*) from public.clubs where nombre like $1)::int as clubs, (select count(*) from auth.users where email like $2)::int as cuentas, (select count(*) from public.profiles where nombre like $3)::int as perfiles", [`T rls%${TAG}%`, `${TAG}%`, `%${TAG}%`]);
     console.log(`\nLimpieza: ${borradas} filas, ${perfiles.length} cuentas. Quedan: ${JSON.stringify(quedan[0])}`);
     if (quedan[0].clubs || quedan[0].cuentas || quedan[0].perfiles) avisos.push("la limpieza dejó restos: " + JSON.stringify(quedan[0]));
@@ -897,24 +1020,43 @@ function markdown(est) {
     md += `| ${r.grupo} | ${r.prueba} | ${r.actor} | ${r.esperado ? "sí" : "no"} | ${r.obtenido ? "sí" : "no"}${r.ok ? "" : " ⚠"} |\n`;
   md += `\n#### Escaneo de NULL (${est.total} funciones; ${est.filas.length} con patrón)\n\n| Función | Patrón | Veredicto |\n|---|---|---|\n`;
   for (const f of est.filas) md += `| \`${f.firma}\` | ${f.golpes.join(", ")} | ${f.veredicto} |\n`;
+  md += `\n#### Ayudantes boolean (${(est.bool ?? []).length})\n\n| Función | En políticas | En «if not f(…)» de | Veredicto |\n|---|---|---|---|\n`;
+  for (const b of est.bool ?? []) md += `| \`${b.firma}\` | ${b.enPoliticas} | ${b.enIfNot.join(", ") || "—"} | ${b.veredicto} |\n`;
   return md;
 }
 
 // ---------------------------------------------------------------- principal
 let est = { total: 0, filas: [] };
+// ¿Sigue la política vieja «el RP lee sus reservas directo»? (b-cliente 41 la quita.)
+let RP_LEE_RESERVAS = true;
 try {
-  console.log(`Auditoría RLS contra antroapp-dev (marca ${TAG})`);
+  {
+    const db = await conectarDevEscritura();
+    try {
+      RP_LEE_RESERVAS = (await db.q("select 1 from pg_policies where schemaname = 'public' and tablename = 'reservations' and policyname = 'reservations_select_rp_own'")).length > 0;
+    } finally { await db.fin(); }
+  }
+  console.log(`Auditoría RLS contra antroapp-dev (marca ${TAG}); el RP ${RP_LEE_RESERVAS ? "sí" : "ya no"} lee reservations directo`);
   await escenario();
   console.log(`Escenario listo: ${Object.keys(A).length} sesiones, ${Object.values(filas).flat().length} filas de prueba.`);
-  const tablas = (await (async () => { const db = await conectarDevEscritura(); try { return await db.q(`select c.relname as t, c.relrowsecurity as rls from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r','p') order by 1`); } finally { await db.fin(); } })());
-  for (const { t, rls } of tablas) {
+  // Tablas de public con RLS y si anon/authenticated tienen algún GRANT (de tabla o de columna).
+  const tablas = (await (async () => { const db = await conectarDevEscritura(); try { return await db.q(`select c.relname as t, c.relrowsecurity as rls,
+      (has_table_privilege('anon', c.oid, 'select,insert,update,delete') or has_table_privilege('authenticated', c.oid, 'select,insert,update,delete')
+       or has_any_column_privilege('anon', c.oid, 'select,insert,update') or has_any_column_privilege('authenticated', c.oid, 'select,insert,update')) as expuesta
+    from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r','p') order by 1`); } finally { await db.fin(); } })());
+  for (const { t, rls, expuesta } of tablas) {
     anotar("tablas", `${t} tiene RLS`, "-", true, rls);
     if (SPEC[t]) await correrTabla(t, SPEC[t]);
     else if (GLOBALES[t]) await correrGlobal(t, GLOBALES[t]);
-    else {
+    else if (!expuesta) {
+      // Tabla nueva sin GRANT para anon ni authenticated (solo service_role y funciones): se comprueba que nadie la toque.
+      await correrGlobal(t, { ver: nadie, ins: {} });
+      avisos.push(`tabla sin matriz y sin GRANT para la API: ${t} (comprobado: nadie la lee ni la escribe)`);
+    } else {
       // Tabla nueva sin matriz: nadie que no sea admin debería ver filas sin que alguien lo decida.
       const vistas = await Promise.all(ACTORES().map(async (a) => [a.key, (await a.c.from(t).select("*", { count: "exact", head: true })).count ?? 0]));
       avisos.push(`tabla sin matriz: ${t} (filas visibles: ${vistas.filter(([, n]) => n).map(([k, n]) => `${k}=${n}`).join(", ") || "ninguna"})`);
+      if (ESTRICTO) anotar("tablas", `${t} expuesta a la API sin matriz`, "-", true, false, "falta su especificación en SPEC");
     }
   }
   await correrFunciones();

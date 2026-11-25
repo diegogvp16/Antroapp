@@ -13,9 +13,14 @@
 --     rp_id sea de ese antro. El RP de B ve esos turnos y esa tarifa en su
 --     panel y la asistencia puede generar pagos por día en A. La pantalla del
 --     staff ya rechaza un QR de otro antro ("wrong-club"); la base no. Bajo.
---  2. Sin cuenta (y un cliente con sesión) se puede reservar en un antro que
---     NO está publicado (borrador, como Panic Room) si se conoce su id. Bajo:
---     los ids no se pueden listar, pero la regla es "solo publicados".
+--  2. (Defensa en profundidad, NO es hueco.) Reservar sin cuenta o como
+--     cliente en un antro que NO está publicado ya lo rechaza hoy la
+--     política de INSERT: su subconsulta de clubs.zona_horaria corre con el
+--     RLS de quien llama, no ve el borrador, la fecha mínima sale NULL y el
+--     INSERT se niega (comprobado el 25/11 con este SQL quitado: ni el
+--     anónimo ni el cliente pudieron). Además el trigger del 72 lo rechaza
+--     con mensaje para el anónimo. Esta restrictiva deja la regla escrita
+--     en un solo lugar (puede_ver_club) por si la política cambia.
 --
 -- Arreglo: políticas RESTRICTIVAS (AND sobre las de hoy), sin tocar las
 -- permisivas: rp_es_del_club(rp, club) en INSERT (y UPDATE donde hay

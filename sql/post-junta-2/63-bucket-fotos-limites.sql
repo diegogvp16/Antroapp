@@ -12,7 +12,9 @@
 -- del proyecto y contenido arbitrario con la URL de AntroApp.
 --
 -- Arreglo: 10 MB como verificacion-docs y solo imágenes de foto (sin SVG,
--- que puede llevar script). /dueno/panel ya pide accept="image/*".
+-- que puede llevar script). /dueno/panel revisa los mismos límites antes de
+-- subir (lib/fotos-club.ts: misma lista en accept, tope de 10 MB y un aviso
+-- con el motivo); si cambian aquí, cambiar también allá.
 -- DECISIÓN para Diego: el tope de 10 MB (fotos de celular: 2–8 MB).
 -- Los archivos que ya están no se tocan: el límite aplica al subir.
 -- ============================================================================

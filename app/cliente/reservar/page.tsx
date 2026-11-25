@@ -189,6 +189,13 @@ function ReservarPage() {
           setError("Ya tienes una reserva en este antro para esa noche.");
           return;
         }
+        // Avisos de la base (P0001): topes de reservas sin cuenta, antro que
+        // no recibe reservas, nombre o teléfono inválidos. Se muestran tal
+        // cual y sin "Intenta de nuevo": reintentar no cambia la respuesta.
+        if (insertError.code === "P0001" && insertError.message) {
+          setError(insertError.message);
+          return;
+        }
         console.error("Supabase insert error (reservations):", insertError);
         throw insertError;
       }
