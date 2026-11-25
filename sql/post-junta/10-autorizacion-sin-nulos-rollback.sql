@@ -1,5 +1,14 @@
--- Rollback de sql/post-junta/10-autorizacion-sin-nulos.sql: regresa los
--- cuerpos anteriores (con el hueco). Solo si el 10 causara un problema.
+-- Rollback de sql/post-junta/10-autorizacion-sin-nulos.sql.
+--
+-- Corregido el 25/11/2026 (noche 3): la versión anterior regresaba los
+-- cuerpos de ANTES del 10a, con el hueco ALTO de autorización en NULL. Pero
+-- el 10a ya está en producción desde el pase 1, así que en producción ese
+-- rollback habría reabierto el hueco. Ahora las 6 funciones que comparte con
+-- el 10a vuelven EXACTAMENTE a como están hoy en producción (copiadas de su
+-- catálogo con pg_get_functiondef, solo lectura), y personal_historial
+-- (post-junta 02, no existe en producción) vuelve a la versión del 02.
+-- create or replace conserva los permisos de cada función.
+begin;
 
 CREATE OR REPLACE FUNCTION public.caja_tiene_permiso(p_club_id uuid, p_permiso text)
  RETURNS boolean
@@ -23,7 +32,7 @@ begin
   -- El dueño de grupo LEE todos sus antros (caja_puede_ver) pero no opera la
   -- caja (decisión 13). Si se decide que sí, basta con:
   --   if public.club_es_dueno_grupo(p_club_id) then return true; end if;
-  if v_rol not in ('staff', 'gerente') or public.current_club_id() is distinct from p_club_id then
+  if v_rol is null or v_rol not in ('staff', 'gerente') or public.current_club_id() is distinct from p_club_id then
     return false;
   end if;
   if exists (select 1 from public.profiles p where p.id = auth.uid() and p.activo is false) then
@@ -62,7 +71,7 @@ CREATE OR REPLACE FUNCTION public.caja_configurar_permiso(p_club_id uuid, p_perm
  SET search_path TO ''
 AS $function$
 begin
-  if not (public.current_role_name() = 'admin' or public.club_es_dueno(p_club_id)) then
+  if not coalesce(public.current_role_name() = 'admin' or public.club_es_dueno(p_club_id), false) then
     raise exception 'Solo el dueño o el admin configuran permisos de caja';
   end if;
   if (p_rol is null) = (p_profile_id is null) then
@@ -102,11 +111,11 @@ begin
   if auth.uid() is null then
     raise exception 'Inicia sesión';
   end if;
-  if not (v_rol = 'admin'
+  if not coalesce(v_rol = 'admin'
           or public.club_es_dueno(p_club_id)
           or public.club_es_dueno_grupo(p_club_id)
           or (v_rol = 'gerente' and p_club_id = public.current_club_id()
-              and exists (select 1 from public.profiles p where p.id = auth.uid() and p.activo))) then
+              and exists (select 1 from public.profiles p where p.id = auth.uid() and p.activo)), false) then
     raise exception 'No tienes acceso a este antro';
   end if;
   if p_desde is null or p_hasta is null or p_hasta < p_desde or p_hasta - p_desde > 93 then
@@ -191,9 +200,9 @@ begin
   if v_rol = 'admin' or public.club_es_dueno(p_club_id) then
     return true;
   end if;
-  return v_rol = 'gerente'
+  return coalesce(v_rol = 'gerente'
      and public.current_club_id() = p_club_id
-     and not exists (select 1 from public.profiles p where p.id = auth.uid() and p.activo is false);
+     and not exists (select 1 from public.profiles p where p.id = auth.uid() and p.activo is false), false);
 end;
 $function$
 ;
@@ -213,8 +222,8 @@ begin
   if public.club_es_dueno(p_club_id) or public.club_es_dueno_grupo(p_club_id) then
     return true;
   end if;
-  return v_rol in ('staff', 'gerente') and public.current_club_id() = p_club_id
-    and not exists (select 1 from public.profiles p where p.id = auth.uid() and p.activo is false);
+  return coalesce(v_rol in ('staff', 'gerente') and public.current_club_id() = p_club_id
+    and not exists (select 1 from public.profiles p where p.id = auth.uid() and p.activo is false), false);
 end;
 $function$
 ;
@@ -238,7 +247,7 @@ begin
   if public.club_es_dueno(p_club_id) or public.club_es_dueno_grupo(p_club_id) then
     return true;
   end if;
-  return v_rol in ('staff', 'gerente', 'rp') and public.current_club_id() = p_club_id;
+  return coalesce(v_rol in ('staff', 'gerente', 'rp') and public.current_club_id() = p_club_id, false);
 end;
 $function$
 ;
@@ -269,3 +278,4 @@ end;
 $function$
 ;
 
+commit;
