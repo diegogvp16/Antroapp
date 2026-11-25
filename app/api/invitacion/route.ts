@@ -91,6 +91,15 @@ export async function POST(request: Request) {
     if (creada.error || !creada.data.user) {
       const e = creada.error;
       const texto = (e?.message ?? "").toLowerCase();
+      // Dos envíos del mismo formulario a la vez (doble toque, reintento con
+      // mala señal): el otro ya creó la cuenta. Se espera un momento y, si la
+      // invitación ya quedó aceptada, se dice eso y no «error» ni «ya existe».
+      if (e?.code !== "weak_password") {
+        await new Promise((r) => setTimeout(r, 1500));
+        const otra = await svc.rpc("invitacion_consultar", { p_token: d.token });
+        const ahora = otra.data as Invitacion | null;
+        if (!otra.error && ahora && ahora.estado !== "pendiente") return responder({ error: NO_SIRVE[ahora.estado], estado: ahora.estado }, 410);
+      }
       if (e?.code === "email_exists" || e?.code === "user_already_exists" || texto.includes("already been registered")) {
         return responder(
           {
@@ -105,7 +114,7 @@ export async function POST(request: Request) {
         return responder({ error: "Esa contraseña es muy común o muy corta. Elige otra." }, 400);
       }
       registrarError("invitacion: createUser", e);
-      return responder({ error: "No pudimos crear tu cuenta. Intenta de nuevo." }, 500);
+      return responder({ error: "No pudimos crear tu cuenta. Si ya la habías creado, inicia sesión; si no, intenta de nuevo." }, 500);
     }
     const nuevo = creada.data.user.id;
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { mensajeParaUsuario } from "@/lib/errores-base";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +43,11 @@ const VARIANTE: Record<EstadoInvitacion, "ok" | "warn" | "neutral" | "err"> = {
   revocada: "neutral",
 };
 
+const INICIALES = 5;
+// Se leen por páginas: un lote de 130 RPs (o las 400 pendientes que admite
+// un antro) no cabe en una sola lectura corta.
+const PAGINA = 100;
+
 const fecha = new Intl.DateTimeFormat("es-MX", { timeZone: "America/Mexico_City", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
 async function llamarInvitar(cuerpo: object): Promise<{ ok: boolean; mensaje: string }> {
@@ -56,7 +61,9 @@ async function llamarInvitar(cuerpo: object): Promise<{ ok: boolean; mensaje: st
   }
 }
 
-export function InvitarPersonal({ clubId, miRol }: { clubId: string; miRol: string }) {
+// recargar: cambia de valor cuando otra parte de la pantalla creó invitaciones
+// (el lote por CSV) y hay que volver a leer la lista.
+export function InvitarPersonal({ clubId, miRol, recargar = 0 }: { clubId: string; miRol: string; recargar?: number }) {
   const roles = rolesQuePuedeInvitar(miRol);
   const [filas, setFilas] = useState<Fila[] | null>(null);
   const [errorLista, setErrorLista] = useState<string | null>(null);
@@ -68,25 +75,50 @@ export function InvitarPersonal({ clubId, miRol }: { clubId: string; miRol: stri
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [confirmarRevocar, setConfirmarRevocar] = useState<string | null>(null);
   const [avisoFila, setAvisoFila] = useState<{ id: string; ok: boolean; texto: string } | null>(null);
+  const [verTodas, setVerTodas] = useState(false);
+  const [total, setTotal] = useState<number | null>(null);
+  const [cargandoMas, setCargandoMas] = useState(false);
+  // Cuántas filas hay a la vista: al recargar (después de reenviar, revocar
+  // o un lote) se vuelven a leer las mismas, no solo la primera página.
+  const cargadas = useRef(PAGINA);
 
-  const cargar = useCallback(async () => {
-    const { data, error } = await createClient()
-      .from("invitaciones")
-      .select("id, rol, correo, nombre, creada_en, expira_en, aceptada_en, revocada_en, envios")
-      .eq("club_id", clubId)
-      .order("creada_en", { ascending: false })
-      .limit(50);
-    if (error) {
-      setErrorLista(mensajeParaUsuario(error, "No pudimos cargar las invitaciones."));
-      return;
-    }
-    setErrorLista(null);
-    setFilas((data ?? []) as Fila[]);
-  }, [clubId]);
+  const cargar = useCallback(
+    async (hasta?: number) => {
+      const n = hasta ?? cargadas.current;
+      // Primero las que siguen abiertas (sin aceptar ni revocar: pendientes y
+      // vencidas), luego las revocadas y al final las aceptadas; dentro de
+      // cada grupo, la más nueva primero. El id desempata (todas las de un
+      // lote tienen la misma hora) para que las páginas no se encimen.
+      const { data, error, count } = await createClient()
+        .from("invitaciones")
+        .select("id, rol, correo, nombre, creada_en, expira_en, aceptada_en, revocada_en, envios", { count: "exact" })
+        .eq("club_id", clubId)
+        .order("aceptada_en", { ascending: false, nullsFirst: true })
+        .order("revocada_en", { ascending: false, nullsFirst: true })
+        .order("creada_en", { ascending: false })
+        .order("id", { ascending: true })
+        .range(0, n - 1);
+      if (error) {
+        setErrorLista(mensajeParaUsuario(error, "No pudimos cargar las invitaciones."));
+        return;
+      }
+      cargadas.current = n;
+      setErrorLista(null);
+      setFilas((data ?? []) as Fila[]);
+      setTotal(count ?? data?.length ?? 0);
+    },
+    [clubId],
+  );
+
+  async function verMas() {
+    setCargandoMas(true);
+    await cargar(cargadas.current + PAGINA);
+    setCargandoMas(false);
+  }
 
   useEffect(() => {
     cargar();
-  }, [cargar]);
+  }, [cargar, recargar]);
 
   async function invitar(e: FormEvent) {
     e.preventDefault();
@@ -128,6 +160,18 @@ export function InvitarPersonal({ clubId, miRol }: { clubId: string; miRol: stri
   }
 
   if (roles.length === 0) return null;
+
+  // Primero lo que todavía se puede mover (pendientes y vencidas), luego el
+  // historial; cada grupo, de la más nueva a la más vieja. Solo las primeras
+  // INICIALES a la vista para no empujar el resto de la pantalla.
+  const ordenadas = [...(filas ?? [])].sort((a, b) => {
+    const abierta = (f: Fila) => (accionesDe(estadoInvitacion(f)).reenviar ? 0 : 1);
+    // Las de un mismo lote tienen la misma hora: entre ellas, por nombre.
+    return (
+      abierta(a) - abierta(b) || Date.parse(b.creada_en) - Date.parse(a.creada_en) || a.nombre.localeCompare(b.nombre, "es-MX", { numeric: true })
+    );
+  });
+  const visibles = verTodas ? ordenadas : ordenadas.slice(0, INICIALES);
 
   return (
     <div className="flex flex-col gap-3">
@@ -187,7 +231,7 @@ export function InvitarPersonal({ clubId, miRol }: { clubId: string; miRol: stri
           <p role="alert" className="text-sm text-status-err">
             {errorLista}
           </p>
-          <Button type="button" variant="outline" className="h-10" onClick={cargar}>
+          <Button type="button" variant="outline" className="h-10" onClick={() => cargar()}>
             Reintentar
           </Button>
         </div>
@@ -195,7 +239,7 @@ export function InvitarPersonal({ clubId, miRol }: { clubId: string; miRol: stri
       {!errorLista && filas === null && <p className="text-sm text-muted-foreground">Cargando invitaciones…</p>}
       {!errorLista && filas?.length === 0 && <p className="text-sm text-muted-foreground">Todavía no hay invitaciones.</p>}
       {!errorLista &&
-        filas?.map((f) => {
+        visibles.map((f) => {
           const estado = estadoInvitacion(f);
           const acciones = accionesDe(estado);
           return (
@@ -254,6 +298,16 @@ export function InvitarPersonal({ clubId, miRol }: { clubId: string; miRol: stri
             </Card>
           );
         })}
+      {!errorLista && ordenadas.length > visibles.length && (
+        <Button type="button" variant="outline" className="h-10 self-start" onClick={() => setVerTodas(true)}>
+          Ver todas ({total ?? ordenadas.length})
+        </Button>
+      )}
+      {!errorLista && verTodas && total !== null && ordenadas.length < total && (
+        <Button type="button" variant="outline" className="h-10 self-start" disabled={cargandoMas} onClick={verMas}>
+          {cargandoMas ? "Cargando…" : `Ver más (faltan ${total - ordenadas.length})`}
+        </Button>
+      )}
     </div>
   );
 }

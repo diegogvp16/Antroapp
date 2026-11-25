@@ -298,7 +298,8 @@ try {
         revisar(soloFallidos, `${w}px: el filtro Fallidos solo deja los fallidos`);
         const ancho = await pg.evaluate(() => document.documentElement.scrollWidth);
         revisar(ancho <= w, `${w}px: sin scroll horizontal (${ancho})`);
-        const chicos = await pg.$$eval("main button, main a, button, a", (els) => els.filter((e) => e.offsetParent).map((e) => ({ t: e.textContent.trim().slice(0, 30), h: e.getBoundingClientRect().height })).filter((x) => x.h < 40));
+        // Fuera el botón de Next en modo desarrollo (sin turbopack queda fuera del shadow DOM; no existe en producción).
+        const chicos = await pg.$$eval("main button, main a, button, a", (els) => els.filter((e) => e.offsetParent && !e.hasAttribute("data-nextjs-dev-tools-button")).map((e) => ({ t: e.textContent.trim().slice(0, 30), h: e.getBoundingClientRect().height })).filter((x) => x.h < 40));
         revisar(chicos.length === 0, `${w}px: controles de 40 px o más`, JSON.stringify(chicos));
         await pg.screenshot({ path: path.join(SHOTS, `correos-fallidos-${w}.png`), fullPage: true });
         revisar(fallos.length === 0, `${w}px: sin errores de página`, fallos.join(" | "));

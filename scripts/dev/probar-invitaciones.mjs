@@ -36,6 +36,7 @@ import {
   esquemaAceptar,
   esquemaInvitar,
   avisoEnvio,
+  enlaceEnTexto,
 } from "../../lib/domain/invitaciones.ts";
 import { valorRol, porDefecto } from "../../lib/domain/permisos-caja.ts";
 import { leerConfigCorreo, procesarCorreo } from "../../lib/domain/correo.ts";
@@ -154,6 +155,10 @@ try {
   revisar(extra.success && !("rol" in extra.data) && !("club_id" in extra.data), "aceptar: rol y club del cuerpo se descartan");
   revisar(!esquemaInvitar.safeParse({ accion: "crear", club_id: DEMO, rol: "dueno", correo: "a@b.mx", nombre: "Ana" }).success, "invitar: rol dueño se rechaza antes de la base");
   revisar(avisoEnvio("archivado").includes("bandeja") && avisoEnvio("enviado", true).includes("anterior"), "avisos de envío");
+  revisar(
+    enlaceEnTexto(txt.texto) === `https://a.mx/invitacion/${tk}` && enlaceEnTexto("sin enlace") === null && enlaceEnTexto(`x https://a.mx/invitacion/${tk}0 y`) === null,
+    "bandeja: «Copiar enlace» encuentra el enlace completo y nada más",
+  );
   revisar(valorRol([], "staff", "anular").permitido === false && valorRol([], "gerente", "anular").permitido === true && porDefecto("staff", "puerta"), "permisos de caja: valores por defecto como la base");
   revisar(valorRol([{ permiso: "anular", rol: "staff", profile_id: null, permitido: true }], "staff", "anular").propio === true, "permisos de caja: la casilla guardada gana");
 
@@ -176,7 +181,7 @@ try {
   const dueno = await crearCuenta("dueno", { role: "dueno" });
   const duenoTemp = await crearCuenta("duenotemp", { role: "dueno", meta: { debe_cambiar: true } });
   for (const [clave, d] of [["A", dueno], ["B", duenoTemp]]) {
-    const { data, error } = await svc.from("clubs").insert({ nombre: `T equipo ${clave} ${sufijo}`, direccion: "Calle 1", horario: "Vie", dueno_id: d.id }).select("id").single();
+    const { data, error } = await svc.from("clubs").insert({ nombre: `T equipo ${clave} ${sufijo}`, direccion: "Calle 1", horario: "Vie", dueno_id: d.id, estado_verificacion: "verificado" }).select("id").single();
     if (error) throw new Error("club: " + error.message);
     clubes[clave] = data.id;
   }
@@ -394,8 +399,26 @@ try {
     const dos = await Promise.all([1, 2, 3].map(() => post("/api/invitacion", { accion: "aceptar", token: t10, password: PASS })));
     const ok10 = dos.filter((r) => r.status === 200).length;
     revisar(h10.status === 200 && ok10 === 1, `3 aceptaciones a la vez: gana 1 (${dos.map((r) => r.status).join(", ")})`);
+    revisar(
+      dos.filter((r) => r.status !== 200).every((r) => r.status === 410 && /ya se usó/.test(r.cuerpo.error ?? "")),
+      "…y las otras dicen «ya se usó», no error del servidor",
+      dos.map((r) => r.cuerpo.error ?? "").join(" | "),
+    );
     revisar((await cuentasCon(correoDe("h10"))) === 1, "…y queda una sola cuenta");
     ids.h10 = { id: (await svc.from("invitaciones").select("aceptada_por").eq("id", h10.cuerpo.id).single()).data.aceptada_por, email: correoDe("h10") };
+
+    // Gerente y staff (no solo RP) también nacen con el rol de la invitación
+    // y el login unificado los manda a su panel.
+    for (const [n, rol] of [["h11", "gerente"], ["h12", "staff"]]) {
+      const hi = await post("/api/equipo/invitar", cuerpoInv(n, rol), { galletas: web.dueno });
+      const { token: ti } = await tokenDeBandeja(correoDe(n));
+      const ai = await post("/api/invitacion", { accion: "aceptar", token: ti, password: PASS, rol: "rp" });
+      const pid = (await svc.from("invitaciones").select("aceptada_por").eq("id", hi.cuerpo.id ?? randomUUID()).maybeSingle()).data?.aceptada_por;
+      if (pid) ids[n] = { id: pid, email: correoDe(n) };
+      const pf = pid ? (await svc.from("profiles").select("role, club_id").eq("id", pid).single()).data : null;
+      const li = await post("/api/auth/login", { email: correoDe(n), password: PASS });
+      revisar(hi.status === 200 && ai.status === 200 && pf?.role === rol && pf?.club_id === A && li.status === 200, `invitación de ${rol}: perfil ${rol} en su antro y entra (${hi.status}/${ai.status}/${li.status})`, JSON.stringify(pf));
+    }
 
     // Límite por IP
     const ipFija = nuevaIp();
@@ -465,15 +488,21 @@ async function pantallas() {
         await page.getByRole("heading", { name: "Invitar por correo" }).waitFor({ timeout: 15000 });
         await page.getByText("Cargando permisos…").waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
         await page.getByText("Cargando invitaciones…").waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
-        const botonesRol = await page.locator("fieldset button").count();
+        // Los roles del formulario «Invitar por correo» («Invitar en lote» tiene los suyos).
+        const botonesRol = await page.locator("form fieldset button").count();
         const togglesMatriz = await page.locator("table button").count();
         if (quien === "dueno") {
           revisar(botonesRol === 3 && togglesMatriz === 18, `${ancho}px dueño: 3 roles para invitar y la matriz editable (${botonesRol}, ${togglesMatriz})`);
         } else {
           revisar(botonesRol === 0 && togglesMatriz === 0 && (await page.getByText("Solo el dueño cambia estos permisos").count()) === 1, `${ancho}px gerente: solo RP y matriz de solo lectura (${botonesRol}, ${togglesMatriz})`);
         }
+        const correosVisibles = await page.getByText(new RegExp(`^t_equipo_.*_${sufijo}@example\\.com$`)).count();
+        const verTodas = page.getByRole("button", { name: /^Ver todas \(\d+\)$/ });
+        revisar(correosVisibles > 0 && correosVisibles <= 5 && (await verTodas.count()) === 1, `${ancho}px ${quien}: la lista muestra 5 y «Ver todas» (${correosVisibles})`);
+        await page.screenshot({ path: path.join(carpeta, `b12-equipo-${quien}-${ancho}-corta.png`), fullPage: true });
+        await verTodas.click();
         const lista = await page.getByText(/Invitado (invrp|gerrp)/).count();
-        revisar(lista > 0, `${ancho}px ${quien}: ve sus invitaciones en la lista`);
+        revisar(lista > 0, `${ancho}px ${quien}: con «Ver todas» ve todas sus invitaciones`);
         await revisarPagina(page, `${ancho}px ${quien} ${ruta}`, errores);
         await page.screenshot({ path: path.join(carpeta, `b12-equipo-${quien}-${ancho}.png`), fullPage: true });
         await ctx.close();
@@ -508,6 +537,32 @@ async function pantallas() {
         await page.screenshot({ path: path.join(carpeta, `b12-invitacion-usada-${ancho}.png`), fullPage: true });
       }
       await ctx.close();
+
+      // Admin: la invitación archivada en la bandeja, con «Copiar enlace».
+      const ctxA = await navegador.newContext({ viewport: { width: ancho, height: alto }, extraHTTPHeaders: { "x-forwarded-for": nuevaIp() } });
+      await ctxA.grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
+      const pa = await ctxA.newPage();
+      const erroresA = [];
+      pa.on("pageerror", (e) => erroresA.push(e.message));
+      await pa.goto(BASE + "/cliente/login");
+      await pa.fill("#email", cred.usuarios.admin);
+      await pa.fill("#password", cred.password);
+      await pa.click("button[type=submit]");
+      await pa.waitForURL(/\/admin/, { timeout: 60000 });
+      await pa.goto(BASE + "/admin/correos");
+      await pa.getByRole("button", { name: "Archivados" }).click();
+      const fila = pa.getByRole("button", { name: new RegExp(`Te invitaron a T equipo A ${sufijo}`) }).first();
+      await fila.waitFor({ timeout: 30000 });
+      await fila.click();
+      const copiar = pa.getByRole("button", { name: "Copiar enlace de la invitación" });
+      await copiar.waitFor({ timeout: 15000 });
+      await copiar.click();
+      await pa.getByText("Copiado.").waitFor({ timeout: 5000 }).catch(() => {});
+      const copiado = await pa.evaluate(() => navigator.clipboard.readText()).catch(() => "");
+      revisar(/\/invitacion\/[0-9a-f]{64}$/.test(copiado), `${ancho}px admin: «Copiar enlace» copia el enlace de la invitación`, copiado.slice(0, 40));
+      await revisarPagina(pa, `${ancho}px admin /admin/correos (invitación)`, erroresA);
+      await pa.screenshot({ path: path.join(carpeta, `b12-bandeja-invitacion-${ancho}.png`), fullPage: true });
+      await ctxA.close();
     }
   } finally {
     await navegador.close();
@@ -526,7 +581,8 @@ async function revisarPagina(page, etiqueta, errores) {
   revisar(scroll <= 0, `${etiqueta}: sin scroll horizontal`, String(scroll));
   const chicos = await page.evaluate(() =>
     [...document.querySelectorAll("button, a, input, select, textarea")]
-      .filter((e) => e.offsetParent !== null)
+      // (el input de archivo del lote va oculto, sr-only, dentro de su botón de 40 px)
+      .filter((e) => e.offsetParent !== null && !e.closest("nextjs-portal") && !e.classList.contains("sr-only"))
       .map((e) => ({ t: (e.textContent || e.id || e.tagName).trim().slice(0, 30), h: e.getBoundingClientRect().height }))
       .filter((x) => x.h < 40),
   );

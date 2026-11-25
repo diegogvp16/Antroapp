@@ -116,6 +116,12 @@ export function urlPublica(env: Record<string, string | undefined>, origenPetici
 
 export const enlaceInvitacion = (base: string, token: string) => `${base.replace(/\/+$/, "")}/invitacion/${token}`;
 
+// El enlace de invitación dentro del texto de un correo archivado (para el
+// botón «Copiar enlace» de la bandeja del admin). Nulo si no hay.
+export function enlaceEnTexto(texto: string | null | undefined): string | null {
+  return texto?.match(/https?:\/\/[^\s]+\/invitacion\/[0-9a-f]{64}(?![0-9a-zA-Z])/)?.[0] ?? null;
+}
+
 const FECHA_MX = new Intl.DateTimeFormat("es-MX", {
   timeZone: "America/Mexico_City",
   weekday: "long",

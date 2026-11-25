@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { mensajeParaUsuario } from "@/lib/errores-base";
 import type { EstadoCorreo, ResumenModoCorreo } from "@/lib/domain/correo";
+import { enlaceEnTexto } from "@/lib/domain/invitaciones";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -58,6 +59,44 @@ function textoModo(m: ResumenModoCorreo): { titulo: string; detalle: string; ton
     };
   }
   return { titulo: "Enviar", detalle: "Los correos se mandan y quedan aquí con su resultado.", tono: "ok" };
+}
+
+// Invitación archivada (los correos todavía no salen): el admin copia el
+// enlace y se lo hace llegar a la persona por otro medio.
+function CopiarEnlace({ texto }: { texto: string }) {
+  const enlace = enlaceEnTexto(texto);
+  const [estado, setEstado] = useState<"listo" | "copiado" | "fallo">("listo");
+  if (!enlace) return null;
+  async function copiar() {
+    try {
+      await navigator.clipboard.writeText(enlace!);
+      setEstado("copiado");
+    } catch {
+      setEstado("fallo");
+    }
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" className="h-10" onClick={() => void copiar()}>
+          Copiar enlace de la invitación
+        </Button>
+        {estado === "copiado" && (
+          <span role="status" className="text-xs text-status-ok">
+            Copiado.
+          </span>
+        )}
+        {estado === "fallo" && (
+          <span role="alert" className="text-xs text-status-err">
+            No se pudo copiar: selecciona el enlace del texto.
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Mándalo solo a la persona invitada: sirve una vez y vence en 72 h. Si hay varios para el mismo correo, solo sirve el más reciente.
+      </p>
+    </div>
+  );
 }
 
 export function BandejaCorreos() {
@@ -229,9 +268,12 @@ export function BandejaCorreos() {
                         )}
                       </dl>
                       {cuerpos[f.id] !== undefined ? (
-                        <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-sans text-sm">
-                          {cuerpos[f.id] || "(sin texto)"}
-                        </pre>
+                        <>
+                          {f.estado === "archivado" && f.plantilla.startsWith("invitacion") && <CopiarEnlace texto={cuerpos[f.id]} />}
+                          <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-sans text-sm">
+                            {cuerpos[f.id] || "(sin texto)"}
+                          </pre>
+                        </>
                       ) : falloCuerpo ? (
                         <p role="alert" className="text-status-err">
                           {falloCuerpo}

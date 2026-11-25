@@ -8,6 +8,7 @@ import { cerrarSesionDadoDeBaja } from "@/lib/cuenta-dada-de-baja";
 import { EquipoPersonal } from "@/components/equipo/equipo-personal";
 import { RegistroActividad } from "@/components/equipo/registro-actividad";
 import { InvitarPersonal } from "@/components/equipo/invitar-personal";
+import { ImportarPersonal } from "@/components/equipo/importar-personal";
 import { PermisosCaja } from "@/components/equipo/permisos-caja";
 
 // "Equipo": para el gerente (/staff/equipo) y el dueño (/dueno/equipo).
@@ -22,6 +23,7 @@ export function PantallaEquipo({ para }: { para: "gerente" | "dueno" }) {
   const router = useRouter();
   const [s, setS] = useState<Sesion | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lotes, setLotes] = useState(0);
   const volver = para === "dueno" ? "/dueno/panel" : "/staff/panel";
 
   useEffect(() => {
@@ -68,7 +70,11 @@ export function PantallaEquipo({ para }: { para: "gerente" | "dueno" }) {
           <>
             <section className="flex flex-col gap-3">
               <h2 className="text-lg font-semibold">Invitar por correo</h2>
-              <InvitarPersonal clubId={s.clubId} miRol={s.esDueno ? "dueno" : "gerente"} />
+              <InvitarPersonal clubId={s.clubId} miRol={s.esDueno ? "dueno" : "gerente"} recargar={lotes} />
+            </section>
+            <section className="flex flex-col gap-3">
+              <h2 className="text-lg font-semibold">Invitar en lote</h2>
+              <ImportarPersonal clubId={s.clubId} nombreClub={s.nombreClub} miRol={s.esDueno ? "dueno" : "gerente"} onListo={() => setLotes((n) => n + 1)} />
             </section>
             <section className="flex flex-col gap-3">
               <h2 className="text-lg font-semibold">{s.esDueno ? "Staff y gerentes" : "Staff"}</h2>

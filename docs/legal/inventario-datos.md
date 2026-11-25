@@ -63,6 +63,8 @@
 | `app_errores.usuario_id`, `ip_hash`, `navegador`, `ruta`, `mensaje` | Errores de pantalla | Arreglar fallas |
 | `aceptaciones_legales` (con la bandera de legales) | Qué versión de términos y aviso aceptó y cuándo | Constancia del consentimiento |
 | `correos_salida.destinatario`, `asunto`, `cuerpo` | Correo del destinatario y texto de cada correo que la app mandó o archivó (sin los secretos que el remitente pidió ocultar) | Revisar qué salió (`/admin/correos`); solo el admin la lee; se borra a los 30 días |
+| `invitaciones.nombre`, `correo`, `telefono` (el teléfono es opcional y solo llega por la importación en lote) | Datos de la persona invitada a trabajar en un antro, escritos por quien la invita | Mandarle la invitación; al aceptarla pasan a su perfil. Las ven el dueño, el gerente o el staff que pueden invitar ese rol en ese antro, y el admin. Hoy no se borran (son la bitácora de quién invitó a quién): plazo pendiente de definir con el abogado |
+| `invitacion_lotes.hecho_por`, `club_id`, `total` | Quién importó una lista de personal, cuándo y cuántas (sin correos ni nombres) | Auditoría y límite de importaciones |
 
 ## Lo que la app NO guarda
 

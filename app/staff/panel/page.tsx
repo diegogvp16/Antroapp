@@ -1285,7 +1285,7 @@ export default function StaffPanelPage() {
               variant="outline"
               className="w-full"
             >
-              Equipo y actividad
+              Equipo e invitaciones
             </Button>
             <Button
               render={<Link href="/staff/nomina" />}
