@@ -55,15 +55,31 @@ export type NuevoMovimiento = Pick<
   "clave" | "clubId" | "mesaId" | "sesionId" | "tipo" | "args" | "montoCentavos" | "descripcion"
 >;
 
-export function crearPendiente(n: NuevoMovimiento, usuarioId: string, ahora: Date, secuencia: number): MovimientoPendiente {
+// Orden de envío. No se confía en el reloj del teléfono: si se atrasa (el
+// staff lo cambió, o se corrigió solo con la red después de estar mal), lo
+// capturado después tendría un orden menor y el cobro saldría antes que sus
+// consumos (la base lo rechazaría por saldo). Por eso el orden nunca baja: es
+// el mayor entre el reloj y lo último que hay en la cola, más uno.
+// Milisegundos * 1000 + secuencia: varios renglones del mismo toque
+// conservan su orden.
+export function ordenDeCaptura(ahoraMs: number, ultimoOrden: number, secuencia: number): number {
+  const previo = Number.isFinite(ultimoOrden) ? ultimoOrden + 1 : 0;
+  return Math.max(Math.trunc(ahoraMs) * 1000, previo) + (secuencia % 1000);
+}
+
+export function crearPendiente(
+  n: NuevoMovimiento,
+  usuarioId: string,
+  ahora: Date,
+  secuencia: number,
+  ultimoOrden = 0,
+): MovimientoPendiente {
   return {
     ...n,
     args: { ...n.args, p_clave: n.clave },
     usuarioId,
     capturadoEn: ahora.toISOString(),
-    // Milisegundos * 1000 + secuencia: varios renglones del mismo toque
-    // conservan su orden.
-    orden: ahora.getTime() * 1000 + (secuencia % 1000),
+    orden: ordenDeCaptura(ahora.getTime(), ultimoOrden, secuencia),
     intentos: 0,
     estado: "pendiente",
     motivo: null,
@@ -79,6 +95,44 @@ export function ordenar<T extends { orden: number }>(xs: T[]): T[] {
 // orden en que se capturó. Lo de otra persona en el mismo teléfono se queda.
 export function porEnviar(xs: MovimientoPendiente[], usuarioId: string): MovimientoPendiente[] {
   return ordenar(xs.filter((x) => x.estado === "pendiente" && x.usuarioId === usuarioId));
+}
+
+// ---------------------------------------------------------------------------
+// Sesión del teléfono frente a la de quien abrió la caja.
+// ---------------------------------------------------------------------------
+
+// ok: la sesión es de quien abrió la caja. vencida: ya no hay sesión (se
+// cerró, la revocaron o venció sin poder renovarse). otra_cuenta: entró otra
+// persona en este teléfono (en otra pestaña). desconocida: no se pudo saber
+// (sin señal, o la renovación no contestó): se sigue como estaba.
+export type EstadoSesion = "ok" | "vencida" | "otra_cuenta" | "desconocida";
+
+export function estadoDeSesion(
+  usuarioSesion: string | null,
+  usuarioCaja: string | null,
+  // La lectura de la sesión falló por la red o no contestó a tiempo.
+  sinRespuesta: boolean,
+): EstadoSesion {
+  if (!usuarioCaja) return "desconocida";
+  if (usuarioSesion) return usuarioSesion === usuarioCaja ? "ok" : "otra_cuenta";
+  return sinRespuesta ? "desconocida" : "vencida";
+}
+
+// Tiempos límite con mala señal: una petición que no contesta (el teléfono
+// dice "conectado" pero no pasan datos) no debe dejar la hoja girando ni
+// frenar la cola. LLAMADA: cada envío a la base se corta y se reintenta (es
+// seguro por la clave). HOJA: lo más que espera la hoja antes de cerrarse con
+// "guardado en el teléfono" (el envío sigue solo). LECTURA: lo más que espera
+// la caja una lectura antes de marcar "sin conexión".
+export const LIMITE_LLAMADA_MS = 15_000;
+export const LIMITE_HOJA_MS = 8_000;
+export const LIMITE_LECTURA_MS = 20_000;
+
+// Una promesa con tiempo límite: si no termina a tiempo, devuelve `alVencer`
+// (la original sigue y su resultado se ignora).
+export function conLimite<T>(p: Promise<T>, ms: number, alVencer: T): Promise<T> {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([p, new Promise<T>((ok) => (t = setTimeout(() => ok(alVencer), ms)))]).finally(() => clearTimeout(t));
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +249,13 @@ export function conteoPorMesa(xs: MovimientoPendiente[]): Record<string, { pendi
 
 export function textoPorEnviar(n: number): string {
   return n === 1 ? "1 movimiento por enviar" : `${n} movimientos por enviar`;
+}
+
+// Lo que dejó otra cuenta en este teléfono: solo el número, sin detalle.
+export function textoDeOtraCuenta(n: number): string {
+  return n === 1
+    ? "Hay 1 movimiento de caja de otra cuenta guardado en este teléfono. Se envía cuando esa persona vuelva a entrar aquí."
+    : `Hay ${n} movimientos de caja de otra cuenta guardados en este teléfono. Se envían cuando esa persona vuelva a entrar aquí.`;
 }
 
 // Lo rechazado se queda a la vista hasta que alguien toque "Entendido".

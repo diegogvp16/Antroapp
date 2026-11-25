@@ -65,8 +65,50 @@ function abrirDb(): Promise<IDBDatabase> {
   });
 }
 
-function almacenIdb(db: IDBDatabase): Almacen {
-  const tx = (modo: IDBTransactionMode) => db.transaction(ALMACEN, modo);
+// El navegador puede cerrar la conexión a IndexedDB con la app en segundo
+// plano (iOS lo hace al volver de otra app: "Connection to Indexed Database
+// server lost"). Entonces se reabre y se repite la operación una vez, en
+// lugar de fallar toda la noche hasta recargar.
+function conexionPerdida(e: unknown): boolean {
+  const n = e instanceof Error || (typeof DOMException !== "undefined" && e instanceof DOMException) ? e.name : "";
+  return n === "InvalidStateError" || n === "UnknownError" || n === "TransactionInactiveError";
+}
+
+function almacenIdb(primera: IDBDatabase): Almacen {
+  let db: Promise<IDBDatabase> = Promise.resolve(primera);
+  function vigilar(d: IDBDatabase) {
+    d.onclose = () => void reabrir();
+    // Otra pestaña con una versión nueva de la base local: soltar la conexión
+    // (la siguiente operación la reabre).
+    d.onversionchange = () => d.close();
+  }
+  function reabrir(): Promise<IDBDatabase> {
+    db = abrirDb().then((n) => {
+      vigilar(n);
+      return n;
+    });
+    db.catch(() => {}); // si falla, la siguiente operación vuelve a intentar
+    return db;
+  }
+  vigilar(primera);
+  async function conDb<T>(f: (d: IDBDatabase) => Promise<T>): Promise<T> {
+    let d: IDBDatabase;
+    try {
+      d = await db;
+    } catch {
+      d = await reabrir();
+    }
+    try {
+      return await f(d);
+    } catch (e) {
+      if (!conexionPerdida(e)) throw e;
+      return f(await reabrir());
+    }
+  }
+  // Escrituras "strict": el navegador las asienta en disco antes de decir
+  // que terminaron. Con "relaxed" (lo normal en Chrome) un apagón por batería
+  // justo después de "Guardado en este teléfono" podía perder lo último.
+  const escribir = (d: IDBDatabase) => d.transaction(ALMACEN, "readwrite", { durability: "strict" });
   const fin = (t: IDBTransaction) =>
     new Promise<void>((ok, mal) => {
       t.oncomplete = () => ok();
@@ -75,18 +117,21 @@ function almacenIdb(db: IDBDatabase): Almacen {
     });
   return {
     persistente: true,
-    todos: () => promesa(tx("readonly").objectStore(ALMACEN).getAll() as IDBRequest<MovimientoPendiente[]>),
-    uno: (clave) => promesa(tx("readonly").objectStore(ALMACEN).get(clave) as IDBRequest<MovimientoPendiente | undefined>),
-    async poner(xs) {
-      const t = tx("readwrite");
-      for (const x of xs) t.objectStore(ALMACEN).put(x);
-      await fin(t);
-    },
-    async quitar(claves) {
-      const t = tx("readwrite");
-      for (const c of claves) t.objectStore(ALMACEN).delete(c);
-      await fin(t);
-    },
+    todos: () => conDb((d) => promesa(d.transaction(ALMACEN, "readonly").objectStore(ALMACEN).getAll() as IDBRequest<MovimientoPendiente[]>)),
+    uno: (clave) =>
+      conDb((d) => promesa(d.transaction(ALMACEN, "readonly").objectStore(ALMACEN).get(clave) as IDBRequest<MovimientoPendiente | undefined>)),
+    poner: (xs) =>
+      conDb(async (d) => {
+        const t = escribir(d);
+        for (const x of xs) t.objectStore(ALMACEN).put(x);
+        await fin(t);
+      }),
+    quitar: (claves) =>
+      conDb(async (d) => {
+        const t = escribir(d);
+        for (const c of claves) t.objectStore(ALMACEN).delete(c);
+        await fin(t);
+      }),
   };
 }
 
@@ -108,6 +153,9 @@ function obtenerAlmacen(): Promise<Almacen> {
       if (typeof indexedDB === "undefined") throw new Error("sin IndexedDB");
       const a = almacenIdb(await abrirDb());
       await a.todos(); // prueba de lectura: en algunos modos privados abre pero falla al leer
+      // Pedir que el navegador no borre la base local cuando le falte espacio
+      // (la PWA instalada suele tenerlo ya). Si no lo concede, igual funciona.
+      void navigator.storage?.persist?.().catch(() => false);
       return a;
     } catch (e) {
       console.error("La cola de caja queda solo en memoria:", e);
@@ -192,6 +240,13 @@ export async function leerMovimiento(clave: string): Promise<MovimientoPendiente
   return (await obtenerAlmacen()).uno(clave);
 }
 
+// El orden más alto en la cola (de cualquier usuario): lo nuevo va después,
+// aunque el reloj del teléfono se haya atrasado (ordenDeCaptura).
+export async function ultimoOrden(): Promise<number> {
+  const todos = await (await obtenerAlmacen()).todos();
+  return todos.reduce((m, x) => Math.max(m, Number.isFinite(x.orden) ? x.orden : 0), 0);
+}
+
 // Candado: un solo vaciado a la vez en todo el navegador (todas las pestañas).
 let ocupadoLocal: Promise<unknown> = Promise.resolve();
 async function conCandado<T>(f: () => Promise<T>): Promise<T> {
@@ -217,13 +272,23 @@ export interface ResultadoVaciado {
   rechazados: string[];
   falloRed: boolean;
   sinSesion: boolean;
+  // La sesión del teléfono dejó de ser la de usuarioId a media pasada (otra
+  // persona entró en otra pestaña): se paró sin mandar lo demás.
+  otraSesion: boolean;
 }
 
 // Manda lo pendiente de usuarioId, en orden. Para en el primer fallo de red o
 // de sesión (lo que sigue fallaría igual) y deja lo demás para después.
-export async function vaciarCola(usuarioId: string, llamar: Llamar): Promise<ResultadoVaciado> {
+// sigueLaSesion: se revisa antes de cada envío; si la sesión del teléfono ya
+// no es la de usuarioId, se para (la cola de uno nunca sale con la sesión de
+// otro, aunque cambie a media pasada).
+export async function vaciarCola(
+  usuarioId: string,
+  llamar: Llamar,
+  sigueLaSesion: () => Promise<boolean> = async () => true,
+): Promise<ResultadoVaciado> {
   return conCandado(async () => {
-    const res: ResultadoVaciado = { aplicados: [], rechazados: [], falloRed: false, sinSesion: false };
+    const res: ResultadoVaciado = { aplicados: [], rechazados: [], falloRed: false, sinSesion: false, otraSesion: false };
     const a = await obtenerAlmacen();
     // Se lee dentro del candado: otra pestaña pudo mandar algo mientras se esperaba.
     const lista = porEnviar(await a.todos(), usuarioId);
@@ -234,6 +299,10 @@ export async function vaciarCola(usuarioId: string, llamar: Llamar): Promise<Res
           await a.poner([{ ...x, estado: "rechazado", motivo: "Movimiento no reconocido.", rechazadoEn: new Date().toISOString() }]);
           res.rechazados.push(x.clave);
           continue;
+        }
+        if (!(await sigueLaSesion().catch(() => false))) {
+          res.otraSesion = true;
+          break;
         }
         let r: RespuestaLlamada;
         try {
@@ -256,7 +325,7 @@ export async function vaciarCola(usuarioId: string, llamar: Llamar): Promise<Res
         }
       }
     } finally {
-      if (res.aplicados.length || res.rechazados.length || res.falloRed || res.sinSesion) avisar();
+      if (res.aplicados.length || res.rechazados.length || res.falloRed || res.sinSesion || res.otraSesion) avisar();
     }
     return res;
   });
