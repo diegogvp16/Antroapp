@@ -3,6 +3,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { clienteServicio } from "@/lib/supabase/servicio";
+import { AVISO_CONTRASENA_TEMPORAL, tieneContrasenaTemporal } from "@/lib/contrasena-temporal";
 
 export type Autorizado =
   | { ok: true; userId: string; email: string | null; esAdmin: boolean; club: { id: string; nombre: string } }
@@ -16,6 +17,7 @@ export async function autorizarMensualidad(clubId: unknown): Promise<Autorizado>
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, status: 401, error: "Necesitas iniciar sesión." };
+  if (tieneContrasenaTemporal(user)) return { ok: false, status: 403, error: AVISO_CONTRASENA_TEMPORAL };
   if (typeof clubId !== "string" || !UUID.test(clubId)) return { ok: false, status: 400, error: "Antro inválido." };
   const svc = clienteServicio();
   const { data: perfil } = await svc.from("profiles").select("role, activo").eq("id", user.id).maybeSingle();
