@@ -6,7 +6,10 @@ import { fechaLarga } from "@/lib/domain/compartir";
 export function QrBoleto({ codigo, tamano = 210 }: { codigo: string; tamano?: number }) {
   return (
     <div className="rounded-md bg-white p-4 shadow-[0_0_0_6px_rgb(242_239_233/0.08)]" data-prueba="qr-boleto">
-      <QRCodeSVG value={codigo} size={tamano} />
+      {/* marginSize: con el p-4 suman ~4 módulos de blanco alrededor, lo que pide
+          el estándar; con menos, algunos escáneres (y el de las pruebas) fallan
+          porque alrededor del recuadro el fondo es oscuro. */}
+      <QRCodeSVG value={codigo} size={tamano} marginSize={2} />
     </div>
   );
 }

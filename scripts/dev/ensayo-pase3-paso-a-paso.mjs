@@ -127,5 +127,5 @@ try {
 const ok = resultados.filter((r) => r.ok).length;
 const total = SOLO ? SOLO.length : PASOS.length;
 console.log(`\nResultado: ${ok}/${total} pasos con rollback exacto y reaplicación igual. Tiempo total del ensayo: ${(seg(tInicio) / 60).toFixed(1)} min.`);
-console.log(`Suma de las primeras aplicaciones (dev, por script): ${resultados.reduce((s, r) => s + (r.aplicar ?? 0), 0).toFixed(1)} s. Detalle: backups/ensayo-pase2-paso-a-paso/resultados.json`);
+console.log(`Suma de las primeras aplicaciones (dev, por script): ${resultados.reduce((s, r) => s + (r.aplicar ?? 0), 0).toFixed(1)} s. Detalle: backups/ensayo-pase3-paso-a-paso/resultados.json`);
 process.exit(ok === total ? 0 : 1);

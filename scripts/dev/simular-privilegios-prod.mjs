@@ -27,8 +27,14 @@ import { fileURLToPath } from "node:url";
 import { conectarDevEscritura } from "../db/conexion.mjs";
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+// Cadena completa: pase 2 (scripts/dev/ensayo-pase2.mjs) y después pase 3
+// (scripts/dev/ensayo-pase3-paso-a-paso.mjs), en su orden.
 const fuenteEnsayo = readFileSync(path.join(RAIZ, "scripts/dev/ensayo-pase2.mjs"), "utf8");
-const PASOS = [...fuenteEnsayo.matchAll(/"((?:post-junta|post-junta-2|fase2)\/[^"]+)"/g)].map((m) => m[1]);
+const fuentePase3 = readFileSync(path.join(RAIZ, "scripts/dev/ensayo-pase3-paso-a-paso.mjs"), "utf8");
+const PASOS = [
+  ...[...fuenteEnsayo.matchAll(/"((?:post-junta|post-junta-2|fase2)\/[^"]+)"/g)].map((m) => m[1]),
+  ...[...fuentePase3.matchAll(/"(post-junta-3\/[^"]+)"/g)].map((m) => m[1]),
+];
 const leer = (p) => readFileSync(path.join(RAIZ, "sql", p + ".sql"), "utf8").replace(/\r/g, "").replace(/^\s*(begin|commit);\s*$/gim, "");
 
 const FOTO = `

@@ -549,7 +549,7 @@ export default function RpPanelPage() {
               <div className="flex flex-col items-center gap-2 border-t border-border pt-4">
                 <p className="text-sm font-medium">Tu código de asistencia</p>
                 <div className="rounded-xl bg-white p-4">
-                  <QRCodeSVG value={`rp-attendance-${session.id}`} size={160} />
+                  <QRCodeSVG value={`rp-attendance-${session.id}`} size={160} marginSize={2} />
                 </div>
                 <p className="text-center text-xs text-muted-foreground">
                   Muéstralo al staff de tu antro al llegar.
@@ -665,7 +665,7 @@ export default function RpPanelPage() {
                 </CardHeader>
                 <CardContent className="flex flex-col items-center gap-6 px-6 pb-6">
                   <div className="rounded-xl bg-white p-4">
-                    <QRCodeSVG value={reserva.qr_code} size={200} />
+                    <QRCodeSVG value={reserva.qr_code} size={200} marginSize={2} />
                   </div>
                   <div className="w-full space-y-1 text-sm">
                     <p>
