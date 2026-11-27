@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BottomNav, type RpTab } from "@/components/bottom-nav";
 import { ReservasRp } from "@/components/rp/reservas-rp";
+import { AvisoNoShow } from "@/components/clientes/aviso-noshow";
 import { CuotaDeLaSemana } from "@/components/rp/tarjeta-cuota";
 import {
   describirTurno,
@@ -367,6 +368,11 @@ export default function RpPanelPage() {
       });
 
       if (insertError) {
+        // Avisos de la base (P0001), p. ej. cliente bloqueado en el antro.
+        if (insertError.code === "P0001" && insertError.message) {
+          setError(insertError.message);
+          return;
+        }
         console.error("Supabase insert error (reservations):", insertError);
         throw insertError;
       }
@@ -675,6 +681,7 @@ export default function RpPanelPage() {
                       {reserva.personas}
                     </p>
                   </div>
+                  <AvisoNoShow qr={reserva.qr_code} className="w-full" />
                   <p className="w-full text-xs text-muted-foreground">{AVISO_QR}</p>
                   <Button
                     render={

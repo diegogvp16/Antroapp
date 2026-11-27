@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { EquipoPersonal } from "@/components/equipo/equipo-personal";
+import { EnlaceClientes } from "@/components/clientes/enlace-clientes";
 import { ImportarMesas } from "@/components/mesas/importar-mesas";
 import { EnlacePos } from "@/components/pos/enlace-pos";
 import { mensualidadActiva } from "@/lib/mensualidad/bandera";
@@ -631,6 +632,7 @@ export default function DuenoPanelPage() {
           <EnlacePos clubId={club.id} href="/dueno/pos" className="col-span-2" />
         </div>
         <EnlaceReportesPdf clubIds={[club.id]} />
+        {club && <EnlaceClientes clubId={club.id} href="/dueno/clientes" />}
 
         <VerificacionAntro club={club} onCambioEstado={fetchClub} />
 

@@ -3,7 +3,8 @@
 > **BORRADOR: requiere revisión de un abogado.** Inventario técnico sacado
 > del esquema de la base de antroapp-dev (rama `post-junta`, 24/11/2026),
 > que es el de producción después del pase. Sirve de base al aviso de
-> privacidad. No incluye datos de prueba.
+> privacidad. No incluye datos de prueba. Actualizado el 27/11/2026 con
+> la lista negra, el no-show y los enlaces de WhatsApp (post-junta-3).
 
 ## Dónde viven
 
@@ -15,7 +16,11 @@
   señales del navegador para decidir si es una persona.
 - **Stripe** (solo con la bandera de la mensualidad): datos de cobro **del
   antro**, no de clientes.
-- **WhatsApp**: solo si el usuario comparte su boleto; la app no envía nada.
+- **WhatsApp**: solo si el usuario comparte su boleto, o (con la bandera
+  `whatsapp` del antro) si el staff, el gerente o el RP abren un enlace wa.me
+  con el texto ya escrito. La app no envía nada ni usa la API de WhatsApp: el
+  teléfono del cliente y el texto salen del navegador hacia WhatsApp solo
+  cuando esa persona abre el enlace y decide mandar el mensaje.
 
 ## Por titular
 
@@ -31,6 +36,9 @@
 | `reservations.fecha`, `personas`, `qr_code`, `status`, `entrada_en`, `llegada_tarde`, `puerta_estado` | Datos de la visita | Reserva, entrada y estadísticas | El antro, el RP, admin; el boleto público (`/r/<código>`) muestra solo nombre, fecha, antro y personas, sin teléfono |
 | `reservations.consumo_monto`, `consumption_entries.monto`, `caja_consumos.monto_centavos`, `caja_pagos` | Cuánto consumió y cómo pagó (efectivo, tarjeta, otro; **sin** datos de la tarjeta) | Caja del antro y comisión del RP | El antro; el RP ve el monto según la regla del antro; admin |
 | `mesa_cuentas.cliente_nombre`, `personas` | Nombre en la cuenta de la mesa (también clientes sin reserva) | Caja | El antro; admin |
+| `club_bloqueos.telefono`, `cliente_id`, `nombre`, `motivo`, `vence_en`, `motivo_desbloqueo` (con la bandera `lista_negra`) | Teléfono en claro (10 dígitos si es de México; si no, todos sus dígitos), cuenta si la hay, nombre de referencia y **motivo escrito a mano** del bloqueo de un cliente en un antro | Que no pueda apartar lugar en ese antro | Solo gerente, dueño y dueño del grupo de **ese** antro, y admin (por funciones, nunca la tabla directo). En la pantalla de bloqueados el teléfono sale enmascarado (`***1234`) y el completo se ve con «Ver teléfono», que queda registrado. **Ojo:** eso no es una barrera: el staff, el gerente y el dueño ya leen hoy el teléfono completo de cada reserva de su antro (tabla `reservations`, panel de staff y, con la bandera `whatsapp`, la lista de la noche), **sin registro**. El cliente nunca ve que está bloqueado ni el motivo. Ningún otro antro lo ve. Hoy no se borra (historial); el admin puede tachar el motivo (`lista_negra_tachar`) |
+| `lista_negra_eventos` (`telefono`, `detalle.motivo`, `hecho_por`) | Bitácora de bloqueos, desbloqueos, quién vio un teléfono completo en la pantalla de bloqueados, cambios de política y tachados | Auditoría | Los mismos que arriba |
+| No-shows (calculados, no se guardan aparte) | En cuántas noches un teléfono reservó y no llegó a **ese** antro en la ventana de la política | Avisar al antro y, si el antro lo enciende, bloquear en automático (decisión automatizada; solo cuentan reservas de clientes con cuenta o hechas por un RP) | Gerente, dueño, dueño del grupo y admin (lista); staff y RP solo el número en una reserva que ya ven, sin motivo |
 
 ### RPs (promotores)
 
@@ -100,3 +108,18 @@ La IP sale de `public.ip_cliente()` (`sql/post-junta-3/02-ip-cliente.sql`: `cf-c
    se borra por diseño).
 3. Los **motivos escritos a mano** (anulaciones, bajas) pueden terminar con
    datos personales: conviene un aviso en esas pantallas.
+4. **Lista negra y no-show** (`sql/post-junta-3/40-lista-negra.sql`, bandera
+   `lista_negra`, apagada): el aviso debe decir que el antro puede negar la
+   reserva por incidentes o por no llegar varias veces, que esa información
+   es solo de ese antro y no se comparte con otros, cuánto tiempo se guarda
+   (hoy: sin plazo; el historial no se borra) y cómo pedir que se revise. Si
+   el antro enciende el **bloqueo automático**, es una decisión automatizada:
+   revisar con el abogado si requiere aviso específico y un medio para
+   impugnarla. Los motivos los escribe el gerente a mano y pueden contener
+   datos sensibles: la pantalla pide que solo se escriba lo necesario, y el
+   admin puede tacharlos (`lista_negra_tachar`, queda registrado). Para una
+   cancelación completa (quitar también el teléfono) hoy hay que desbloquear y
+   borrar a mano como postgres (`antroapp.borrado_pruebas`): definir el
+   procedimiento.
+5. **Plantillas de WhatsApp** (`club_whatsapp_plantillas`, bandera
+   `whatsapp`): guardan solo el texto del antro, no datos de clientes.
