@@ -21,13 +21,13 @@
 //       lo rechaza con el mensaje neutro.
 //   15) WhatsApp: el enlace wa.me de la lista del staff trae el número y el
 //       texto correctos y abrirlo no manda nada.
+//   17) Antifraude (revisión de RPs; corre entre el 15 y el 16): ráfaga de
+//       reservas del RP de la corrida, «Buscar alertas nuevas», la alerta
+//       sale, el gerente la confirma con nota (estado y bitácora en la
+//       base) y ni el staff ni el RP pueden abrir /staff/revision.
 //   16) /para-clubes: 404 con la bandera apagada; con ella, el contacto se
 //       guarda y lo ve el admin.
 //   B)  Banderas restauradas.
-//
-// (Pendiente) Antifraude: la bandera 'antifraude' se sigue corrigiendo en
-// otra rama y NO entra en esta suite todavía. Su lugar está marcado abajo
-// («LUGAR PARA ANTIFRAUDE»).
 
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -341,7 +341,7 @@ async function rescatarMesa3(c, mesaId) {
 }
 
 // ===================================================================
-// Después del cierre: 11–16 y B.
+// Después del cierre: 11–17 y B.
 // ===================================================================
 export async function flujosDespuesDelCierre(c, { nombres, tel }) {
   const { corredor: run, esc } = c;
@@ -693,10 +693,109 @@ export async function flujosDespuesDelCierre(c, { nombres, tel }) {
     }
   });
 
-  // ---------------- LUGAR PARA ANTIFRAUDE ----------------
-  // La bandera 'antifraude' (sql/post-junta-3/30-…) se sigue corrigiendo en
-  // otra rama: cuando llegue, su flujo va aquí, con el mismo patrón
-  // (bandera apagada → no se ve; encendida → funciona, verificado en la base).
+  // ---------------- 17) Antifraude (revisión de RPs) ----------------
+  // sql/post-junta-3/30-antifraude-rps.sql, bandera 'antifraude'. Regla que se
+  // dispara: «Ráfaga de reservas» (de fábrica: 8 reservas del mismo RP en 10
+  // minutos, por la noche operativa en que se CREARON). Las 8 reservas son
+  // para mañana: no tocan la noche ya cerrada de los flujos 1–8.
+  await run.flujo("17", "Antifraude: ráfaga de reservas del RP → alerta → el gerente la confirma con nota; staff y RP no entran", null, async (f) => {
+    const g = await paginaDe(c, "gerente");
+    const enlace = g.locator('a[href="/staff/revision"]');
+    const NOTA = `Prueba e2e ${esc.tag}: el RP capturó 8 reservas en un minuto; se habló con él.`;
+    const [{ manana }] = await c.db.q(`select ($1::date + 1)::text manana`, [esc.noche]);
+    let alertaId = null;
+    let idsRafaga = [];
+    try {
+      await f.paso("Bandera antifraude apagada: el panel del gerente no enlaza a «Revisión de RPs»", async () => {
+        await abrirPanel(c, g, { gerente: true });
+        afirmar(await noAparece(g, enlace), "con la bandera apagada el panel enlaza a la revisión de RPs");
+      }, { pagina: g });
+      await f.paso("Preparación: el RP de la corrida «captura» 8 reservas seguidas para mañana (service role, source rp)", async () => {
+        const filas = Array.from({ length: 8 }, (_, i) => ({
+          id: randomUUID(), cliente_nombre: `${esc.tag} Rafaga ${i + 1}`, cliente_telefono: `57${String(Date.now()).slice(-6)}${String(i).padStart(2, "0")}`,
+          personas: 2, status: "pendiente", source: "rp", rp_id: u.rp.id, club_id: esc.club.id, fecha: manana, qr_code: `antro-${randomUUID()}`,
+        }));
+        idsRafaga = filas.map((x) => x.id);
+        const ins = await c.svc.from("reservations").insert(filas);
+        if (ins.error) throw new Error("reservas de la ráfaga: " + ins.error.message);
+        const [x] = await c.db.q(`select count(*)::int n, extract(epoch from max(created_at) - min(created_at))::int seg
+                                    from public.reservations where club_id = $1 and rp_id = $2 and cliente_nombre like $3`, [esc.club.id, u.rp.id, `${esc.tag} Rafaga %`]);
+        afirmar(x.n === 8, `se guardaron ${x.n} reservas`);
+        return `8 reservas del RP en ${x.seg} s, para el ${manana}`;
+      });
+      await f.paso("Bandera encendida: «Revisión de RPs» → «Buscar alertas nuevas en estas noches» → sale «Ráfaga de reservas» por revisar", async () => {
+        await bandera(c, "antifraude", true);
+        await abrirPanel(c, g, { gerente: true });
+        await enlace.waitFor({ timeout: 30_000 });
+        await enlace.click();
+        await g.waitForURL(/\/staff\/revision/);
+        const buscar = g.getByRole("button", { name: "Buscar alertas nuevas en estas noches" });
+        await buscar.waitFor({ timeout: T_NAV });
+        afirmar(!(await g.getByRole("list", { name: "Alertas" }).locator(":scope > li").count()), "al abrir ya había alertas (debe solo listar las guardadas)");
+        await buscar.click();
+        const item = g.getByRole("list", { name: "Alertas" }).locator(":scope > li").filter({ hasText: "Ráfaga" });
+        await item.first().waitFor({ timeout: 30_000 });
+        const n = await g.getByRole("list", { name: "Alertas" }).locator(":scope > li").count();
+        const texto = (await item.first().innerText()).replace(/\s+/g, " ");
+        afirmar(n === 1 && texto.includes(u.rp.nombre), `alertas en pantalla: ${n} · «${texto}»`);
+        return texto.slice(0, 200);
+      }, { pagina: g });
+      await f.verificar("Base: UNA alerta «rafaga» por revisar, del RP de la corrida, con las 8 reservas en la evidencia; la búsqueda quedó registrada (límite de 2 min)", async () => {
+        const al = await c.db.q(`select id, regla, estado, rp_id, evidencia from public.fraude_alertas where club_id = $1`, [esc.club.id]);
+        const det = await una(c.db, `select hecho_por from public.fraude_detecciones where club_id = $1`, [esc.club.id]);
+        alertaId = al[0]?.id ?? null;
+        // La ráfaga puede incluir también la reserva del flujo 1 si se creó
+        // dentro de los mismos 10 minutos: se piden las 8 de aquí, no 8 exactas.
+        const ev = al[0]?.evidencia ?? {};
+        const enEvidencia = idsRafaga.filter((id) => (ev.reservation_ids ?? []).includes(id)).length;
+        const ok = al.length === 1 && al[0].regla === "rafaga" && al[0].estado === "revisar" && al[0].rp_id === u.rp.id && ev.reservas >= 8 && enEvidencia === 8 && det?.hecho_por === u.gerente.id;
+        return { ok, detalle: `${al.length} alerta(s) ${JSON.stringify(al.map((a) => [a.regla, a.estado, a.rp_id === u.rp.id]))} · evidencia: ${ev.reservas} reservas, las 8 de la ráfaga: ${enEvidencia}/8 · búsqueda por el gerente: ${det?.hecho_por === u.gerente.id}` };
+      }, { pagina: g });
+      await f.paso("«Ver detalle» → nota → «Confirmar»: la alerta queda «Confirmada»", async () => {
+        await g.getByRole("list", { name: "Alertas" }).getByRole("button", { name: "Ver detalle" }).first().click();
+        await g.getByRole("heading", { name: /Ráfaga/ }).waitFor();
+        await g.locator("#nota_revision").fill(NOTA);
+        await g.getByRole("button", { name: "Confirmar", exact: true }).click();
+        await g.getByRole("button", { name: "Volver a revisar" }).waitFor({ timeout: 30_000 });
+        return (await g.getByRole("heading", { name: /Ráfaga/ }).locator("xpath=..").innerText()).replace(/\s+/g, " ");
+      }, { pagina: g });
+      await f.verificar("Base: la alerta quedó «confirmada» por el gerente y la bitácora tiene el cambio revisar → confirmada con la nota y la evidencia", async () => {
+        const a = await una(c.db, `select estado, revisada_por from public.fraude_alertas where id = $1`, [alertaId]);
+        const cam = await c.db.q(`select de, a, nota, hecho_por, evidencia is not null as con_evidencia from public.fraude_alertas_cambios where alerta_id = $1 order by hecho_en`, [alertaId]);
+        const ok = a?.estado === "confirmada" && a.revisada_por === u.gerente.id && cam.length === 1 && cam[0].de === "revisar" && cam[0].a === "confirmada" &&
+          cam[0].nota === NOTA && cam[0].hecho_por === u.gerente.id && cam[0].con_evidencia;
+        return { ok, detalle: `alerta ${a?.estado} (por gerente: ${a?.revisada_por === u.gerente.id}) · bitácora ${JSON.stringify(cam.map((x) => ({ de: x.de, a: x.a, nota_igual: x.nota === NOTA, por_gerente: x.hecho_por === u.gerente.id })))}` };
+      }, { pagina: g });
+      const s = await paginaDe(c, "staff");
+      await f.paso("Staff puro: sin enlace en su panel y /staff/revision dice «Solo el gerente revisa a los RPs.» sin alertas", async () => {
+        await abrirPanel(c, s);
+        afirmar(await noAparece(s, s.locator('a[href="/staff/revision"]')), "el staff ve el enlace a la revisión de RPs");
+        await s.goto(c.base + "/staff/revision", { timeout: T_NAV });
+        await s.getByText("Solo el gerente revisa a los RPs.").waitFor({ timeout: T_NAV });
+        await s.waitForTimeout(1000);
+        afirmar(!(await s.getByText(/Ráfaga|Buscar alertas/).count()), "el staff ve alertas o el botón de búsqueda");
+      }, { pagina: s });
+      const r = c.pRp && !c.pRp.isClosed() ? c.pRp : await (async () => {
+        const p = await nuevaPagina(c, c.nav, "rp");
+        await entrar(c, p, u.rp, /\/rp\/panel/);
+        return (c.pRp = p);
+      })();
+      await f.paso("RP: /staff/revision lo saca de la página (sin alertas) y la base le niega la lista (fraude_alertas_listar)", async () => {
+        await r.goto(c.base + "/staff/revision", { timeout: T_NAV });
+        await r.waitForURL((url) => !url.pathname.startsWith("/staff/revision"), { timeout: T_NAV });
+        await r.waitForTimeout(1000);
+        afirmar(!(await r.getByText(/Ráfaga|Buscar alertas|Revisión de RPs/).count()), "el RP ve la revisión");
+        const sb = await c.sesionDe(u.rp);
+        const l = await sb.rpc("fraude_alertas_listar", { p_club_id: esc.club.id });
+        await sb.auth.signOut({ scope: "local" }).catch(() => {});
+        const filas = Array.isArray(l.data) ? l.data.length : l.data ? 1 : 0;
+        afirmar(l.error && filas === 0, `la base le respondió ${l.error ? "error" : "OK"} con ${filas} fila(s)`);
+        return `terminó en ${new URL(r.url()).pathname} · base: ${l.error.code} «${String(l.error.message).slice(0, 80)}»`;
+      }, { pagina: r });
+    } finally {
+      await bandera(c, "antifraude", null).catch(() => {});
+    }
+  });
 
   // ---------------- 16) /para-clubes ----------------
   await run.flujo("16", "/para-clubes: 404 con la bandera apagada; con ella, el contacto se guarda y lo ve el admin", null, async (f) => {

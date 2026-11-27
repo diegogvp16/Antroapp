@@ -181,7 +181,7 @@ export async function limpiarEscenario(svc, esc) {
       await db.q("begin");
       await db.q("set local antroapp.borrado_pruebas = 'on'");
       if (clubIds.length) {
-        // Post-junta-3 (flujos 9–16). Las tablas existen en dev; si alguna
+        // Post-junta-3 (flujos 9–17). Las tablas existen en dev; si alguna
         // faltara (SQL deshecho por otro carril), se salta.
         // POS: sus ventas apuntan a la caja (on delete set null + trigger).
         for (const t of ["pos_ventas", "pos_importacion_lineas", "pos_importaciones", "pos_mapeos"]) await borrarDelAntro(db, t, clubIds);
@@ -193,6 +193,8 @@ export async function limpiarEscenario(svc, esc) {
           await borrarDelAntro(db, t, clubIds);
         // Banderas del antro y su bitácora.
         for (const t of ["club_funciones", "funciones_cambios"]) await borrarDelAntro(db, t, clubIds);
+        // Antifraude (flujo 17): alertas, su bitácora, búsquedas y reglas (también irían en cascada).
+        for (const t of ["fraude_alertas_cambios", "fraude_alertas", "fraude_detecciones", "fraude_reglas_cambios", "fraude_reglas"]) await borrarDelAntro(db, t, clubIds);
         // Inventario (fase 2): sus movimientos apuntan a los consumos.
         await db.q("delete from public.producto_movimientos where club_id = any($1::uuid[])", [clubIds]);
         for (const t of ["caja_eventos", "caja_cuadres", "caja_pagos", "caja_consumos", "mesa_cuentas", "mesa_sesiones", "caja_noches", "caja_permisos"])
@@ -265,8 +267,9 @@ export async function contarDeCorrida(db, esc) {
             (select count(*) from public.aceptaciones_legales where profile_id = any($1::uuid[]))::int aceptaciones`,
     [ids, clubIds, hashes, marca],
   );
-  // Post-junta-3 (flujos 9–16), solo las tablas que existan en dev.
-  const porAntro = ["pos_ventas", "pos_importaciones", "club_funciones", "club_bloqueos", "productos", "caja_propinas", "propinas_repartos", "caja_eventos"];
+  // Post-junta-3 (flujos 9–17), solo las tablas que existan en dev.
+  const porAntro = ["pos_ventas", "pos_importaciones", "club_funciones", "club_bloqueos", "productos", "caja_propinas", "propinas_repartos", "caja_eventos",
+    "fraude_alertas", "fraude_alertas_cambios", "fraude_detecciones"];
   for (const t of porAntro) {
     if (await existe(db, t)) r[t] = (await db.q(`select count(*)::int n from public.${t} where club_id = any($1::uuid[])`, [clubIds]))[0].n;
   }

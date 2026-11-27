@@ -107,14 +107,21 @@
 //      encendida, en «Mañana» la reserva trae Confirmación y Recordatorio; el
 //      enlace es wa.me/52<teléfono> con nombre, antro, personas, boleto y el
 //      aviso del QR; tocarlo abre wa.me (simulado) y no escribe nada.
+//  17) Antifraude (antifraude; corre entre el 15 y el 16): apagada, el
+//      gerente no ve «Revisión de RPs»; con 8 reservas del RP de la corrida
+//      creadas seguidas (para mañana, service role), el gerente pulsa
+//      «Buscar alertas nuevas en estas noches» y sale UNA «Ráfaga de
+//      reservas» (en la base: rafaga, por revisar, con las 8 en la
+//      evidencia y la búsqueda registrada); la confirma con nota (estado
+//      confirmada y bitácora revisar → confirmada con nota y evidencia). El
+//      staff no tiene enlace y /staff/revision le dice «Solo el gerente…»;
+//      al RP la página lo saca y fraude_alertas_listar se lo niega.
 //  16) /para-clubes (bandera de PLATAFORMA para_clubes, global en dev: se
 //      cambia solo mientras dura el flujo y se deja como estaba, también si
 //      la corrida se corta): apagada 404; encendida 200, el contacto se
 //      guarda y lo ve el admin de la corrida en /admin/contactos.
 //   B) Banderas restauradas: el antro sin banderas propias y para_clubes como
 //      antes de la corrida.
-//   (Pendiente) Antifraude: sigue en otra rama; su lugar está marcado en
-//   flujos-n4.mjs («LUGAR PARA ANTIFRAUDE»).
 //
 //   Si un paso falla, el resto de su flujo sale como «NO CORRIÓ»; un flujo
 //   cuyos requisitos no se cumplieron sale OMITIDO con el motivo.
@@ -136,7 +143,7 @@
 // Dev ni corre sembrar-dev/demo-datos. Usa una sola reserva sin cuenta real
 // por corrida (el cupo de 20 por IP y hora es compartido).
 //
-// Tarda ~3 min (104 pasos; 162–168 s el 27/11/2026) con el servidor ya
+// Tarda ~3 min (112 pasos; unos 180 s el 27/11/2026) con el servidor ya
 // compilado (la primera vez el servidor compila cada ruta y puede tardar
 // más). Si otro carril edita el árbol a media corrida, la recarga del
 // servidor puede tumbar un paso: repetir.
