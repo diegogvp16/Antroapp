@@ -27,7 +27,7 @@
 //     quién puede llamar cada función nueva con la bandera de A apagada
 //     (permiso antes que bandera) y encendida; cruces entre antros; y el
 //     catálogo (GRANT de anon/authenticated y search_path fijo). Antifraude
-//     (30) queda fuera a propósito (lugar marcado «ANTIFRAUDE»).
+//     (30) incluido desde la parte 3 (marcas «ANTIFRAUDE»): 6 tablas sin API.
 //
 //   node scripts/dev/auditoria-rls.mjs --limpiar=t_rls_xxxxxx   (restos de una corrida cortada)
 //   AUDITORIA_TRAZA=1 …                                          (imprime cada tabla y fase)
@@ -247,6 +247,9 @@ const VEREDICTOS_BOOL = {
   "_whatsapp_trabaja(uuid)": "nunca NULL: coalesce(…, false) por fuera",
   "boleto_muestra_codigo(text)": "nunca NULL: coalesce(…, false); no autoriza (sí/no del código corto en el boleto)",
   "para_clubes_activa()": "nunca NULL: coalesce((select activa …), false)",
+  // 30 antifraude (revisado el 27/11/2026: sus dos «if not» van en coalesce(…, false); el escaneo no encuentra patrones).
+  "fraude_puede_revisar(uuid)": "nunca NULL: coalesce(uid is not null and rol is not null and (coalesce(es_gerente_o_dueno) or coalesce(club_es_dueno_grupo)), false)",
+  "fraude_regla_activa(uuid,text)": "nunca NULL: coalesce(activa, true); no autoriza (regla encendida por defecto)",
 };
 
 // ---------------------------------------------------------------- escenario
@@ -472,10 +475,10 @@ async function escenario() {
 // con funcion_cambiar (nunca para otro antro); viven en club_funciones y se
 // van con los antros de prueba. reportes_pdf de A llega por su grupo G
 // (grupo_funcion_cambiar), para probar la herencia; B la tiene propia.
-// ANTIFRAUDE (sql/post-junta-3/30, tablas fraude_*): NO se enciende ni se
-// audita aquí mientras su rama se corrige. Lugar reservado: ver «ANTIFRAUDE»
-// en SIN_API_PJ3 y en correrFuncionesPj3.
-const BANDERAS_PJ3 = ["pos_ventas", "escaner_respaldo", "lista_negra", "whatsapp", "inventario", "propinas"];
+// ANTIFRAUDE (sql/post-junta-3/30, tablas fraude_*): integrado el 27/11/2026
+// (bloque 9, parte 3). Bandera «antifraude»; la alerta de A y B sale de una
+// búsqueda real (fraude_detectar) con la regla de ráfaga a 3 reservas.
+const BANDERAS_PJ3 = ["pos_ventas", "escaner_respaldo", "lista_negra", "whatsapp", "inventario", "propinas", "antifraude"];
 const pj3 = {}; // ids sembrados por el camino real
 const telPrueba = () => "55" + String(Math.floor(Math.random() * 1e8)).padStart(8, "0");
 const TEXTO_WA = `Hola {nombre}, te esperamos en {antro} (${TAG}).`;
@@ -519,6 +522,17 @@ async function escenarioPj3() {
   pj3.contacto = ok(await svc.from("contactos_clubes").select("id").eq("correo", `${TAG}@example.com`).single(), "contacto").id;
   ok(await svc.from("contacto_intentos").insert({ ip_hash: IPH, correo_hash: TAG }), "intento de contacto");
   ok(await svc.from("para_clubes_bitacora").insert({ accion: "bandera", detalle: "t_rls", hecho_por: A.admin.id }), "bitácora para-clubes");
+  // Antifraude (30): regla de ráfaga a 3 reservas en 240 min, 3 reservas nuevas del RP de cada antro y una
+  // búsqueda real del gerente (crea la alerta); luego una revisión y una reapertura con nota (bitácora).
+  for (const k of ["A", "B"]) {
+    const g = A["gerente" + k].c, club = C(k);
+    ok(await g.rpc("fraude_regla_guardar", { p_club_id: club, p_regla: "rafaga", p_activa: true, p_parametros: { min_reservas: 3, minutos: 240 } }), "regla ráfaga " + k);
+    ok(await svc.from("reservations").insert([1, 2, 3].map(() => ({ cliente_nombre: "Ráfaga " + TAG, cliente_telefono: telPrueba(), personas: 2, status: "pendiente", fecha: HOY, club_id: club, qr_code: "antro-" + randomUUID(), source: "rp", rp_id: A["rp" + k].id }))), "ráfaga " + k);
+    ok(await g.rpc("fraude_detectar", { p_club_id: club, p_desde: HOY, p_hasta: HOY }), "detectar " + k);
+    pj3["alerta" + k] = ok(await svc.from("fraude_alertas").select("id").eq("club_id", club).eq("regla", "rafaga").eq("rp_id", A["rp" + k].id).limit(1).single(), "alerta " + k).id;
+    ok(await g.rpc("fraude_alerta_cambiar", { p_alerta_id: pj3["alerta" + k], p_estado: "descartada", p_nota: "Revisado en la prueba t_rls" }), "revisar alerta " + k);
+    ok(await g.rpc("fraude_alerta_cambiar", { p_alerta_id: pj3["alerta" + k], p_estado: "revisar", p_nota: "Se reabre en la prueba t_rls" }), "reabrir alerta " + k);
+  }
   // Ids de bitácoras para los filtros de SIN_API_PJ3.
   const uno = async (t, col, filtro) => {
     let q = svc.from(t).select(col);
@@ -530,6 +544,8 @@ async function escenarioPj3() {
   pj3.eventoLN = await uno("lista_negra_eventos", "id", { club_id: C("A"), tipo: "bloqueo" });
   pj3.cambioWA = await uno("whatsapp_plantillas_cambios", "id", { club_id: C("A") });
   pj3.claveLinea = await uno("pos_importacion_lineas", "clave", { importacion_id: pj3.impA });
+  pj3.cambioRegla = await uno("fraude_reglas_cambios", "id", { club_id: C("A") });
+  pj3.cambioAlerta = await uno("fraude_alertas_cambios", "id", { alerta_id: pj3.alertaA });
 }
 
 // ---------------------------------------------------------------- especificación por tabla
@@ -744,12 +760,18 @@ const SIN_API_PJ3 = () => ({
   whatsapp_plantillas_cambios: { filtro: { id: pj3.cambioWA }, col: "texto", ins: { club_id: C("A"), tipo: "confirmacion", texto: "x" } },
   // 81 propinas (la configuración solo por funciones)
   propinas_config: { filtro: { club_id: C("A") }, col: "pct_casa", ins: { club_id: C("B"), pct_personal: 100, pct_rp: 0, pct_casa: 0 } },
-  // ANTIFRAUDE (30, fraude_*): pendiente. Se agrega cuando su rama esté
-  // corregida; mientras, salen como «tabla sin matriz y sin GRANT» (aviso).
+  // 30 antifraude: nada por la API; fraude_secreto (clave del HMAC) ni siquiera para service_role
+  // (por eso su «original» va fijo: la service role no la puede leer para respaldarla).
+  fraude_reglas: { filtro: { club_id: C("A"), regla: "rafaga" }, col: "activa", ins: { club_id: C("A"), regla: "consumo_atipico", activa: false } },
+  fraude_reglas_cambios: { filtro: { id: pj3.cambioRegla }, col: "regla", ins: { club_id: C("A"), regla: "rafaga", despues: {} } },
+  fraude_alertas: { filtro: { id: pj3.alertaA }, col: "resumen", ins: { club_id: C("A"), regla: "rafaga", sujeto: TAG, ventana_inicio: HOY, ventana_fin: HOY, resumen: "x", evidencia: {} } },
+  fraude_alertas_cambios: { filtro: { id: pj3.cambioAlerta }, col: "nota", ins: { alerta_id: pj3.alertaA, club_id: C("A"), de: "revisar", a: "descartada", nota: "x", resumen: "x", evidencia: {} } },
+  fraude_detecciones: { filtro: { club_id: C("A") }, col: "hecho_en", ins: { club_id: C("B"), hecho_en: new Date().toISOString() } },
+  fraude_secreto: { filtro: { id: true }, col: "id", ins: { id: true, clave: "0".repeat(64) }, original: { id: true } },
 });
 
 async function correrSinApi(t, g) {
-  const original = await leer(() => svc.from(t).select("*").match(g.filtro).maybeSingle(), "respaldo " + t);
+  const original = g.original ?? await leer(() => svc.from(t).select("*").match(g.filtro).maybeSingle(), "respaldo " + t);
   if (!original) avisos.push(`${t}: no apareció la fila sembrada (${JSON.stringify(g.filtro)})`);
   await Promise.all(ACTORES().map(async (a) => {
     const c = celda(t, a.key);
@@ -997,6 +1019,12 @@ async function correrFuncionesPj3() {
   await off("caja_registrar_propina", { p_noche_id: pj3.nocheA, p_sesion_id: null, p_cuenta_id: null, p_metodo: "efectivo", p_monto_centavos: 100 }, staffA);
   await off("propinas_config_leer", { p_club_id: cA }, cajaA);
   await off("propinas_reporte_noche", { p_club_id: cA, p_fecha: HOY }, gerA);
+  await off("fraude_reglas_leer", { p_club_id: cA }, gerOGrupoA);
+  await off("fraude_detectar", { p_club_id: cA, p_desde: HOY, p_hasta: HOY }, gerOGrupoA);
+  await off("fraude_alertas_listar", { p_club_id: cA }, gerOGrupoA);
+  await off("fraude_alerta_detalle", { p_alerta_id: pj3.alertaA }, gerOGrupoA);
+  await off("fraude_alerta_cambiar", { p_alerta_id: pj3.alertaA, p_estado: "descartada", p_nota: "Nota de la prueba t_rls" }, gerOGrupoA);
+  await rpc(G, "fraude_mis_antros", {}, gerOGrupoA, { autorizado: (r) => (r.data ?? []).some((x) => x.club_id === cA && x.activa === false), etiqueta: "fraude_mis_antros con la bandera apagada: A aparece «no activa»" });
   // Las que no dan error sin permiso: con la bandera apagada no devuelven nada a nadie.
   await rpc(G, "mis_funciones", { p_club_id: cA }, conSesion, { autorizado: (r) => !r.error && (r.data ?? []).length === 0, etiqueta: "mis_funciones de A con todo apagado: vacío" });
   await rpc(G, "pos_mis_antros", {}, conSesion, { autorizado: (r) => !r.error && !(r.data ?? []).some((x) => x.club_id === cA), etiqueta: "pos_mis_antros sin A (bandera apagada)" });
@@ -1097,7 +1125,31 @@ async function correrFuncionesPj3() {
   await rpc(G, "propinas_repartir", { p_noche_id: pj3.nocheA, p_participantes: [A.staffA.id], p_total_visto: 0, p_pct_personal: 80, p_pct_rp: 10, p_pct_casa: 10, p_incluye_gerente: false }, gerA, { etiqueta: "propinas_repartir (noche abierta)" });
   await rpc(G, "propinas_anular_reparto", { p_reparto_id: pj3.repartoA, p_motivo: "" }, gerA, { autorizado: (r) => !/Reparto no encontrado|permission denied/.test(msg(r)), etiqueta: "propinas_anular_reparto (sin motivo)" });
   await rpc(G, "propinas_reporte_noche", { p_club_id: cA, p_fecha: HOY }, gerA);
-  // ANTIFRAUDE (30): pendiente; cuando su rama esté corregida, sus funciones van aquí.
+  // 30 antifraude: admin, dueño, dueño de grupo (solo de los antros de su grupo) y gerente activo.
+  // El staff puro y los RPs no ven nada, ni sobre sí mismos. La búsqueda: una cada 2 minutos por antro
+  // (el escenario ya buscó: quien tiene permiso recibe «hace menos de 2 minutos» sin buscar otra vez).
+  const gerB = (a) => adm(a) || (es(a, ...GER) && a.club === "B");
+  await rpc(G, "fraude_catalogo", {}, conSesion, { autorizado: (r) => !r.error && !!r.data?.rafaga });
+  await rpc(G, "fraude_mis_antros", {}, gerOGrupoA, { autorizado: (r) => (r.data ?? []).some((x) => x.club_id === cA && x.activa === true), etiqueta: "fraude_mis_antros incluye A (encendida)" });
+  await rpc(G, "fraude_mis_antros", {}, gerB, { autorizado: (r) => (r.data ?? []).some((x) => x.club_id === cB), etiqueta: "fraude_mis_antros incluye B (el dueño de grupo de G no)" });
+  await rpc(G, "fraude_reglas_leer", { p_club_id: cA }, gerOGrupoA);
+  await rpc(G, "fraude_reglas_leer", { p_club_id: cB }, gerB, { etiqueta: "fraude_reglas_leer de B" });
+  await rpc(G, "fraude_regla_guardar", { p_club_id: cA, p_regla: "rafaga", p_activa: true, p_parametros: { min_reservas: 3, minutos: 240 } }, gerOGrupoA, { etiqueta: "fraude_regla_guardar (mismos valores: no cambia)" });
+  await rpc(G, "fraude_regla_guardar", { p_club_id: cB, p_regla: "rafaga", p_activa: true, p_parametros: { min_reservas: 3, minutos: 240 } }, gerB, { etiqueta: "fraude_regla_guardar de B (mismos valores)" });
+  await rpc(G, "fraude_reglas_cambios_leer", { p_club_id: cA }, gerOGrupoA);
+  await rpc(G, "fraude_detectar", { p_club_id: cA, p_desde: HOY, p_hasta: HOY }, gerOGrupoA, { etiqueta: "fraude_detectar (como mucho una búsqueda; las demás «hace menos de 2 minutos»)" });
+  await rpc(G, "fraude_detectar", { p_club_id: cB, p_desde: HOY, p_hasta: HOY }, gerB, { etiqueta: "fraude_detectar de B (una búsqueda o «hace menos de 2 minutos»)" });
+  await rpc(G, "fraude_ultima_deteccion", { p_club_id: cA }, gerOGrupoA, { autorizado: (r) => !r.error && !!r.data?.hecho_en });
+  await rpc(G, "fraude_alertas_listar", { p_club_id: cA }, gerOGrupoA, { autorizado: (r) => (r.data ?? []).some((x) => x.id === pj3.alertaA) });
+  await rpc(G, "fraude_alertas_listar", { p_club_id: cB }, gerB, { autorizado: (r) => (r.data ?? []).some((x) => x.id === pj3.alertaB), etiqueta: "fraude_alertas_listar de B" });
+  await rpc(G, "fraude_alertas_rps", { p_club_id: cA }, gerOGrupoA);
+  await rpc(G, "fraude_alerta_detalle", { p_alerta_id: pj3.alertaA }, gerOGrupoA, { autorizado: (r) => !r.error && (r.data?.cambios ?? []).length === 2 });
+  await rpc(G, "fraude_alerta_detalle", { p_alerta_id: pj3.alertaB }, gerB, { autorizado: sinError, etiqueta: "fraude_alerta_detalle de B (el dueño de grupo de G no)" });
+  await rpc(G, "fraude_alerta_cambiar", { p_alerta_id: pj3.alertaA, p_estado: "descartada", p_nota: "" }, gerOGrupoA, { autorizado: (r) => /nota de al menos/.test(msg(r)), etiqueta: "fraude_alerta_cambiar (sin nota)" });
+  await rpc(G, "fraude_alerta_cambiar", { p_alerta_id: pj3.alertaB, p_estado: "descartada", p_nota: "" }, gerB, { autorizado: (r) => /nota de al menos/.test(msg(r)), etiqueta: "fraude_alerta_cambiar de B (sin nota)" });
+  // La clave del HMAC no la lee nadie, ni la service role.
+  const sec = await svc.from("fraude_secreto").select("*");
+  anotar(G, "fraude_secreto: la service role no la lee", "service_role", false, !sec.error && (sec.data ?? []).length > 0, sec.error?.code ?? "LA LEYÓ");
 }
 
 // Catálogo: qué funciones nuevas puede ejecutar cada rol de la API y que las
@@ -1106,7 +1158,9 @@ const FN_INTERNAS_PJ3 = ["funcion_activa", "pos_puede_usar", "pos_exigir", "pos_
   "ip_cliente", "_lista_negra_mascara", "_lista_negra_gestiona", "_lista_negra_ve_avisos", "_lista_negra_politica", "_lista_negra_noshows",
   "_lista_negra_auto", "_lista_negra_manual", "_lista_negra_exigir", "contacto_huella", "contacto_intentos_limpiar", "_whatsapp_trabaja",
   "_clientes_estado", "reporte_pdf_autorizar", "inventario_producto_para_escribir", "inventario_movimiento_previo", "propinas_detalle",
-  "propinas_de_noche", "propinas_partes", "propinas_regla"];
+  "propinas_de_noche", "propinas_partes", "propinas_regla",
+  "fraude_puede_revisar", "fraude_autorizar", "fraude_parametros", "fraude_regla_activa", "fraude_tel10", "fraude_enmascarar_tel",
+  "fraude_enmascarar_texto", "fraude_nombre"];
 const FN_TRIGGER_PJ3 = ["pos_ventas_caja_borrada", "reservations_antiabuso_anon", "lista_negra_sin_borrar", "reservations_lista_negra", "propinas_candado"];
 const FN_ANON_PJ3 = ["lista_negra_tel", "boleto_muestra_codigo", "para_clubes_activa", "para_clubes_contacto_enviar"];
 const FN_APP_PJ3 = ["mis_funciones", "funciones_estado", "funcion_cambiar", "grupo_funcion_cambiar",
@@ -1120,7 +1174,9 @@ const FN_APP_PJ3 = ["mis_funciones", "funciones_estado", "funcion_cambiar", "gru
   "reporte_pdf_noche", "reporte_pdf_semana",
   "inventario_entrada", "inventario_merma", "inventario_conteo", "inventario_historial", "inventario_reporte_noche",
   "caja_registrar_propina", "caja_anular_propina", "propinas_anular_de_cobro", "propinas_config_leer", "propinas_config_guardar",
-  "propinas_calcular", "propinas_repartir", "propinas_anular_reparto", "propinas_reporte_noche"];
+  "propinas_calcular", "propinas_repartir", "propinas_anular_reparto", "propinas_reporte_noche",
+  "fraude_catalogo", "fraude_mis_antros", "fraude_reglas_leer", "fraude_regla_guardar", "fraude_reglas_cambios_leer", "fraude_detectar",
+  "fraude_ultima_deteccion", "fraude_alertas_listar", "fraude_alertas_rps", "fraude_alerta_detalle", "fraude_alerta_cambiar"];
 async function catalogoPj3(db) {
   const nombres = [...FN_INTERNAS_PJ3, ...FN_TRIGGER_PJ3, ...FN_ANON_PJ3, ...FN_APP_PJ3];
   const fs = await db.q(`select p.proname, p.oid::regprocedure::text as firma, p.prosecdef as definer,
