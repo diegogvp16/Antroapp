@@ -39,7 +39,9 @@
 //      (service role con IP de prueba: no gasta el tope de la IP real de la
 //      máquina, que comparten los demás carriles). Enciende para_clubes solo
 //      durante la ráfaga y la deja como estaba.
-// Antifraude (30) no se incluye: su rama se está corrigiendo.
+//  14. Antifraude (30): tres búsquedas a la vez del mismo antro (tope de una
+//      cada 2 minutos, sin alertas duplicadas) y dos gerentes con la misma
+//      alerta (gana uno, una transición por cambio, ninguna nota perdida).
 //
 //   node scripts/dev/probar-concurrencia-noche3.mjs --solo-pj3   (solo 7–13)
 //
@@ -161,7 +163,8 @@ async function limpiar() {
       // Post-junta-3 primero (POS, propinas e inventario apuntan a la caja y a productos sin cascada).
       for (const t of ["pos_ventas", "pos_importacion_lineas", "pos_importaciones", "pos_mapeos", "propinas_reparto_lineas", "propinas_repartos",
         "propinas_cobro_anuladas", "caja_propinas", "propinas_config", "producto_movimientos", "lista_negra_eventos", "club_bloqueos",
-        "club_noshow_politica", "club_funciones", "funciones_cambios"])
+        "club_noshow_politica", "club_funciones", "funciones_cambios",
+        "fraude_alertas_cambios", "fraude_alertas", "fraude_reglas_cambios", "fraude_reglas", "fraude_detecciones"])
         await borrar(`delete from public.${t} where club_id = any($1::uuid[])`, [clubIds]);
       for (const t of ["caja_eventos", "caja_cuadres", "caja_pagos", "caja_consumos", "mesa_cuentas", "mesa_sesiones", "caja_noches", "caja_permisos", "productos"])
         await borrar(`delete from public.${t} where club_id = any($1::uuid[])`, [clubIds]);
@@ -211,7 +214,7 @@ async function casosPostJunta3(db) {
   const m = ok(await svc.from("club_tables").insert([1, 2, 3].map((n) => ({ club_id: C, numero: `C${n}`, capacidad: 8 }))).select("id, numero"), "mesas C");
   const mesaC = Object.fromEntries(m.map((x) => [x.numero, x.id]));
   // Banderas de C: solo este antro de prueba, por la función del admin; se van con el antro.
-  for (const f of ["pos_ventas", "escaner_respaldo", "lista_negra", "inventario", "propinas"])
+  for (const f of ["pos_ventas", "escaner_respaldo", "lista_negra", "inventario", "propinas", "antifraude"])
     ok(await P.admin1.rpc("funcion_cambiar", { p_club_id: C, p_funcion: f, p_activa: true }), "bandera " + f);
   console.log(`\nAntro C (post-junta-3): noche ${nocheC}`);
 
@@ -439,6 +442,57 @@ async function casosPostJunta3(db) {
   const cr = await carreraForzada({ rol: "authenticated", uid: U.gerenteC1.id }, (c) => c.q(sqlRep, [nocheId, [U.staffC1.id], tot2]), (c) => c.q(sqlRep, [nocheId, [U.staffC2.id], tot2]), { confirmarSegunda: true });
   revisar("12i. carrera forzada: el segundo reparto espera el candado de la noche y recibe «ya se repartió»", cr.esperó && /ya se repartió/.test(cr.error ?? ""), `esperó ${cr.esperó}; ${cr.error ?? "PASÓ"}`);
   revisar("12j. un solo reparto vigente al final", (await vigentes()).length === 1);
+
+  // ======================= 14. Antifraude =======================
+  // (Va antes del 13 porque el 13 puede saltarse con «return».)
+  console.log("\n== 14. Antifraude: búsquedas a la vez y dos gerentes con la misma alerta");
+  ok(await P.gerenteC1.rpc("fraude_regla_guardar", { p_club_id: C, p_regla: "rafaga", p_activa: true, p_parametros: { min_reservas: 3, minutos: 240 } }), "regla de ráfaga");
+  const conteoAlertas = async () => (await db.q("select count(*)::int n, count(distinct (regla, sujeto, ventana_inicio))::int d from public.fraude_alertas where club_id = $1", [C]))[0];
+  const detectar = (s) => s.rpc("fraude_detectar", { p_club_id: C, p_desde: nocheC, p_hasta: nocheC });
+  const nuevasDe = (res) => Object.values(res?.reglas ?? {}).reduce((t, x) => t + (x.nuevas ?? 0), 0);
+  const det = await Promise.all([P.gerenteC1, P.gerenteC2, P.duenoC].map(detectar));
+  const ganoDet = det.find((r) => !r.error);
+  revisar("14a. tres búsquedas del mismo antro a la vez (2 gerentes y el dueño): corre exactamente una", det.filter((r) => !r.error).length === 1, errores(det));
+  revisar("14b. las otras reciben «hace menos de 2 minutos» (P0001)", det.filter((r) => r.error).every((r) => r.error.code === "P0001" && /menos de 2 minutos/.test(r.error.message)), errores(det));
+  const a14 = await conteoAlertas();
+  revisar("14c. hay alertas (las reservas del RP de los casos 9–10 son ráfaga), sin duplicados, y son las «nuevas» de la búsqueda", a14.n > 0 && a14.n === a14.d && a14.n === nuevasDe(ganoDet?.data), `${JSON.stringify(a14)}; nuevas ${nuevasDe(ganoDet?.data)}`);
+  const otraDet = await detectar(P.gerenteC2);
+  revisar("14d. otra búsqueda enseguida se rechaza (el tope está en la base)", otraDet.error?.code === "P0001" && /menos de 2 minutos/.test(otraDet.error.message), otraDet.error?.message ?? "BUSCÓ");
+  // Se simula que pasaron los 2 minutos (solo en el antro de prueba) y se fuerza la carrera.
+  await db.q("update public.fraude_detecciones set hecho_en = now() - interval '3 minutes' where club_id = $1", [C]);
+  const sqlDet = "select public.fraude_detectar($1, $2::date, $2::date)::text as r";
+  const cd = await carreraForzada({ rol: "authenticated", uid: U.gerenteC1.id }, (c) => c.q(sqlDet, [C, nocheC]), (c) => c.q(sqlDet, [C, nocheC]), { confirmarSegunda: true });
+  revisar("14e. carrera forzada: la segunda búsqueda espera a la primera y recibe «hace menos de 2 minutos»", cd.esperó && /menos de 2 minutos/.test(cd.error ?? ""), `esperó ${cd.esperó}; ${cd.error ?? "BUSCÓ"}`);
+  const a14b = await conteoAlertas();
+  const nuevas2 = nuevasDe(JSON.parse(cd.primera?.[0]?.r ?? "{}"));
+  revisar("14f. volver a buscar no duplica: mismas alertas y 0 nuevas", a14b.n === a14.n && a14b.n === a14b.d && nuevas2 === 0, `${JSON.stringify(a14b)}; nuevas ${nuevas2}`);
+  const alerta = (await db.q("select id::text from public.fraude_alertas where club_id = $1 and estado = 'revisar' order by creada_en, id limit 1", [C]))[0]?.id;
+  const cambiarAlerta = (s, e, n) => s.rpc("fraude_alerta_cambiar", { p_alerta_id: alerta, p_estado: e, p_nota: n });
+  const bitacora = async () => db.q("select de, a, nota from public.fraude_alertas_cambios where alerta_id = $1 order by id", [alerta]);
+  const estadoAlerta = async () => (await db.q("select estado from public.fraude_alertas where id = $1", [alerta]))[0].estado;
+  const notas1 = [["descartada", "Nota uno: era su primo"], ["confirmada", "Nota dos: lo vimos en caja"]];
+  const c14 = await Promise.all([cambiarAlerta(P.gerenteC1, ...notas1[0]), cambiarAlerta(P.gerenteC2, ...notas1[1])]);
+  const g14 = c14.findIndex((r) => !r.error);
+  revisar("14g. dos gerentes deciden la misma alerta a la vez (descartar y confirmar): gana exactamente uno", c14.filter((r) => !r.error).length === 1, errores(c14));
+  revisar("14h. el otro recibe «Primero vuelve a poner la alerta en revisión» (P0001)", c14.some((r) => r.error?.code === "P0001" && /Primero vuelve a poner/.test(r.error.message)), errores(c14));
+  let b14 = await bitacora();
+  revisar("14i. una sola transición en la bitácora, la del que ganó, con su nota y el estado que dejó", g14 >= 0 && b14.length === 1 && b14[0].de === "revisar" && b14[0].a === notas1[g14][0] && b14[0].nota === notas1[g14][1] && (await estadoAlerta()) === notas1[g14][0], JSON.stringify(b14));
+  const notas2 = ["Se reabre: nota del gerente uno", "Se reabre: nota del gerente dos"];
+  const r14 = await Promise.all([cambiarAlerta(P.gerenteC1, "revisar", notas2[0]), cambiarAlerta(P.gerenteC2, "revisar", notas2[1])]);
+  const gr = r14.findIndex((r) => !r.error);
+  b14 = await bitacora();
+  revisar("14j. dos reaperturas a la vez: pasa una, la otra «ya está en ese estado», y la bitácora suma una con la nota del que ganó", r14.filter((r) => !r.error).length === 1 && r14.some((r) => /ya está en ese estado/.test(r.error?.message ?? "")) && b14.length === 2 && b14[1].nota === notas2[gr], `${errores(r14)}; ${JSON.stringify(b14)}`);
+  const notas3 = ["Doble clic: primera nota", "Doble clic: segunda nota"];
+  const d14 = await Promise.all([cambiarAlerta(P.gerenteC1, "descartada", notas3[0]), cambiarAlerta(P.duenoC, "descartada", notas3[1])]);
+  const gd = d14.findIndex((r) => !r.error);
+  b14 = await bitacora();
+  revisar("14k. la misma decisión dos veces a la vez (gerente y dueño): una transición, con la nota del que ganó", d14.filter((r) => !r.error).length === 1 && b14.length === 3 && b14[2].nota === notas3[gd] && b14[2].a === "descartada", `${errores(d14)}; ${JSON.stringify(b14)}`);
+  const sqlCam = "select public.fraude_alerta_cambiar($1::uuid, $2, $3)";
+  const cfa = await carreraForzada({ rol: "authenticated", uid: U.gerenteC1.id }, (c) => c.q(sqlCam, [alerta, "revisar", "Forzada: primera"]), (c) => c.q(sqlCam, [alerta, "revisar", "Forzada: segunda"]), { confirmarSegunda: true });
+  b14 = await bitacora();
+  revisar("14l. carrera forzada: el segundo cambio espera a la alerta bloqueada y recibe «ya está en ese estado»; la bitácora suma uno", cfa.esperó && /ya está en ese estado/.test(cfa.error ?? "") && b14.length === 4 && b14[3].nota === "Forzada: primera", `esperó ${cfa.esperó}; ${cfa.error ?? "PASÓ"}; ${b14.length}`);
+  const ven = await Promise.all([P.staffC1, P.rpC].map((s) => s.rpc("fraude_alertas_listar", { p_club_id: C })));
+  revisar("14m. el staff puro y el RP del antro no ven alertas (P0001, sin datos)", ven.every((r) => r.error?.code === "P0001" && !r.data), errores(ven));
 
   // ======================= 13. /para-clubes =======================
   console.log("\n== 13. Formulario de /para-clubes: ráfagas contra los topes");
