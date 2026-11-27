@@ -144,6 +144,13 @@ const CONSULTAS_CONTEO = Object.freeze({
   club_demo_reservas: `select count(*)::int as total, count(*) filter (where fecha >= current_date - 7)::int as ultima_semana,
       count(*) filter (where cliente_telefono like '0000000%')::int as demo, min(fecha)::text as primera, max(fecha)::text as ultima
     from public.reservations where club_id = '${CLUB_DEMO_PROD}'`,
+  // Diagnóstico OBLIGATORIO antes de sql/post-junta-3/01-largos-texto.sql: un
+  // CHECK NOT VALID se evalúa en cualquier UPDATE de la fila, así que una fila
+  // vieja más larga que el límite ya no se podría editar. Solo conteos.
+  largos_texto: `select (select count(*) from public.profiles where char_length(nombre) > 120)::int as perfiles_nombre,
+      (select count(*) from public.profiles where char_length(telefono) > 30)::int as perfiles_telefono,
+      (select count(*) from public.reservations where char_length(cliente_nombre) > 120)::int as reservas_nombre,
+      (select count(*) from public.reservations where char_length(cliente_telefono) > 30)::int as reservas_telefono`,
   antros: `select count(*)::int as total, count(*) filter (where estado_verificacion = 'verificado' and suscripcion_activa)::int as publicados,
       count(distinct ciudad) filter (where estado_verificacion = 'verificado' and suscripcion_activa)::int as ciudades_publicadas
     from public.clubs`,

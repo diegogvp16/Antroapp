@@ -32,7 +32,7 @@ try {
   const cons = await db.q(`select conname, convalidated from pg_constraint where conname in
     ('profiles_nombre_largo','profiles_telefono_largo','reservations_cliente_nombre_largo','reservations_cliente_telefono_largo')`);
   nota("los 4 límites existen", cons.length === 4, cons.map((c) => c.conname).join(", "));
-  nota("…como NOT VALID (no revisan filas viejas)", cons.every((c) => c.convalidated === false));
+  nota("…validados (el 01 los valida en la misma transacción)", cons.every((c) => c.convalidated === true));
 
   let r = await como(ids.dev_rp, `update public.profiles set nombre = $1 where id = $2 returning id`, [largo(20000), ids.dev_rp]);
   nota("RP no se pone un nombre de 20,000 letras", !r.ok && r.code === "23514", r.code);
@@ -50,14 +50,19 @@ try {
     values ($1, $2, 'Nombre normal', '3312345678', $3, 2, 'pendiente', 'organica', 'antro-' || gen_random_uuid()) returning id`, [DEMO, ids.dev_cliente, fecha]);
   nota("cliente: reserva normal sigue pasando", r.ok, r.code ? `${r.code} ${r.mensaje}` : "");
 
-  // Filas viejas: NOT VALID no las toca; una edición de otra columna en una
-  // fila ya larga sí se rechaza (el check se evalúa en cada UPDATE).
+  // Por qué el 01 valida: con una fila vieja más larga, un NOT VALID sin
+  // validar dejaría esa fila sin poder editarse (el check corre en cada
+  // UPDATE). Con el validate, el archivo entero falla en vez de eso.
+  await db.q(`savepoint vieja`);
   await db.q(`alter table public.profiles drop constraint profiles_nombre_largo`);
   await db.q(`update public.profiles set nombre = $1 where id = $2`, [largo(300), ids.dev_cliente]);
   await db.q(`alter table public.profiles add constraint profiles_nombre_largo check (nombre is null or char_length(nombre) <= 120) not valid`);
-  nota("una fila vieja larga no impide agregar el límite (NOT VALID)", true);
   r = await como(ids.dev_cliente, `update public.profiles set telefono = '3311112222' where id = $1 returning id`, [ids.dev_cliente]);
-  nota("…pero al editarla hay que acortar el nombre (aviso para la validación)", !r.ok && r.code === "23514", r.code);
+  nota("sin validar, una fila vieja larga ya no se puede editar (por eso el 01 valida)", !r.ok && r.code === "23514", r.code);
+  let fallo = null;
+  try { await db.q(`alter table public.profiles validate constraint profiles_nombre_largo`); } catch (e) { fallo = e.code; }
+  nota("…y con esa fila el validate del 01 falla (el archivo entero no se aplicaría)", fallo === "23514", fallo ?? "no falló");
+  await db.q(`rollback to savepoint vieja`);
 } finally {
   await db.q("rollback").catch(() => {});
   await db.fin();
