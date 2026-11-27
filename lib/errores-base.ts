@@ -38,6 +38,10 @@ export function mensajeParaUsuario(
   if (!error) return generico;
   if (error.code === "P0001" && error.message) return error.message;
   if (esErrorDeRed(error)) return MENSAJE_SIN_CONEXION;
+  // Límites de largo (sql/post-junta-3/01-largos-texto.sql): el mensaje de
+  // Postgres trae el nombre del check, no datos de la fila.
+  if (error.code === "23514" && /_nombre_largo/.test(error.message ?? "")) return "El nombre es demasiado largo (máximo 120 caracteres).";
+  if (error.code === "23514" && /_telefono_largo/.test(error.message ?? "")) return "El teléfono es demasiado largo (máximo 30 caracteres).";
   const conocido = error.code ? CODIGOS[error.code] : undefined;
   // Solo código y mensaje limpio: "details" puede traer la fila completa
   // (nombre, teléfono, QR) y la consola del dispositivo la ve cualquiera.
