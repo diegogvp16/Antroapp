@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { ReglasPagoRP } from "@/components/reglas-pago-rp";
 import { VerificacionAntro } from "@/components/verificacion-antro";
 import { CoverCampo } from "@/components/cover-campo";
+import { EnlaceReportesPdf } from "@/components/reportes/enlace-reportes-pdf";
 import {
   Card,
   CardContent,
@@ -627,6 +628,7 @@ export default function DuenoPanelPage() {
             Descargar reportes (CSV)
           </Button>
         </div>
+        <EnlaceReportesPdf clubIds={[club.id]} />
 
         <VerificacionAntro club={club} onCambioEstado={fetchClub} />
 
