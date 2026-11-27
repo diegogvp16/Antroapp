@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { FuncionesPrueba } from "@/components/admin/funciones-prueba";
+import { BanderaParaClubes } from "@/components/admin/bandera-para-clubes";
 
 // Admin: funciones en prueba por antro y por grupo. Todas apagadas por defecto.
 export default function FuncionesAdminPage() {
@@ -44,6 +45,7 @@ export default function FuncionesAdminPage() {
             Todas nacen apagadas. Enciéndelas por antro o por grupo para probarlas antes de darlas a todos.
           </p>
         </div>
+        <BanderaParaClubes />
         <FuncionesPrueba />
       </div>
     </div>

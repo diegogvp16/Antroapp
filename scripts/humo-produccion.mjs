@@ -86,6 +86,40 @@ function revisarCuerpo(grupo, ruta, cuerpo) {
   nota(grupo, `${ruta}: sin errores técnicos ni nombres de tablas`, !t && !tb, t ? `aparece "${t[0]}"` : tb ? `aparece la tabla "${tb[0]}"` : "");
 }
 
+// La URL de Supabase y la llave PÚBLICA (anon) que el sitio ya manda al
+// navegador, sacadas de su JavaScript. Solo se acepta una llave con rol anon.
+async function llavesPublicas(html) {
+  const scripts = [...new Set([...html.matchAll(/\/_next\/static\/[^"'\s]+\.js/g)].map((m) => m[0]))];
+  let url = null, llave = null;
+  for (const s of scripts) {
+    if (url && llave) break;
+    const { cuerpo } = await pedir(s);
+    url ??= cuerpo.match(/https:\/\/[a-z0-9]{20}\.supabase\.co/)?.[0] ?? null;
+    for (const jwt of cuerpo.match(/eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g) ?? []) {
+      try {
+        if (JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString()).role === "anon") llave = jwt;
+      } catch { /* no es JWT */ }
+    }
+    llave ??= cuerpo.match(/sb_publishable_[A-Za-z0-9_-]{10,}/)?.[0] ?? null;
+  }
+  return { url, llave };
+}
+async function banderaParaClubes() {
+  // El login usa el cliente de Supabase: su JavaScript trae la URL y la llave.
+  const { url, llave } = await llavesPublicas((await pedir("/cliente/login")).cuerpo);
+  if (!url || !llave) return { valor: null, motivo: "no se encontró la URL o la llave pública en el JavaScript del sitio" };
+  try {
+    const cab = { apikey: llave, ...(llave.startsWith("eyJ") ? { authorization: `Bearer ${llave}` } : {}) };
+    const r = await fetch(`${url}/rest/v1/rpc/para_clubes_activa`, { method: "GET", headers: cab });
+    const j = await r.json().catch(() => null);
+    if (r.ok && typeof j === "boolean") return { valor: j, motivo: "" };
+    if (j?.code === "PGRST202") return { valor: false, motivo: "la base aún no tiene el SQL 50" };
+    return { valor: null, motivo: `la base respondió ${r.status} ${j?.code ?? ""}` };
+  } catch (e) {
+    return { valor: null, motivo: `sin respuesta de la base (${e?.name ?? "error"})` };
+  }
+}
+
 const CABECERAS = [
   ["strict-transport-security", (v) => /max-age=\d+/.test(v)],
   ["x-content-type-options", (v) => v.toLowerCase() === "nosniff"],
@@ -122,6 +156,22 @@ try {
   const boleto = await pedir("/r/antro-00000000-0000-4000-8000-000000000000");
   nota("públicas", "/r/<código inexistente> responde sin error de servidor", boleto.estado === 200 || boleto.estado === 404, String(boleto.estado));
   revisarCuerpo("públicas", "/r/<código inexistente>", boleto.cuerpo);
+
+  // /para-clubes va detrás de una bandera de plataforma en la base
+  // (sql/post-junta-3/50-para-clubes.sql), apagada por defecto. Se le pregunta
+  // a la base lo mismo que pregunta la página (para_clubes_activa, por GET con
+  // la llave pública que ya viaja en el JavaScript del sitio): encendida exige
+  // 200, apagada (o la base sin el SQL 50) exige 404. Así una página rota con
+  // la bandera encendida no pasa por «apagada».
+  const bandera = await banderaParaClubes();
+  const paraClubes = await pedir("/para-clubes");
+  if (bandera.valor === null) {
+    nota("públicas", "/para-clubes: leer la bandera de la base", false, bandera.motivo);
+  } else {
+    const esperado = bandera.valor ? 200 : 404;
+    nota("públicas", `/para-clubes responde ${esperado} (bandera ${bandera.valor ? "encendida" : bandera.motivo || "apagada"})`, paraClubes.estado === esperado, String(paraClubes.estado));
+  }
+  revisarCuerpo("públicas", "/para-clubes", paraClubes.cuerpo);
 
   const noExiste = await pedir("/esta-ruta-no-existe-humo");
   nota("públicas", "una ruta que no existe responde 404", noExiste.estado === 404, String(noExiste.estado));

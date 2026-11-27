@@ -386,6 +386,7 @@ export default function AdminPage() {
           <Button variant="outline" className="h-10" render={<Link href="/admin/funciones" />} nativeButton={false}>
             Funciones en prueba
           </Button>
+          <Button variant="outline" className="h-10" render={<Link href="/admin/contactos" />} nativeButton={false}>Contactos de antros</Button>
         </div>
 
         <VerificacionesPendientes onCambio={fetchClubs} />
