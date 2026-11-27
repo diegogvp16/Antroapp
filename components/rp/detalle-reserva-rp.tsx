@@ -13,6 +13,8 @@ import {
   lineaDeTiempo,
   type ReservaRpDetalle,
 } from "@/lib/domain/rp-reservas";
+import { AvisoNoShow } from "@/components/clientes/aviso-noshow";
+import { MensajesReservaRp } from "@/components/clientes/mensajes-reserva-rp";
 
 export function DetalleReservaRp({
   r,
@@ -60,6 +62,9 @@ export function DetalleReservaRp({
           </div>
         )}
       </div>
+
+      <AvisoNoShow reservaId={r.reservation_id} className="mt-3" />
+      <MensajesReservaRp reservaId={r.reservation_id} estado={r.estado} />
 
       <section className="mt-4">
         <h3 className="mb-2 text-sm font-medium">Línea de tiempo</h3>

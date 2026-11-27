@@ -31,6 +31,7 @@ import { nocheOperativaMexico, semanaMexico } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
 import { FASE2_ACTIVA } from "@/lib/fase2";
 import { AvisoExistencias } from "@/components/inventario/aviso-existencias";
+import { EnlaceClientes } from "@/components/clientes/enlace-clientes";
 import { esErrorDeRed, mensajeParaUsuario, MENSAJE_SIN_CONEXION, type ErrorBase } from "@/lib/errores-base";
 import type { Club, ClubTable, Profile, Reservation } from "@/types";
 import { contarPendientes } from "@/lib/caja-cola";
@@ -1307,6 +1308,7 @@ export default function StaffPanelPage() {
         >
           Caja y mesas de la noche
         </Button>
+        {clubId && <EnlaceClientes clubId={clubId} href="/staff/clientes" />}
 
         {/* Solo el gerente: el staff no ve sueldos ni consumos del antro. */}
         {staffRole === "gerente" && (
