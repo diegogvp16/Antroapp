@@ -25,6 +25,7 @@ import { textoCover } from "@/lib/cover";
 import { ZONA_MAS_TARDIA_MEXICO, nocheOperativaEn } from "@/lib/fechas";
 import { esErrorDeRed } from "@/lib/errores-base";
 import { DatosBoleto, QrBoleto } from "@/components/boleto/datos-boleto";
+import { CodigoRespaldo } from "@/components/boleto/codigo-respaldo";
 import { EnLaPuerta } from "@/components/boleto/en-la-puerta";
 import { CompartirBoleto } from "@/components/boleto/compartir-boleto";
 
@@ -201,6 +202,7 @@ function Boleto({ reserva, estado }: { reserva: ReservaPublica; estado: EstadoBo
         {/* El QR solo se muestra si todavía sirve: uno usado o vencido no
             debe parecer válido en la puerta. */}
         {vigente && <QrBoleto codigo={reserva.qr_code} tamano={220} />}
+        {vigente && <CodigoRespaldo qr={reserva.qr_code} />}
 
         <DatosBoleto
           antro={reserva.club_nombre}

@@ -10,7 +10,9 @@
 // guarda es /offline.html, que es estática y no tiene datos de nadie.
 // v3: /offline.html dice cuántos movimientos de caja esperan en el teléfono.
 // v4: texto de /offline.html: la cola sale con la app de staff abierta.
-const VERSION = "antroapp-v4";
+// v5: /offline.html también dice cuántas entradas de la puerta esperan
+//     (escáner de respaldo).
+const VERSION = "antroapp-v5";
 const OFFLINE = "/offline.html";
 
 self.addEventListener("install", (event) => {
