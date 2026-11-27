@@ -488,6 +488,13 @@ Ordenada por gravedad. Verificado contra producción el 11/11/2026.
 
 ### ✅ Resuelto (ya no es deuda)
 
+- **Perfil propio con el antro de otro** (CRÍTICO, encontrado el 25/11/2026):
+  `profiles_insert_propio` dejaba que una cuenta recién registrada creara
+  su perfil como `dueno` con el `club_id` de cualquier antro y leyera sus
+  reservas, personal y sueldos. Cerrado en producción el 27/11/2026 con
+  `sql/2026-11-25-perfil-sin-club-ajeno.sql`: `club_id IS NULL` en la
+  política y una restrictiva igual. Verificado: catálogo, prueba en dev
+  4/4, recorrido 49/49 y humo 84/84 (`docs/reporte-pase.md`).
 - Fugas sin sesión en `profiles` y `reservations`: un anónimo lee 0 filas
   (verificado 11/11/2026). El boleto público usa `obtener_reserva_por_qr`.
 - Escalada de privilegios en `profiles`: políticas por rol y club y trigger
