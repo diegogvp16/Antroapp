@@ -37,12 +37,18 @@ producción**. Todo detrás de la bandera por antro `antifraude` (SQL 00),
 Noches = noches operativas (corte 08:00 en `clubs.zona_horaria`). Solo
 cuentan los RPs con `profiles.role = 'rp'` y `club_id` del antro.
 
-**Teléfono a 10 dígitos** (`fraude_tel10`, igual a `normalizarTelefonoMx`):
-se quedan solo los dígitos y se quita un prefijo 521 / 044 / 045 / 52 / 01 /
-1 si después quedan exactamente 10. Así se leen «55 1234 5678/», «5512345678
-x», «55_1234_5678», «044 55…», «1 55…», «+52 1 (55)…». Lo que no da 10
-dígitos es **ilegible**: no entra en la regla y la búsqueda dice cuántas
-reservas de RP del rango tenían teléfono ilegible o vacío.
+**Clave del teléfono** (`fraude_tel10`, igual a `normalizarTelefonoMx`, y
+la MISMA que la lista negra: `lista_negra_tel` y `claveTelefono`). Se quedan
+solo los dígitos.
+
+- Si es de México en una forma conocida (10, o 52 / 521 / 044 / 045 / 01
+  + 10), la clave son los 10 dígitos. Así se leen «55 1234 5678/», «5512345678
+  x», «55_1234_5678», «044 55…» y «+52 1 (55)…».
+- Si no, la clave son todos los dígitos, de 8 a 15: «+1 212 555 1234» queda
+  como 12125551234 y ya no se convierte en un número de México.
+- Con menos de 8 o más de 15 dígitos es **ilegible**: no entra en la regla, y
+  la búsqueda dice cuántas reservas de RP del rango tenían teléfono ilegible
+  o vacío.
 
 | Regla | Umbrales (defecto, límites) | Una alerta por | Definición |
 |---|---|---|---|

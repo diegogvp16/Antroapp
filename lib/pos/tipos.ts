@@ -110,7 +110,6 @@ export const CAMPOS_POS: readonly DefCampo[] = [
   { campo: "mesero", etiqueta: "Mesero", nivel: "opcional", ayuda: "Solo informativo." },
 ];
 
-export const esCampoPos = (v: unknown): v is CampoPos => typeof v === "string" && CAMPOS_POS.some((c) => c.campo === v);
 
 // Límites (los mismos que revisa la base, sql/post-junta-3/10-pos-ventas.sql).
 export const MAX_LINEAS_POS = 5000;

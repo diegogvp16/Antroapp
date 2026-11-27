@@ -20,9 +20,11 @@ nota("tel: con guiones bajos", f.normalizarTelefonoMx("55_1234_5678") === "55123
 nota("tel: 044", f.normalizarTelefonoMx("044 55 1234 5678") === "5512345678");
 nota("tel: 045", f.normalizarTelefonoMx("045-55-1234-5678") === "5512345678");
 nota("tel: 01", f.normalizarTelefonoMx("01 55 1234 5678") === "5512345678");
-nota("tel: 1 + 10", f.normalizarTelefonoMx("1 55 1234 5678") === "5512345678");
-nota("tel: 11 dígitos sin prefijo conocido → null", f.normalizarTelefonoMx("95512345678") === null);
-nota("tel: 9 dígitos → null", f.normalizarTelefonoMx("551234567") === null);
+nota("tel: 1 + 10 ya NO se vuelve de México (clave = todos los dígitos, igual que la lista negra)", f.normalizarTelefonoMx("1 55 1234 5678") === "15512345678");
+nota("tel: +1 212 555 1234 (EE. UU.) no se convierte en uno de México", f.normalizarTelefonoMx("+1 212 555 1234") === "12125551234");
+nota("tel: 11 dígitos sin prefijo conocido → todos los dígitos (como la lista negra)", f.normalizarTelefonoMx("95512345678") === "95512345678");
+nota("tel: 9 dígitos → todos los dígitos (8 a 15 se aceptan como clave)", f.normalizarTelefonoMx("551234567") === "551234567");
+nota("tel: 7 dígitos → null", f.normalizarTelefonoMx("5512345") === null);
 nota("texto: enmascara teléfonos en notas", f.enmascararTexto("Le marqué al 55 1234-5678 y al +52 1 (33) 9876 5432") === "Le marqué al ******5678 y al ******5432");
 nota("texto: no toca números cortos", f.enmascararTexto("Mesa 12, 3 personas, $1,500") === "Mesa 12, 3 personas, $1,500");
 nota("tel: corto → null", f.normalizarTelefonoMx("12345") === null);

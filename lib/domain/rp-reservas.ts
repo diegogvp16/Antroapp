@@ -129,12 +129,21 @@ export function lineaDeTiempo(r: ReservaRpDetalle): PasoTiempo[] {
   ];
 }
 
-// Enlace de WhatsApp a un teléfono mexicano (10 dígitos -> +52).
+// Enlace de WhatsApp a un teléfono mexicano: 52 + 10 dígitos. Mismas formas
+// que numeroWhatsApp (lib/domain/whatsapp.ts): 10; 52/521/044/045/01 + 10.
+// Cualquier otro número (de otro país, con dígitos de más): null, y quien
+// llama usa el enlace de compartir sin destinatario. Antes "044 55…" daba
+// wa.me/0445512345678 (no sirve) y un +1 de EE. UU. se mandaba tal cual.
 export function enlaceWhatsApp(telefono: string | null, mensaje: string): string | null {
-  const digitos = (telefono ?? "").replace(/\D/g, "");
-  if (digitos.length < 10) return null;
-  const numero = digitos.length === 10 ? `52${digitos}` : digitos;
-  return `https://wa.me/${numero}?text=${encodeURIComponent(mensaje)}`;
+  const d = (telefono ?? "").replace(/\D/g, "");
+  const diez = /^\d{10}$/.test(d)
+    ? d
+    : /^52\d{10}$/.test(d) || /^01\d{10}$/.test(d)
+      ? d.slice(2)
+      : /^521\d{10}$/.test(d) || /^04[45]\d{10}$/.test(d)
+        ? d.slice(3)
+        : null;
+  return diez ? `https://wa.me/52${diez}?text=${encodeURIComponent(mensaje)}` : null;
 }
 
 // Regla con cuota (hoy: desbloqueo semanal). Lo devuelve rp_progreso_cuota.

@@ -245,9 +245,21 @@ returns text
 language sql
 immutable
 parallel safe
+set search_path = ''
 as $$
-  select (pg_catalog.regexp_match(pg_catalog.regexp_replace(coalesce(p, ''), '[^0-9]', '', 'g'),
-                                  '^(?:521|044|045|52|01|1)?([0-9]{10})$'))[1];
+  -- La MISMA clave que lista_negra_tel (40) y claveTelefono
+  -- (lib/domain/whatsapp.ts): 10 dígitos si es de México en una forma
+  -- conocida; si no, todos los dígitos (8 a 15); si no, NULL. Ya no se quita
+  -- un "1" inicial (convertía un +1 212 555 1234 en un número de México).
+  select case
+    when d ~ '^[0-9]{10}$' then d
+    when d ~ '^52[0-9]{10}$' then substr(d, 3)
+    when d ~ '^521[0-9]{10}$' then substr(d, 4)
+    when d ~ '^04[45][0-9]{10}$' then substr(d, 4)
+    when d ~ '^01[0-9]{10}$' then substr(d, 3)
+    when char_length(d) between 8 and 15 then d
+  end
+  from (select pg_catalog.regexp_replace(coalesce(p, ''), '[^0-9]', '', 'g') as d) x;
 $$;
 revoke all on function public.fraude_tel10(text) from public, anon, authenticated;
 grant execute on function public.fraude_tel10(text) to service_role;

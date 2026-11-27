@@ -1,7 +1,7 @@
 # Noche 4, bloque 1: importar ventas del POS (rama `n4-pos`)
 
 Fecha: 27/11/2026 (revisión 2, después de la revisión independiente).
-Base: `post-junta-3`. Estado: **en el working tree, sin commit**. SQL
+Base: `post-junta-3`. Estado: **integrado en `post-junta-3`** (`55651e1`, merge `01d644b`). SQL
 **aplicado en antroapp-dev**; en producción **no**.
 
 Todo está detrás de la bandera por antro **`pos_ventas`**

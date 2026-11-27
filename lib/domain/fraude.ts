@@ -72,14 +72,21 @@ export function explicarRegla(regla: ReglaFraude, p: Record<string, number>): st
 // Estadísticas (iguales a la base)
 // ---------------------------------------------------------------------------
 
-/** Igual que fraude_tel10(): solo dígitos; 10 tal cual, o quitando el prefijo 521 / 044 / 045 / 52 / 01 / 1. */
+/** Igual que fraude_tel10() y lista_negra_tel(): la MISMA clave de teléfono en
+ *  toda la app (lib/domain/whatsapp.ts, claveTelefono): los 10 dígitos si es
+ *  de México en una forma conocida (10; 52/521/044/045/01 + 10), si no todos
+ *  los dígitos (8 a 15), si no null. Ya no se quita un "1" inicial: eso
+ *  convertía un +1 212 555 1234 en un número de México. */
 export function normalizarTelefonoMx(t: string | null | undefined): string | null {
-  const d = (t ?? "").replace(/[^0-9]/g, "");
-  if (/^[0-9]{10}$/.test(d)) return d;
-  if (/^(521|044|045)[0-9]{10}$/.test(d)) return d.slice(3);
-  if (/^(52|01)[0-9]{10}$/.test(d)) return d.slice(2);
-  if (/^1[0-9]{10}$/.test(d)) return d.slice(1);
-  return null;
+  // Escrita aquí (no importada) porque las pruebas de dominio cargan este
+  // archivo sin el alias "@/"; debe quedar igual a claveTelefono.
+  const d = (t ?? "").replace(/\D/g, "");
+  if (/^\d{10}$/.test(d)) return d;
+  if (/^52\d{10}$/.test(d)) return d.slice(2);
+  if (/^521\d{10}$/.test(d)) return d.slice(3);
+  if (/^04[45]\d{10}$/.test(d)) return d.slice(3);
+  if (/^01\d{10}$/.test(d)) return d.slice(2);
+  return d.length >= 8 && d.length <= 15 ? d : null;
 }
 
 /** Igual que fraude_enmascarar_texto(): 10 o más dígitos seguidos (con espacios, ( ) . - entre ellos) → ******1234. */
