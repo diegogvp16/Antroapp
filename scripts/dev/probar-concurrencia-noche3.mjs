@@ -21,11 +21,33 @@
 //   6. Un dueño sin antro da de alta dos antros a la vez (carrera forzada y
 //      Promise.all): queda uno solo y el otro recibe un aviso (68).
 //
+// Post-junta-3 (bloque 9, parte 2; antro C propio con sus banderas, que
+// enciende un admin de prueba y se van con el antro):
+//   7. Dos admins cambian la misma bandera a la vez (00): sin cambios perdidos.
+//   8. Dos gerentes importan el mismo archivo del POS (10), dos archivos que
+//      se enciman y dos «deshacer» a la vez.
+//   9. Dos staff mandan la misma entrada diferida (20) desde dos teléfonos, el
+//      mismo envío tres veces y diferida contra cámara.
+//  10. Lista negra (40): dos bloqueos del mismo teléfono, bloqueo y desbloqueo
+//      contra reservas de ese teléfono, dos desbloqueos.
+//  11. Inventario (80): dos staff venden la última pieza, entrada + merma +
+//      venta a la vez, conteo mientras se vende, reintentos con la misma clave.
+//  12. Propinas (81): dos gerentes reparten la misma noche (mismo y distinto
+//      reparto) y anular una propina contra el reparto.
+//  13. Formulario de /para-clubes (50): ráfagas contra los topes por IP y por
+//      correo y la casilla trampa, por el camino de la ruta con CAPTCHA
+//      (service role con IP de prueba: no gasta el tope de la IP real de la
+//      máquina, que comparten los demás carriles). Enciende para_clubes solo
+//      durante la ráfaga y la deja como estaba.
+// Antifraude (30) no se incluye: su rama se está corrigiendo.
+//
+//   node scripts/dev/probar-concurrencia-noche3.mjs --solo-pj3   (solo 7–13)
+//
 // Crea sus propios antros "T rls conc …" y cuentas t_rls_…@example.com, y al
 // final lo borra todo aunque falle (try/finally). No toca Club Demo Dev.
 
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,14 +56,20 @@ import { verificarEnvDev, conectarDevEscritura } from "../db/conexion.mjs";
 const env = verificarEnvDev();
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const { createClient } = createRequire(path.join(RAIZ, "package.json"))("@supabase/supabase-js");
-const opciones = { auth: { persistSession: false, autoRefreshToken: false } };
+// Cada petición con tope de 90 s: una petición colgada (red o gateway) sale como error en vez de dejar
+// el proceso esperando para siempre sin llegar a la limpieza (pasó en dev el 27/11/2026).
+const conTope = (url, o = {}) => fetch(url, { ...o, signal: o.signal ?? AbortSignal.timeout(90000) });
+const opciones = { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: conTope } };
 const svc = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, opciones);
 const nuevoAnon = () => createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, opciones);
 
 const TAG = "t_rls_" + randomUUID().slice(0, 6);
+const SOLO_PJ3 = process.argv.includes("--solo-pj3");
 const PASS = "Prueba-" + randomUUID();
 const U = {};
 const clubs = {};
+const huellasContacto = []; // contacto_huella() de las IP y correos de prueba del caso 13
+let paraClubesAntes = null; // valor de la bandera de plataforma antes del caso 13 (se restaura siempre)
 const resultados = [];
 const ok = (r, d) => { if (r.error) throw new Error(`${d}: ${r.error.message}`); return r.data; };
 
@@ -130,7 +158,12 @@ async function limpiar() {
       try { await db.cliente.query(sql, p); await db.q("release savepoint s"); } catch (e) { await db.q("rollback to savepoint s"); console.log("  limpieza: " + e.message); }
     };
     if (clubIds.length) {
-      for (const t of ["caja_eventos", "caja_cuadres", "caja_pagos", "caja_consumos", "mesa_cuentas", "mesa_sesiones", "caja_noches", "caja_permisos"])
+      // Post-junta-3 primero (POS, propinas e inventario apuntan a la caja y a productos sin cascada).
+      for (const t of ["pos_ventas", "pos_importacion_lineas", "pos_importaciones", "pos_mapeos", "propinas_reparto_lineas", "propinas_repartos",
+        "propinas_cobro_anuladas", "caja_propinas", "propinas_config", "producto_movimientos", "lista_negra_eventos", "club_bloqueos",
+        "club_noshow_politica", "club_funciones", "funciones_cambios"])
+        await borrar(`delete from public.${t} where club_id = any($1::uuid[])`, [clubIds]);
+      for (const t of ["caja_eventos", "caja_cuadres", "caja_pagos", "caja_consumos", "mesa_cuentas", "mesa_sesiones", "caja_noches", "caja_permisos", "productos"])
         await borrar(`delete from public.${t} where club_id = any($1::uuid[])`, [clubIds]);
       await borrar("delete from public.commissions where reservation_id in (select id from public.reservations where club_id = any($1::uuid[]))", [clubIds]);
       await borrar("delete from public.reservations where club_id = any($1::uuid[])", [clubIds]);
@@ -138,6 +171,12 @@ async function limpiar() {
       await borrar("delete from public.club_tables where club_id = any($1::uuid[])", [clubIds]);
       await borrar("update public.clubs set dueno_id = null where id = any($1::uuid[])", [clubIds]);
     }
+    // Si el caso 13 se cortó con /para-clubes encendida por nosotros, se apaga aquí (así estaba).
+    if (paraClubesAntes === false) await borrar("update public.plataforma_banderas set activa = false where clave = 'para_clubes'", []);
+    // /para-clubes (50): contactos de prueba, sus intentos (huellas de las IP y correos de prueba) y la bitácora de los admins de prueba.
+    await borrar("delete from public.contactos_clubes where correo like $1", [`${TAG}%`]);
+    if (huellasContacto.length) await borrar("delete from public.contacto_intentos where ip_hash = any($1) or correo_hash = any($1)", [huellasContacto]);
+    if (perfiles.length) await borrar("delete from public.para_clubes_bitacora where hecho_por = any($1::uuid[])", [perfiles]);
     // Primero los perfiles (el personal apunta al antro), luego los antros.
     if (perfiles.length) await borrar("delete from public.profiles where id = any($1::uuid[])", [perfiles]);
     if (clubIds.length) await borrar("delete from public.clubs where id = any($1::uuid[])", [clubIds]);
@@ -150,12 +189,301 @@ async function limpiar() {
   const quedan = await db.q(
     `select (select count(*) from public.clubs where nombre like $1)::int clubs,
             (select count(*) from public.profiles where nombre like $1)::int perfiles,
-            (select count(*) from auth.users where email like $2)::int usuarios`,
-    [`%${TAG}%`, `${TAG}%`],
+            (select count(*) from auth.users where email like $2)::int usuarios,
+            ((select count(*) from public.contactos_clubes where correo like $2)
+             + (select count(*) from public.contacto_intentos where ip_hash = any($3) or correo_hash = any($3)))::int contactos`,
+    [`%${TAG}%`, `${TAG}%`, huellasContacto],
   );
   await db.fin();
   console.log(`\nLimpieza (restos): ${JSON.stringify(quedan[0])}`);
-  if (quedan[0].clubs || quedan[0].perfiles || quedan[0].usuarios) revisar("la limpieza no deja restos", false, JSON.stringify(quedan[0]));
+  if (quedan[0].clubs || quedan[0].perfiles || quedan[0].usuarios || quedan[0].contactos) revisar("la limpieza no deja restos", false, JSON.stringify(quedan[0]));
+}
+
+// ======================= Post-junta-3 (antro C, casos 7–13) =======================
+async function casosPostJunta3(db) {
+  await crearClub("C");
+  for (const [k, r] of [["staffC1", "staff"], ["staffC2", "staff"], ["staffC3", "staff"], ["gerenteC1", "gerente"], ["gerenteC2", "gerente"], ["rpC", "rp"]]) await usuario(k, r, "C");
+  for (const k of ["admin1", "admin2"]) await usuario(k, "admin");
+  const P = {};
+  for (const k of ["staffC1", "staffC2", "staffC3", "gerenteC1", "gerenteC2", "rpC", "duenoC", "admin1", "admin2"]) P[k] = await sesion(k);
+  const C = clubs.C;
+  const nocheC = (await db.q("select public.club_fecha_operacion($1, now())::text as f", [C]))[0].f;
+  const m = ok(await svc.from("club_tables").insert([1, 2, 3].map((n) => ({ club_id: C, numero: `C${n}`, capacidad: 8 }))).select("id, numero"), "mesas C");
+  const mesaC = Object.fromEntries(m.map((x) => [x.numero, x.id]));
+  // Banderas de C: solo este antro de prueba, por la función del admin; se van con el antro.
+  for (const f of ["pos_ventas", "escaner_respaldo", "lista_negra", "inventario", "propinas"])
+    ok(await P.admin1.rpc("funcion_cambiar", { p_club_id: C, p_funcion: f, p_activa: true }), "bandera " + f);
+  console.log(`\nAntro C (post-junta-3): noche ${nocheC}`);
+
+  // ======================= 7. Banderas =======================
+  console.log("\n== 7. Dos admins cambian la misma bandera a la vez");
+  const cambiar = (s, v) => s.rpc("funcion_cambiar", { p_club_id: C, p_funcion: "whatsapp", p_activa: v });
+  const rondas = [];
+  for (let i = 0; i < 6; i++) rondas.push(...(await Promise.all([cambiar(P.admin1, i % 2 === 0), cambiar(P.admin2, i % 2 === 1)])));
+  rondas.push(...(await Promise.all([cambiar(P.admin1, true), cambiar(P.admin2, null)])));
+  revisar("7a. 14 cambios a la vez (7 rondas de 2 admins): todos responden bien", rondas.every((r) => !r.error), errores(rondas.filter((r) => r.error)));
+  const estadoWA = async () => {
+    const v = (await db.q("select activa from public.club_funciones where club_id = $1 and funcion = 'whatsapp'", [C]))[0]?.activa ?? null;
+    const u = (await db.q(`select activa, (select count(*)::int from public.funciones_cambios where club_id = $1 and funcion = 'whatsapp') n
+      from public.funciones_cambios where club_id = $1 and funcion = 'whatsapp' order by id desc limit 1`, [C]))[0];
+    return { guardado: v, ultimo: u?.activa ?? null, n: u?.n ?? 0 };
+  };
+  const e7 = await estadoWA();
+  revisar("7b. lo guardado es lo último de la bitácora (ningún cambio perdido ni fuera de orden)", e7.guardado === e7.ultimo, JSON.stringify(e7));
+  revisar("7c. la bitácora tiene los 14 cambios", e7.n === 14, String(e7.n));
+  const veApp = ok(await P.gerenteC1.rpc("mis_funciones", { p_club_id: C }), "mis_funciones").includes("whatsapp");
+  revisar("7d. lo que ve la app (mis_funciones) es lo guardado", veApp === (e7.guardado === true), `app ${veApp}, base ${e7.guardado}`);
+  const sqlBandera = "select public.funcion_cambiar($1, 'whatsapp', $2)";
+  const cb = await carreraForzada({ rol: "authenticated", uid: U.admin1.id }, (c) => c.q(sqlBandera, [C, true]), (c) => c.q(sqlBandera, [C, false]), { confirmarSegunda: true });
+  const e7b = await estadoWA();
+  revisar("7e. carrera forzada: el segundo cambio espera al primero y queda al final", cb.esperó && !cb.error && e7b.guardado === false && e7b.ultimo === false, `esperó ${cb.esperó}; ${cb.error ?? ""} ${JSON.stringify(e7b)}`);
+
+  // ======================= 8. POS =======================
+  console.log("\n== 8. Dos gerentes importan el mismo archivo del POS a la vez");
+  const huellaArchivo = (s) => createHash("sha256").update(TAG + s).digest("hex");
+  const linea = (n, ticket, total) => ({ linea: n, ticket, fecha_hora: `${nocheC}T23:${String(10 + n).padStart(2, "0")}`, producto: `Producto ${ticket}`, total_centavos: total });
+  const importar = (s, h, lineas) => s.rpc("pos_importar", { p_club_id: C, p_archivo_nombre: `ventas-${TAG}.csv`, p_archivo_hash: h, p_formato: "csv", p_mapeo_id: null, p_lineas: lineas });
+  const ventas = async () => (await db.q("select count(*)::int n, count(distinct clave)::int d from public.pos_ventas where club_id = $1", [C]))[0];
+  const archivo1 = [linea(1, "A1", 1000), linea(2, "A2", 2000), linea(3, "A3", 3000)];
+  const imp = await Promise.all([P.gerenteC1, P.gerenteC2, P.duenoC].map((s) => importar(s, huellaArchivo("f1"), archivo1)));
+  revisar("8a. el mismo archivo 3 veces a la vez (2 gerentes y el dueño): entra exactamente una importación", imp.filter((r) => !r.error).length === 1, errores(imp));
+  revisar("8b. las otras reciben un aviso claro (P0001: «ya se importó» o «se acaban de importar»)", imp.filter((r) => r.error).every((r) => r.error.code === "P0001" && /ya se importó|acaban de importar/.test(r.error.message)), errores(imp));
+  const v8 = await ventas();
+  revisar("8c. 3 ventas, cada línea una sola vez", v8.n === 3 && v8.d === 3, JSON.stringify(v8));
+  revisar("8d. una sola importación vigente con esa huella", (await db.q("select count(*)::int n from public.pos_importaciones where club_id = $1 and archivo_hash = $2 and deshecha_en is null", [C, huellaArchivo("f1")]))[0].n === 1);
+  // Dos archivos distintos que se enciman (B2 viene en los dos), a la vez.
+  const x = [linea(4, "B1", 100), linea(5, "B2", 200)];
+  const y = [{ ...linea(5, "B2", 200), linea: 1 }, { ...linea(6, "B3", 300), linea: 2 }];
+  const xy = await Promise.all([importar(P.gerenteC1, huellaArchivo("x"), x), importar(P.gerenteC2, huellaArchivo("y"), y)]);
+  revisar("8e. dos archivos que se enciman, a la vez: entran los dos", xy.every((r) => !r.error), errores(xy));
+  const nuevas = xy.reduce((s, r) => s + (r.data?.nuevas ?? 0), 0);
+  const repetidas = xy.reduce((s, r) => s + (r.data?.repetidas ?? 0), 0);
+  const v8b = await ventas();
+  revisar("8f. la línea que traen los dos entra una vez (3 nuevas, 1 repetida, 6 ventas)", nuevas === 3 && repetidas === 1 && v8b.n === 6 && v8b.d === 6, `nuevas ${nuevas}, repetidas ${repetidas}, ${JSON.stringify(v8b)}`);
+  const desh = await Promise.all([P.gerenteC1, P.gerenteC2].map((s) => s.rpc("pos_importacion_deshacer", { p_importacion_id: xy[0].data?.importacion_id, p_motivo: "prueba t_rls" })));
+  revisar("8g. deshacer el mismo archivo dos veces a la vez: pasa uno", desh.filter((r) => !r.error).length === 1, errores(desh));
+  revisar("8h. el otro recibe «ya se deshizo» (P0001)", desh.some((r) => r.error?.code === "P0001" && /ya se deshizo/.test(r.error.message)), errores(desh));
+  const porTicket = async (t) => (await db.q("select count(*)::int n from public.pos_ventas where club_id = $1 and ticket = $2", [C, t]))[0].n;
+  const [b1, b2] = [await porTicket("B1"), await porTicket("B2")];
+  revisar("8i. al deshacer, la línea que también trae el otro archivo se queda (B2 una vez) y la propia se va (B1)", b1 === 0 && b2 === 1, `B1 ${b1}, B2 ${b2}`);
+  const sqlImp = "select public.pos_importar($1, 'forzada.csv', $2, 'csv', null, $3::jsonb)::text as r";
+  const z = JSON.stringify([linea(7, "Z1", 700)]);
+  const ci = await carreraForzada({ rol: "authenticated", uid: U.gerenteC1.id }, (c) => c.q(sqlImp, [C, huellaArchivo("z"), z]), (c) => c.q(sqlImp, [C, huellaArchivo("z"), z]), { confirmarSegunda: true });
+  revisar("8j. carrera forzada: la segunda importación espera el candado del antro y recibe «ya se importó»", ci.esperó && /ya se importó/.test(ci.error ?? ""), `esperó ${ci.esperó}; ${ci.error ?? "PASÓ"}`);
+  // Dos gerentes guardan a la vez un mapeo NUEVO con el mismo nombre («guarda o reemplaza por nombre»).
+  const sqlMapeo = "select public.pos_mapeo_guardar($1, $2, '{\"columnas\": {\"ticket\": \"Folio\"}}'::jsonb)::text as id";
+  const nombreMapeo = `Mapeo ${TAG}`;
+  const cm = await carreraForzada({ rol: "authenticated", uid: U.gerenteC1.id }, (c) => c.q(sqlMapeo, [C, nombreMapeo]), (c) => c.q(sqlMapeo, [C, nombreMapeo]), { confirmarSegunda: true });
+  const mapeos = (await db.q("select count(*)::int n from public.pos_mapeos where club_id = $1 and lower(btrim(nombre)) = lower($2)", [C, nombreMapeo]))[0].n;
+  revisar("8k. carrera forzada: dos mapeos nuevos con el mismo nombre dejan uno solo", mapeos === 1, String(mapeos));
+  revisar("8l. …y el segundo lo reemplaza o recibe un aviso claro (no el error crudo del índice)", !cm.error || !/duplicate key|23505/.test(cm.error), `esperó ${cm.esperó}; ${cm.error ?? "lo reemplazó"}`);
+
+  // ======================= 9. Entrada diferida =======================
+  console.log("\n== 9. Dos staff mandan la misma entrada diferida desde dos teléfonos");
+  const reservaC = async () => {
+    const R = { id: randomUUID(), cliente_nombre: `Cliente ${TAG}`, cliente_telefono: "0000000777", personas: 2, status: "confirmada", source: "rp", rp_id: U.rpC.id, club_id: C, fecha: nocheC, qr_code: `antro-${randomUUID()}` };
+    ok(await svc.from("reservations").insert(R), "reserva C");
+    return R;
+  };
+  const diferida = (s, R, clave = randomUUID()) => s.rpc("puerta_entrada_diferida", { p_club_id: C, p_reservation_id: R.id, p_clave: clave, p_escaneado_en: new Date(Date.now() - 60000).toISOString() });
+  const eventos = async (tipo, R) => (await db.q("select count(*)::int n from public.caja_eventos where club_id = $1 and tipo = $2 and detalle->>'reservation_id' = $3", [C, tipo, R.id]))[0].n;
+  const R9 = await reservaC();
+  const d9 = await Promise.all([diferida(P.staffC1, R9), diferida(P.staffC2, R9)]);
+  revisar("9a. las dos responden bien (que ya haya entrado no es error)", d9.every((r) => !r.error), errores(d9));
+  const res9 = d9.map((r) => r.data?.resultado).sort().join(",");
+  revisar("9b. una «entro» y la otra «ya_entro»", res9 === "entro,ya_entro", res9);
+  const perdio = d9.find((r) => r.data?.resultado === "ya_entro")?.data;
+  revisar("9c. la otra dice que fue otra cuenta y a qué hora", perdio?.por_ti === false && /^\d{2}:\d{2}$/.test(perdio?.hora_local ?? ""), JSON.stringify(perdio));
+  revisar("9d. un solo evento de entrada y uno de envío diferido", (await eventos("puerta_confirmar_entrada", R9)) === 1 && (await eventos("puerta_entrada_diferida", R9)) === 1);
+  const R9b = await reservaC();
+  const k9 = randomUUID();
+  const t9 = await Promise.all([1, 2, 3].map(() => diferida(P.staffC1, R9b, k9)));
+  const r9b = t9.map((r) => r.data?.resultado);
+  revisar("9e. el mismo envío 3 veces a la vez (misma clave, mismo teléfono): todos bien y exactamente una «entro»", t9.every((r) => !r.error) && r9b.filter((v) => v === "entro").length === 1, `${r9b.join(",")} ${errores(t9)}`);
+  revisar("9f. …los otros dicen «ya_enviada» o «ya_entro» por ti", t9.filter((r) => r.data?.resultado !== "entro").every((r) => r.data?.resultado === "ya_enviada" || (r.data?.resultado === "ya_entro" && r.data?.por_ti === true)), JSON.stringify(t9.map((r) => r.data?.resultado + "/" + r.data?.por_ti)));
+  revisar("9g. …un solo evento de entrada", (await eventos("puerta_confirmar_entrada", R9b)) === 1);
+  const despues9 = await diferida(P.staffC1, R9b, k9);
+  revisar("9h. el reintento posterior responde «ya_enviada»", despues9.data?.resultado === "ya_enviada", JSON.stringify(despues9.data ?? despues9.error?.message));
+  const R9c = await reservaC();
+  const mal9 = await diferida(P.staffC1, R9c, k9);
+  revisar("9i. la misma clave con otra reserva se rechaza (P0001)", mal9.error?.code === "P0001" && /otra reserva/.test(mal9.error.message), mal9.error?.message ?? "PASÓ");
+  const R9d = await reservaC();
+  const camara = (async () => {
+    const e = await P.staffC3.rpc("puerta_escanear", { p_qr: R9d.qr_code });
+    return e.error ? e : P.staffC3.rpc("puerta_confirmar_entrada", { p_reservation_id: R9d.id });
+  })();
+  const [dc, cc] = await Promise.all([diferida(P.staffC2, R9d), camara]);
+  const entraron = [dc.data?.resultado === "entro", !cc.error].filter(Boolean).length;
+  revisar("9j. diferida y cámara a la vez: entra exactamente una vez", entraron === 1 && (await eventos("puerta_confirmar_entrada", R9d)) === 1, `diferida ${JSON.stringify(dc.data?.resultado ?? dc.error?.message)}; cámara ${cc.error?.message ?? "ok"}`);
+  revisar("9k. …y quien pierde recibe un aviso claro", dc.data?.resultado === "ya_entro" || /ya entró/.test(cc.error?.message ?? ""), `${dc.data?.resultado ?? dc.error?.message} / ${cc.error?.message ?? "ok"}`);
+
+  // ======================= 10. Lista negra =======================
+  console.log("\n== 10. Lista negra: bloqueos y reservas del mismo teléfono a la vez");
+  const tel = () => "55" + String(Math.floor(Math.random() * 1e8)).padStart(8, "0");
+  const bloquear = (s, t) => s.rpc("lista_negra_bloquear", { p_club: C, p_telefono: t, p_reserva_id: null, p_motivo: "prueba t_rls", p_dias: null });
+  const abiertos = async (t) => (await db.q("select count(*)::int n from public.club_bloqueos where club_id = $1 and telefono = $2 and desbloqueado_en is null", [C, t]))[0].n;
+  const t1 = tel();
+  const b10 = await Promise.all([P.gerenteC1, P.gerenteC2, P.duenoC].map((s) => bloquear(s, t1)));
+  revisar("10a. tres bloqueos del mismo teléfono a la vez: un solo bloqueo abierto", (await abiertos(t1)) === 1 && b10.filter((r) => !r.error).length === 1, errores(b10));
+  revisar("10b. los otros reciben «ya está bloqueado» (P0001), no un error crudo de la base", b10.filter((r) => r.error).every((r) => r.error.code === "P0001" && /ya está bloqueado/.test(r.error.message)), b10.map((r) => (r.error ? `${r.error.code} ${r.error.message}` : "ok")).join(" | "));
+  const t1b = tel();
+  const sqlBloq = "select public.lista_negra_bloquear($1, $2, null, 'prueba t_rls', null)::text as id";
+  const cbq = await carreraForzada({ rol: "authenticated", uid: U.gerenteC1.id }, (c) => c.q(sqlBloq, [C, t1b]), (c) => c.q(sqlBloq, [C, t1b]), { confirmarSegunda: true });
+  revisar("10c. carrera forzada: el segundo bloqueo espera al primero y recibe «ya está bloqueado»", cbq.esperó && /ya está bloqueado/.test(cbq.error ?? ""), `esperó ${cbq.esperó}; ${cbq.error ?? "PASÓ"}`);
+  revisar("10d. …y queda un solo bloqueo abierto", (await abiertos(t1b)) === 1);
+  const reservaRp = (t) => P.rpC.from("reservations").insert({ cliente_nombre: `Cliente ${TAG}`, cliente_telefono: t, personas: 2, fecha: nocheC, club_id: C, qr_code: `antro-${randomUUID()}`, status: "pendiente", source: "rp", rp_id: U.rpC.id });
+  const avisoRp = /no puede reservar en este antro por ahora/;
+  const bienOAviso = (r) => !r.error || (r.error.code === "P0001" && avisoRp.test(r.error.message));
+  const t2 = tel();
+  const [bq, ...rs] = await Promise.all([bloquear(P.gerenteC1, t2), ...[1, 2, 3, 4].map(() => reservaRp(t2))]);
+  revisar("10e. bloqueo y 4 reservas del RP con ese teléfono a la vez: el bloqueo entra", !bq.error, bq.error?.message ?? "");
+  revisar("10f. …cada reserva entra (llegó antes) o recibe el aviso para el RP (P0001), sin otros errores", rs.every(bienOAviso), errores(rs));
+  const tras = await reservaRp(t2);
+  revisar("10g. con el bloqueo ya guardado, la siguiente reserva se rechaza", tras.error?.code === "P0001" && avisoRp.test(tras.error.message), tras.error?.message ?? "PASÓ");
+  const [dq, ...rs2] = await Promise.all([P.gerenteC2.rpc("lista_negra_desbloquear", { p_club: C, p_bloqueo_id: bq.data, p_reserva_id: null, p_motivo: "prueba t_rls" }), ...[1, 2, 3].map(() => reservaRp(t2))]);
+  revisar("10h. desbloqueo y 3 reservas a la vez: el desbloqueo entra y cada reserva entra o recibe el aviso", !dq.error && rs2.every(bienOAviso), `${dq.error?.message ?? "ok"}; ${errores(rs2)}`);
+  const libre = await reservaRp(t2);
+  revisar("10i. ya desbloqueado, la siguiente reserva entra", !libre.error, libre.error?.message ?? "");
+  const idB1 = b10.find((r) => !r.error)?.data;
+  const d10 = await Promise.all([P.gerenteC1, P.duenoC].map((s) => s.rpc("lista_negra_desbloquear", { p_club: C, p_bloqueo_id: idB1, p_reserva_id: null, p_motivo: "prueba t_rls" })));
+  revisar("10j. dos desbloqueos a la vez: pasa uno", d10.filter((r) => !r.error).length === 1, errores(d10));
+  revisar("10k. el otro recibe «no está bloqueado» (P0001)", d10.some((r) => r.error?.code === "P0001" && /no está bloqueado/.test(r.error.message)), errores(d10));
+  const ev10 = (await db.q("select count(*)::int n from public.lista_negra_eventos where club_id = $1 and tipo = 'desbloqueo' and telefono = $2", [C, t1]))[0].n;
+  revisar("10l. un solo evento de desbloqueo y el bloqueo cerrado", ev10 === 1 && (await abiertos(t1)) === 0, `eventos ${ev10}`);
+
+  // ======================= 11. Inventario =======================
+  console.log("\n== 11. Inventario: dos staff venden la última pieza a la vez");
+  const prod = ok(await P.gerenteC1.rpc("producto_guardar", { p_club_id: C, p_id: null, p_nombre: `Botella ${TAG}`, p_categoria: "Botellas", p_precio_centavos: 100000, p_existencias_minimas: 0, p_activo: true, p_existencias_iniciales: 1 }), "producto");
+  const existencias = async () => (await db.q(`select p.existencias,
+      (select coalesce(sum(m.cantidad), 0)::int from public.producto_movimientos m where m.producto_id = p.id) bitacora,
+      (select count(*)::int from public.producto_movimientos m where m.producto_id = p.id and m.tipo = 'venta') ventas
+    from public.productos p where p.id = $1`, [prod]))[0];
+  const sC1 = ok(await P.staffC1.rpc("caja_abrir_mesa", { p_mesa_id: mesaC.C1 }), "abrir C1");
+  const sC2 = ok(await P.staffC2.rpc("caja_abrir_mesa", { p_mesa_id: mesaC.C2 }), "abrir C2");
+  const cu1 = ok(await P.staffC1.rpc("caja_sentar_cliente", { p_sesion_id: sC1, p_cliente_nombre: "Walk-in t_rls", p_personas: 2 }), "sentar 1");
+  const cu2 = ok(await P.staffC2.rpc("caja_sentar_cliente", { p_sesion_id: sC2, p_cliente_nombre: "Walk-in t_rls", p_personas: 2 }), "sentar 2");
+  const vender = (s, cuenta, clave = randomUUID()) => s.rpc("caja_registrar_consumo_producto", { p_cuenta_id: cuenta, p_producto_id: prod, p_cantidad: 1, p_clave: clave });
+  const v11 = await Promise.all([vender(P.staffC1, cu1), vender(P.staffC2, cu2)]);
+  const e11 = await existencias();
+  revisar("11a. las dos ventas de la última pieza pasan (vender sin existencias es a propósito: decisión 2 de docs/post-junta-3/fase2.md)", v11.every((r) => !r.error), errores(v11));
+  revisar("11b. ninguna venta se pierde: existencias 1 − 2 = −1 y dos movimientos de venta", e11.existencias === -1 && e11.ventas === 2, JSON.stringify(e11));
+  revisar("11c. existencias = suma de la bitácora", e11.existencias === e11.bitacora, JSON.stringify(e11));
+  const kv = randomUUID();
+  const rv = await Promise.all([1, 2, 3].map(() => vender(P.staffC1, cu1, kv)));
+  const e11b = await existencias();
+  revisar("11d. la misma venta (misma clave) 3 veces a la vez: un consumo y un descuento", rv.every((r) => !r.error) && new Set(rv.map((r) => r.data)).size === 1 && e11b.existencias === -2 && e11b.ventas === 3 && e11b.bitacora === -2, `${errores(rv)} ${JSON.stringify(e11b)}`);
+  const mov = await Promise.all([
+    P.gerenteC1.rpc("inventario_entrada", { p_producto_id: prod, p_cantidad: 10, p_clave: randomUUID() }),
+    P.gerenteC2.rpc("inventario_merma", { p_producto_id: prod, p_cantidad: 3, p_motivo: "se rompió (prueba)", p_clave: randomUUID() }),
+    vender(P.staffC2, cu2),
+  ]);
+  const e11c = await existencias();
+  revisar("11e. entrada (+10), merma (−3) y venta (−1) a la vez: quedan 4 y cuadran con la bitácora", mov.every((r) => !r.error) && e11c.existencias === 4 && e11c.bitacora === 4, `${errores(mov)} ${JSON.stringify(e11c)}`);
+  const km = randomUUID();
+  const mm = await Promise.all([1, 2].map(() => P.gerenteC1.rpc("inventario_merma", { p_producto_id: prod, p_cantidad: 1, p_motivo: "derrame (prueba)", p_clave: km })));
+  const e11d = await existencias();
+  revisar("11f. la misma merma (misma clave) 2 veces a la vez: se descuenta una vez", mm.every((r) => !r.error) && e11d.existencias === 3 && e11d.bitacora === 3, `${errores(mm)} ${JSON.stringify(e11d)}`);
+  const cont = await Promise.all([
+    P.gerenteC2.rpc("inventario_conteo", { p_producto_id: prod, p_contado: 3, p_motivo: null, p_clave: randomUUID(), p_existencias_vistas: 3 }),
+    vender(P.staffC1, cu1),
+  ]);
+  const e11e = await existencias();
+  const difConteo = (await db.q("select cantidad from public.producto_movimientos where producto_id = $1 and tipo = 'conteo' order by orden desc limit 1", [prod]))[0]?.cantidad;
+  revisar("11g. conteo (vistas 3, contadas 3) y una venta a la vez: la venta no se absorbe (quedan 2, diferencia del conteo 0)", cont.every((r) => !r.error) && e11e.existencias === 2 && e11e.bitacora === 2 && difConteo === 0, `${errores(cont)} ${JSON.stringify(e11e)} diferencia ${difConteo}`);
+
+  // ======================= 12. Propinas =======================
+  console.log("\n== 12. Propinas: dos gerentes reparten la misma noche a la vez");
+  ok(await P.gerenteC1.rpc("propinas_config_guardar", { p_club_id: C, p_pct_personal: 80, p_pct_rp: 10, p_pct_casa: 10, p_incluye_gerente: false }), "regla de propinas");
+  const nocheId = (await db.q("select id::text from public.caja_noches where club_id = $1 and fecha_operacion = $2", [C, nocheC]))[0].id;
+  const propina = (s, sesion, cuenta, monto) => s.rpc("caja_registrar_propina", { p_noche_id: nocheId, p_sesion_id: sesion, p_cuenta_id: cuenta, p_metodo: "efectivo", p_monto_centavos: monto, p_nota: "prueba t_rls", p_clave: randomUUID() });
+  ok(await propina(P.staffC1, sC1, cu1, 2000), "propina en mesa");
+  const suelta = ok(await propina(P.staffC2, null, null, 500), "propina suelta");
+  const saldo = async (s) => Number((await db.q(`select (select coalesce(sum(monto_centavos), 0) from public.caja_consumos where sesion_id = $1 and not anulado)
+      - (select coalesce(sum(monto_centavos), 0) from public.caja_pagos where sesion_id = $1 and not anulado) as s`, [s]))[0].s);
+  for (const [s, propinaCobro] of [[sC1, 1000], [sC2, 0]]) {
+    const x = await saldo(s);
+    if (x > 0) ok(await P.staffC1.rpc("caja_registrar_pago", { p_sesion_id: s, p_cuenta_id: null, p_metodo: "efectivo", p_monto_centavos: x, p_clave: randomUUID(), p_saldo_esperado: x, p_propina_centavos: propinaCobro }), "cobro");
+    ok(await P.gerenteC1.rpc("caja_cerrar_mesa", { p_sesion_id: s }), "cerrar mesa");
+    ok(await P.gerenteC1.rpc("caja_cuadrar_mesa", { p_sesion_id: s, p_notas: null }), "cuadrar mesa");
+  }
+  const efectivo = Number((await db.q("select coalesce(sum(monto_centavos), 0) s from public.caja_pagos where noche_id = $1 and not anulado and metodo = 'efectivo'", [nocheId]))[0].s);
+  ok(await P.gerenteC1.rpc("caja_cerrar_noche", { p_noche_id: nocheId, p_contado_efectivo_centavos: efectivo, p_contado_tarjeta_centavos: 0, p_contado_otro_centavos: 0, p_notas: null }), "cerrar noche");
+  const totalPropinas = async () => Number(ok(await P.gerenteC1.rpc("propinas_reporte_noche", { p_club_id: C, p_fecha: nocheC }), "reporte de propinas").total_centavos);
+  const regla = { p_pct_personal: 80, p_pct_rp: 10, p_pct_casa: 10, p_incluye_gerente: false };
+  const repartir = (s, part, total) => s.rpc("propinas_repartir", { p_noche_id: nocheId, p_participantes: part, p_total_visto: total, ...regla });
+  const vigentes = async () => db.q(`select r.id::text, r.total_centavos::bigint t,
+      (select coalesce(sum(l.monto_centavos), 0)::bigint from public.propinas_reparto_lineas l where l.reparto_id = r.id) s
+    from public.propinas_repartos r where r.noche_id = $1 and not r.anulado`, [nocheId]);
+  const anularVigentes = async () => { for (const v of await vigentes()) ok(await P.gerenteC1.rpc("propinas_anular_reparto", { p_reparto_id: v.id, p_motivo: "prueba t_rls" }), "anular reparto"); };
+  const tot1 = await totalPropinas();
+  const [an, rp1] = await Promise.all([P.gerenteC2.rpc("caja_anular_propina", { p_propina_id: suelta, p_motivo: "prueba t_rls" }), repartir(P.gerenteC1, [U.staffC1.id], tot1)]);
+  revisar("12a. anular una propina y repartir a la vez: pasa exactamente uno", [an, rp1].filter((r) => !r.error).length === 1, errores([an, rp1]));
+  revisar("12b. …el que pierde recibe un aviso claro (P0001: «ya se repartió» o «las propinas cambiaron»)", [an, rp1].filter((r) => r.error).every((r) => r.error.code === "P0001" && /ya se repartió|propinas cambiaron/.test(r.error.message)), errores([an, rp1]));
+  const tot1b = await totalPropinas();
+  const v12 = await vigentes();
+  revisar("12c. …y nunca queda un reparto con una propina anulada (reparto = propinas vigentes)", v12.every((v) => Number(v.t) === tot1b && Number(v.s) === tot1b), `${JSON.stringify(v12)}; vigentes ${tot1b}`);
+  await anularVigentes();
+  const tot2 = await totalPropinas();
+  const mismo = await Promise.all([repartir(P.gerenteC1, [U.staffC1.id, U.staffC2.id], tot2), repartir(P.gerenteC2, [U.staffC2.id, U.staffC1.id], tot2)]);
+  const v12b = await vigentes();
+  revisar("12d. el mismo reparto dos veces a la vez (doble clic): los dos responden con el mismo reparto", mismo.every((r) => !r.error) && mismo[0].data === mismo[1].data, errores(mismo));
+  revisar("12e. …un solo reparto vigente y sus líneas suman el total", v12b.length === 1 && Number(v12b[0].t) === tot2 && Number(v12b[0].s) === tot2, JSON.stringify(v12b));
+  await anularVigentes();
+  const dist = await Promise.all([repartir(P.gerenteC1, [U.staffC1.id], tot2), repartir(P.gerenteC2, [U.staffC2.id, U.staffC3.id], tot2), repartir(P.duenoC, [U.staffC3.id], tot2)]);
+  const v12c = await vigentes();
+  revisar("12f. tres repartos distintos a la vez: pasa exactamente uno", dist.filter((r) => !r.error).length === 1 && v12c.length === 1, errores(dist));
+  revisar("12g. los otros reciben «ya se repartió» (P0001)", dist.filter((r) => r.error).every((r) => r.error.code === "P0001" && /ya se repartió/.test(r.error.message)), errores(dist));
+  revisar("12h. el reparto vigente cuadra al centavo", v12c.length === 1 && Number(v12c[0].s) === tot2, JSON.stringify(v12c));
+  await anularVigentes();
+  const sqlRep = "select public.propinas_repartir($1, $2::uuid[], $3, 80, 10, 10, false)::text as id";
+  const cr = await carreraForzada({ rol: "authenticated", uid: U.gerenteC1.id }, (c) => c.q(sqlRep, [nocheId, [U.staffC1.id], tot2]), (c) => c.q(sqlRep, [nocheId, [U.staffC2.id], tot2]), { confirmarSegunda: true });
+  revisar("12i. carrera forzada: el segundo reparto espera el candado de la noche y recibe «ya se repartió»", cr.esperó && /ya se repartió/.test(cr.error ?? ""), `esperó ${cr.esperó}; ${cr.error ?? "PASÓ"}`);
+  revisar("12j. un solo reparto vigente al final", (await vigentes()).length === 1);
+
+  // ======================= 13. /para-clubes =======================
+  console.log("\n== 13. Formulario de /para-clubes: ráfagas contra los topes");
+  const enLaHora = (await db.q("select count(*)::int n from public.contacto_intentos where creado_en > now() - interval '1 hour'"))[0].n;
+  const fila = (await db.q("select activa from public.plataforma_banderas where clave = 'para_clubes'"))[0];
+  if (!fila || enLaHora > 40) {
+    console.log(`  (se salta: ${!fila ? "no existe la bandera para_clubes en dev" : `${enLaHora} envíos en la última hora; el tope global de 60 la haría poco fiable`})`);
+    return;
+  }
+  const huella = async (t) => (await db.q("select public.contacto_huella($1) as h", [t]))[0].h;
+  const ip = () => `10.250.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
+  const correo = (n) => `${TAG}_c${n}@example.com`;
+  const enviar = async (c, i, extra = {}) => {
+    huellasContacto.push(await huella("ip:" + i), await huella("correo:" + c));
+    return svc.rpc("para_clubes_contacto_enviar", { p_nombre: "Prueba Concurrencia", p_club: "Antro de prueba", p_ciudad: "CDMX", p_correo: c, p_ip: i, ...extra });
+  };
+  const tope = /Ya recibimos varios mensajes/;
+  paraClubesAntes = fila.activa;
+  try {
+    if (!paraClubesAntes) ok(await P.admin1.rpc("plataforma_bandera_cambiar", { p_clave: "para_clubes", p_activa: true }), "encender para_clubes");
+    const ipA = ip();
+    const r1 = await Promise.all(Array.from({ length: 8 }, (_, i) => enviar(correo(i), ipA)));
+    const pasan1 = r1.filter((r) => !r.error && r.data === "recibido").length;
+    revisar("13a. 8 envíos a la vez desde la misma conexión: pasan exactamente 3 (tope de 3 por hora)", pasan1 === 3, `pasaron ${pasan1}; ${errores(r1.filter((r) => r.error)).slice(0, 160)}`);
+    revisar("13b. los demás reciben el aviso del tope (P0001)", r1.filter((r) => r.error).every((r) => r.error.code === "P0001" && tope.test(r.error.message)), errores(r1.filter((r) => r.error)).slice(0, 160));
+    const guardados = (await db.q("select count(*)::int n from public.contacto_intentos where ip_hash = $1", [await huella("ip:" + ipA)]))[0].n;
+    revisar("13c. 3 intentos guardados con la huella de esa IP", guardados === 3, String(guardados));
+    const c5 = correo("x");
+    const r2 = await Promise.all(Array.from({ length: 5 }, () => enviar(c5, ip())));
+    const pasan2 = r2.filter((r) => !r.error).length;
+    revisar("13d. el mismo correo desde 5 conexiones a la vez: pasan exactamente 3 (tope de 3 por día)", pasan2 === 3 && r2.filter((r) => r.error).every((r) => r.error.code === "P0001" && tope.test(r.error.message)), `pasaron ${pasan2}; ${errores(r2.filter((r) => r.error)).slice(0, 160)}`);
+    const ipT = ip();
+    const r3 = await Promise.all(Array.from({ length: 5 }, (_, i) => enviar(correo(`t${i}`), ipT, { p_sitio_web: "https://spam.example" })));
+    const trampa = (await db.q("select count(*)::int n from public.contacto_intentos where ip_hash = $1", [await huella("ip:" + ipT)]))[0].n;
+    revisar("13e. casilla trampa, 5 a la vez: todas responden «recibido» y no se guarda ni se cuenta nada", r3.every((r) => !r.error && r.data === "recibido") && trampa === 0, `${errores(r3)}; guardados ${trampa}`);
+    const contactos = (await db.q("select count(*)::int n from public.contactos_clubes where correo like $1", [`${TAG}%`]))[0].n;
+    revisar("13f. contactos guardados = envíos aceptados (3 + 3)", contactos === 6, String(contactos));
+  } finally {
+    if (paraClubesAntes === false) {
+      const r = await P.admin1.rpc("plataforma_bandera_cambiar", { p_clave: "para_clubes", p_activa: false });
+      if (!r.error) paraClubesAntes = null;
+    } else paraClubesAntes = null;
+  }
+  const ahora = (await db.q("select activa from public.plataforma_banderas where clave = 'para_clubes'"))[0].activa;
+  revisar("13g. la bandera para_clubes quedó como estaba", ahora === fila.activa, `antes ${fila.activa}, ahora ${ahora}`);
 }
 
 const db = await conectarDevEscritura();
@@ -183,6 +511,7 @@ try {
   const S = {};
   for (const k of ["staff1", "staff2", "gerente1", "gerente2", "duenoA", "cliente", "gerenteB", "staffB", "duenoB"]) S[k] = await sesion(k);
   console.log(`Escenario: ${TAG}, antros A y B publicados, noche ${noche}`);
+  if (!SOLO_PJ3) {
 
   // ======================= 1. Escaneo doble =======================
   console.log("\n== 1. Dos staff escanean el mismo QR a la vez");
@@ -382,6 +711,9 @@ try {
   revisar("6c. tres altas a la vez por la API: pasa exactamente una", altas.filter((r) => !r.error).length === 1, errores(altas));
   revisar("6d. …el dueño queda con un solo antro", (await antrosDe(d2)).length === 1, String((await antrosDe(d2)).length));
   revisar("6e. las rechazadas reciben un aviso (P0001) o el rechazo de la política", altas.filter((r) => r.error).every((r) => r.error.code === "P0001" || r.error.code === "42501"), altas.map((r) => r.error?.code ?? "ok").join(","));
+  } // fin de los casos 1–6 (se saltan con --solo-pj3)
+
+  await casosPostJunta3(db);
 } catch (e) {
   revisar("Ejecución sin excepciones", false, e.message);
 } finally {

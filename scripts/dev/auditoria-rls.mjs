@@ -20,13 +20,24 @@
 //     autorizaciones que fallan abiertas con NULL; cada coincidencia debe
 //     tener veredicto en VEREDICTOS (abajo). Las nuevas salen como aviso
 //     (con --estricto cuentan como falla).
+//  6. Post-junta-3 (bloque 9, 27/11/2026): banderas por antro encendidas por
+//     el admin solo para A y B; datos por el camino real (POS, lista negra,
+//     WhatsApp, inventario, propinas); matriz de las tablas nuevas (las de
+//     solo funciones en SIN_API_PJ3, las de propinas con SELECT en SPEC);
+//     quién puede llamar cada función nueva con la bandera de A apagada
+//     (permiso antes que bandera) y encendida; cruces entre antros; y el
+//     catálogo (GRANT de anon/authenticated y search_path fijo). Antifraude
+//     (30) queda fuera a propósito (lugar marcado «ANTIFRAUDE»).
+//
+//   node scripts/dev/auditoria-rls.mjs --limpiar=t_rls_xxxxxx   (restos de una corrida cortada)
+//   AUDITORIA_TRAZA=1 …                                          (imprime cada tabla y fase)
 //
 // Termina con 0 si todo lo esperado coincide con lo obtenido.
 // Nunca toca producción: verificarEnvDev() aborta si .env.dev no es de dev.
 // No usa ni modifica los datos de Club Demo Dev ni los usuarios dev_*.
 
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,14 +46,20 @@ import { verificarEnvDev, conectarDevEscritura } from "../db/conexion.mjs";
 const env = verificarEnvDev();
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const { createClient } = createRequire(path.join(RAIZ, "package.json"))("@supabase/supabase-js");
-const opts = { auth: { persistSession: false, autoRefreshToken: false } };
+// Cada petición con tope de 90 s: una petición colgada (red o gateway) sale como error en vez de dejar
+// el proceso esperando para siempre sin llegar a la limpieza (pasó en dev el 27/11/2026).
+const conTope = (url, o = {}) => fetch(url, { ...o, signal: o.signal ?? AbortSignal.timeout(90000) });
+const opts = { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: conTope } };
 const svc = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, opts);
 const arg = (n) => process.argv.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
 const BASE = (arg("base") ?? "http://localhost:3026").replace(/\/$/, "");
 const MARKDOWN = arg("markdown");
 const ESTRICTO = process.argv.includes("--estricto");
 
-const TAG = "t_rls_" + randomUUID().slice(0, 6);
+// --limpiar=t_rls_xxxxxx: solo borra los restos de una corrida cortada (p. ej. un proceso matado) y sale.
+const LIMPIAR = arg("limpiar");
+if (LIMPIAR && !/^t_rls_[0-9a-f]{6}$/.test(LIMPIAR)) throw new Error("--limpiar espera una marca t_rls_xxxxxx");
+const TAG = LIMPIAR ?? "t_rls_" + randomUUID().slice(0, 6);
 const PASS = "T-" + randomUUID();
 const TAGX = TAG.replace(/_/g, "");
 const IPH = (TAG + "0".repeat(64)).slice(0, 64);
@@ -164,6 +181,8 @@ const VEREDICTOS = {
   "caja_insert_coherente()": "seguro: trigger de coherencia, no autoriza por rol",
   "caja_liquidar_cuenta(uuid)": "seguro: interna (sin execute para authenticated)",
   "nomina_transicion_valida(text,text)": "arreglado en sql/post-junta-2/60 (coalesce)",
+  // Post-junta-3 (revisado el 27/11/2026; las demás funciones de 00–81 envuelven cada «if not» en coalesce(…, false)).
+  "para_clubes_contacto_enviar(text,text,text,text,text,text,text,text)": "seguro: «if not para_clubes_activa()» y para_clubes_activa() es coalesce((select activa …), false): nunca NULL; no autoriza por rol (lo puede llamar el anónimo a propósito)",
 };
 
 async function escaneoEstatico(db) {
@@ -218,6 +237,16 @@ const VEREDICTOS_BOOL = {
   "_config_aplicar_club(uuid,text,jsonb,uuid,date)": "no autoriza: devuelve si hubo cambio; solo lo ejecuta postgres (lo llaman funciones que ya autorizaron)",
   "es_dueno_de_grupo(uuid)": "nunca NULL: coalesce(uid is not null and rol = dueno and exists(…), false)",
   "grupo_puede_editar(uuid)": "nunca NULL: coalesce(… admin, false) or es_dueno_de_grupo() (nunca NULL)",
+  // Post-junta-3 (00–81). Todas solo para service_role salvo boleto_muestra_codigo y para_clubes_activa (anon).
+  "funcion_activa(uuid,text)": "nunca NULL: coalesce(club, grupo, false); quien la llama la envuelve además en coalesce(…, false)",
+  "pos_puede_usar(uuid)": "nunca NULL: «return false» si falta sesión, antro o rol; si no, coalesce(es_gerente_o_dueno) or coalesce(club_es_dueno_grupo)",
+  "_lista_negra_gestiona(uuid)": "nunca NULL: coalesce(…, false) por fuera",
+  "_lista_negra_ve_avisos(uuid)": "nunca NULL: coalesce(…, false) por fuera",
+  "_lista_negra_manual(uuid,text,uuid)": "nunca NULL: coalesce(exists(…), false); no autoriza (dice si hay bloqueo)",
+  "_lista_negra_auto(uuid,text)": "nunca NULL: «return false» o coalesce(v_n >= …, false); no autoriza",
+  "_whatsapp_trabaja(uuid)": "nunca NULL: coalesce(…, false) por fuera",
+  "boleto_muestra_codigo(text)": "nunca NULL: coalesce(…, false); no autoriza (sí/no del código corto en el boleto)",
+  "para_clubes_activa()": "nunca NULL: coalesce((select activa …), false)",
 };
 
 // ---------------------------------------------------------------- escenario
@@ -368,6 +397,7 @@ async function escenario() {
     ok(await g.rpc("caja_cerrar_mesa", { p_sesion_id: s1 }), "cerrar");
     ok(await g.rpc("caja_cuadrar_mesa", { p_sesion_id: s1 }), "cuadrar");
     const s2 = ok(await g.rpc("caja_abrir_mesa", { p_mesa_id: ids["mesa2" + k] }), "abrir mesa 2");
+    ids["sesion2" + k] = s2;
     ids["cuenta2" + k] = ok(await g.rpc("caja_sentar_cliente", { p_sesion_id: s2, p_cliente_nombre: "Walk-in t_rls", p_personas: 2 }), "walk-in");
     ok(await g.rpc("caja_registrar_consumo", { p_cuenta_id: ids["cuenta2" + k], p_monto_centavos: 10000 }), "consumo 2");
     const prod = ok(await g.rpc("producto_guardar", { p_club_id: club, p_id: null, p_nombre: `Producto ${TAG}`, p_categoria: "Botellas", p_precio_centavos: 100000, p_existencias_minimas: 0, p_activo: true, p_existencias_iniciales: 5 }), "producto");
@@ -379,6 +409,8 @@ async function escenario() {
     const comCaja = ok(await svc.from("commissions").select("id").eq("reservation_id", resCaja), "comisión de caja");
     for (const c of comCaja) fila("commissions", { id: c.id, club: k, rp: "rp" + k, etiqueta: "comCaja" + k });
   }
+  // Post-junta-3: banderas encendidas y datos por el camino real (antes de leer las filas por antro).
+  await escenarioPj3();
   // Filas de caja y configuración, leídas de la base (club_id directo).
   const porClub = async (t, pk = "id", marcaUpd = true) => {
     const r = ok(await svc.from(t).select(`${pk}, club_id`).in("club_id", [C("A"), C("B")]), t);
@@ -389,8 +421,10 @@ async function escenario() {
       vistos.add(k);
     }
   };
-  for (const t of ["caja_noches", "mesa_sesiones", "mesa_cuentas", "caja_consumos", "caja_pagos", "caja_cuadres", "caja_eventos", "caja_permisos", "productos", "producto_movimientos", "reglas_comision", "config_rp_cambios", "personal_movimientos"]) await porClub(t);
+  for (const t of ["caja_noches", "mesa_sesiones", "mesa_cuentas", "caja_consumos", "caja_pagos", "caja_cuadres", "caja_eventos", "caja_permisos", "productos", "producto_movimientos", "reglas_comision", "config_rp_cambios", "personal_movimientos",
+    "caja_propinas", "propinas_repartos", "propinas_reparto_lineas"]) await porClub(t);
   await porClub("club_config_rp", "club_id");
+  await porClub("propinas_cobro_anuladas", "pago_id");
 
   // Globales y bitácoras.
   const alta = ok(await svc.from("club_altas").insert({ alta_id: randomUUID(), club_id: C("A"), creado_por: A.admin.id, publicado: true }).select("id").single(), "club_altas");
@@ -431,6 +465,71 @@ async function escenario() {
   // Sesiones que faltan (las bajas, después de la baja).
   for (const k of Object.keys(A)) if (!A[k].c && A[k].tipo !== "anon" && k !== "sinperfil2" && !/^rp2/.test(k)) await conectar(k);
   A.anon = { key: "anon", tipo: "anon", role: null, club: null, c: createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, opts) };
+}
+
+// ---------------------------------------------------------------- post-junta-3 (escenario)
+// Banderas por antro (sql/post-junta-3/00): el admin las enciende para A y B
+// con funcion_cambiar (nunca para otro antro); viven en club_funciones y se
+// van con los antros de prueba. reportes_pdf de A llega por su grupo G
+// (grupo_funcion_cambiar), para probar la herencia; B la tiene propia.
+// ANTIFRAUDE (sql/post-junta-3/30, tablas fraude_*): NO se enciende ni se
+// audita aquí mientras su rama se corrige. Lugar reservado: ver «ANTIFRAUDE»
+// en SIN_API_PJ3 y en correrFuncionesPj3.
+const BANDERAS_PJ3 = ["pos_ventas", "escaner_respaldo", "lista_negra", "whatsapp", "inventario", "propinas"];
+const pj3 = {}; // ids sembrados por el camino real
+const telPrueba = () => "55" + String(Math.floor(Math.random() * 1e8)).padStart(8, "0");
+const TEXTO_WA = `Hola {nombre}, te esperamos en {antro} (${TAG}).`;
+async function escenarioPj3() {
+  if (!A.admin.c) await conectar("admin");
+  const ad = A.admin.c;
+  for (const k of ["A", "B"]) for (const f of BANDERAS_PJ3)
+    ok(await ad.rpc("funcion_cambiar", { p_club_id: C(k), p_funcion: f, p_activa: true }), `bandera ${f} ${k}`);
+  ok(await ad.rpc("grupo_funcion_cambiar", { p_grupo_id: ids.grupoG, p_funcion: "reportes_pdf", p_activa: true }), "bandera de grupo");
+  ok(await ad.rpc("funcion_cambiar", { p_club_id: C("B"), p_funcion: "reportes_pdf", p_activa: true }), "reportes B");
+  pj3.telA = telPrueba();
+  pj3.telB = telPrueba();
+  for (const k of ["A", "B"]) {
+    const g = A["gerente" + k].c, club = C(k);
+    // POS (10): un mapeo y un archivo de una línea que se liga sola a la mesa 2 (abierta, walk-in).
+    pj3["mapeo" + k] = ok(await g.rpc("pos_mapeo_guardar", { p_club_id: club, p_nombre: `Mapeo ${TAG}`, p_config: { columnas: { ticket: "Ticket", fecha: "Fecha", producto: "Producto", total: "Total" } } }), "mapeo " + k);
+    pj3["lineas" + k] = [{ linea: 1, ticket: `T-${TAG}`, fecha_hora: `${HOY}T22:30`, mesa: `${TAG}-2`, producto: "Cerveza t_rls", total_centavos: 5000 }];
+    pj3["hash" + k] = createHash("sha256").update(TAG + k).digest("hex");
+    const imp = ok(await g.rpc("pos_importar", { p_club_id: club, p_archivo_nombre: `ventas-${TAG}.csv`, p_archivo_hash: pj3["hash" + k], p_formato: "csv", p_mapeo_id: pj3["mapeo" + k], p_lineas: pj3["lineas" + k] }), "importar " + k);
+    pj3["imp" + k] = imp.importacion_id;
+    // Lista negra (40): política y un bloqueo manual por antro (teléfonos distintos).
+    ok(await g.rpc("lista_negra_politica_guardar", { p_club: club, p_avisar_desde: 2, p_ventana_dias: 90, p_bloquear_desde: null }), "política " + k);
+    pj3["bloqueo" + k] = ok(await g.rpc("lista_negra_bloquear", { p_club: club, p_telefono: pj3["tel" + k], p_reserva_id: null, p_motivo: `prueba ${TAG}`, p_dias: null, p_nombre: "Bloqueado t_rls" }), "bloquear " + k);
+    // WhatsApp (60).
+    ok(await g.rpc("whatsapp_plantilla_guardar", { p_club: club, p_tipo: "confirmacion", p_texto: TEXTO_WA }), "plantilla " + k);
+    // Inventario (80): una entrada por el camino nuevo.
+    ok(await g.rpc("inventario_entrada", { p_producto_id: ids["producto" + k], p_cantidad: 2, p_costo_centavos: 1000, p_referencia: `factura ${TAG}`, p_clave: randomUUID() }), "entrada " + k);
+    // Propinas (81): regla, una propina suelta en la mesa 2, un cobro con propina (anulada sola) y un reparto.
+    ok(await g.rpc("propinas_config_guardar", { p_club_id: club, p_pct_personal: 80, p_pct_rp: 10, p_pct_casa: 10, p_incluye_gerente: false }), "regla propinas " + k);
+    pj3["noche" + k] = ok(await svc.from("caja_noches").select("id").eq("club_id", club).single(), "noche " + k).id;
+    pj3["propina" + k] = ok(await g.rpc("caja_registrar_propina", { p_noche_id: pj3["noche" + k], p_sesion_id: ids["sesion2" + k], p_cuenta_id: ids["cuenta2" + k], p_metodo: "efectivo", p_monto_centavos: 2000, p_nota: "prueba t_rls", p_clave: randomUUID() }), "propina " + k);
+    pj3["pago" + k] = ok(await g.rpc("caja_registrar_pago", { p_sesion_id: ids["sesion2" + k], p_cuenta_id: null, p_metodo: "efectivo", p_monto_centavos: 5000, p_clave: randomUUID(), p_propina_centavos: 1000 }), "cobro con propina " + k);
+    ok(await g.rpc("propinas_anular_de_cobro", { p_pago_id: pj3["pago" + k], p_motivo: "prueba t_rls" }), "anular propina de cobro " + k);
+    // El reparto pide la noche cerrada (y la mesa 2 sigue abierta para otras pruebas): se siembra con la service role (el candado revisa la coherencia).
+    const rep = ok(await svc.from("propinas_repartos").insert({ club_id: club, noche_id: pj3["noche" + k], total_centavos: 2000, pct_personal: 80, pct_rp: 10, pct_casa: 10, incluye_gerente: false, participantes: [A["staff" + k].id], hecho_por: A["gerente" + k].id }).select("id").single(), "reparto " + k);
+    pj3["reparto" + k] = rep.id;
+    ok(await svc.from("propinas_reparto_lineas").insert({ reparto_id: rep.id, club_id: club, tipo: "casa", profile_id: null, monto_centavos: 2000 }), "línea de reparto " + k);
+  }
+  // /para-clubes (50): sin tocar las banderas de plataforma (son de todos). Filas marcadas con la service role.
+  ok(await svc.from("contactos_clubes").insert({ nombre: "T rls", club_nombre: "Antro t_rls", ciudad: "CDMX", correo: `${TAG}@example.com` }), "contacto");
+  pj3.contacto = ok(await svc.from("contactos_clubes").select("id").eq("correo", `${TAG}@example.com`).single(), "contacto").id;
+  ok(await svc.from("contacto_intentos").insert({ ip_hash: IPH, correo_hash: TAG }), "intento de contacto");
+  ok(await svc.from("para_clubes_bitacora").insert({ accion: "bandera", detalle: "t_rls", hecho_por: A.admin.id }), "bitácora para-clubes");
+  // Ids de bitácoras para los filtros de SIN_API_PJ3.
+  const uno = async (t, col, filtro) => {
+    let q = svc.from(t).select(col);
+    for (const [c, v] of Object.entries(filtro)) q = q.eq(c, v);
+    return ok(await q.order(col).limit(1).single(), t)[col];
+  };
+  pj3.cambioFuncion = await uno("funciones_cambios", "id", { club_id: C("A") });
+  pj3.ventaA = await uno("pos_ventas", "id", { importacion_id: pj3.impA });
+  pj3.eventoLN = await uno("lista_negra_eventos", "id", { club_id: C("A"), tipo: "bloqueo" });
+  pj3.cambioWA = await uno("whatsapp_plantillas_cambios", "id", { club_id: C("A") });
+  pj3.claveLinea = await uno("pos_importacion_lineas", "clave", { importacion_id: pj3.impA });
 }
 
 // ---------------------------------------------------------------- especificación por tabla
@@ -581,7 +680,23 @@ const SPEC = {
     upd: { col: "nombre", puede: adm },
     del: { puede: nadie },
   },
+  // Post-junta-3 / 81 (propinas): solo lectura por la API (GRANT select y una
+  // política de SELECT); escribir, solo por funciones. Las sueltas y las
+  // anuladas de cobro, quien ve la caja (caja_puede_ver: admin, dueño, dueño
+  // de grupo, staff y gerente activos del antro); repartos y líneas, solo
+  // gerente y dueño (es_gerente_o_dueno: sin el dueño de grupo).
+  ...Object.fromEntries(["caja_propinas", "propinas_cobro_anuladas"].map((t) => [t, {
+    ver: cajaVe,
+    ins: { fila: (a, k) => ({ club_id: C(k) }), puede: nadie },
+    upd: { col: t === "caja_propinas" ? "nota" : "motivo", puede: nadie },
+  }])),
+  ...Object.fromEntries(["propinas_repartos", "propinas_reparto_lineas"].map((t) => [t, {
+    ver: gerVe,
+    ins: { fila: (a, k) => ({ club_id: C(k) }), puede: nadie },
+    upd: { col: t === "propinas_repartos" ? "total_centavos" : "monto_centavos", puede: nadie },
+  }])),
 };
+SPEC.propinas_cobro_anuladas.pk = "pago_id";
 SPEC.club_config_rp.pk = "club_id";
 SPEC.suscripciones.pk = "club_id";
 SPEC.grupo_clubs.pk = "club_id";
@@ -599,6 +714,75 @@ const GLOBALES = {
   invitacion_intentos: { ver: nadie, ins: { ip_hash: IPH, accion: "consultar" } },
   invitacion_envios: { ver: nadie, ins: { hecho_por: randomUUID(), invitacion_id: randomUUID(), tipo: "crear" } },
 };
+// Post-junta-3: tablas SIN acceso por la API (sin GRANT para anon ni
+// authenticated, RLS activado y sin políticas; todo pasa por funciones). Cada
+// una con una fila sembrada por el camino real (escenarioPj3): ninguna sesión
+// (ni el admin) la lee, inserta, actualiza (mismo valor) ni borra. Se arma
+// después del escenario porque los filtros llevan ids.
+const SIN_API_PJ3 = () => ({
+  // 00 banderas
+  club_funciones: { filtro: { club_id: C("A"), funcion: "propinas" }, col: "activa", ins: { club_id: C("A"), funcion: "reportes_pdf", activa: true } },
+  grupo_funciones: { filtro: { grupo_id: ids.grupoG, funcion: "reportes_pdf" }, col: "activa", ins: { grupo_id: ids.grupoH, funcion: "pos_ventas", activa: true } },
+  funciones_cambios: { filtro: { id: pj3.cambioFuncion }, col: "activa", ins: { club_id: C("A"), funcion: "pos_ventas", activa: true } },
+  // 10 POS
+  pos_mapeos: { filtro: { id: pj3.mapeoA }, col: "nombre", ins: { club_id: C("A"), nombre: `x ${TAG}`, config: {} } },
+  pos_importaciones: { filtro: { id: pj3.impA }, col: "archivo_nombre", ins: { club_id: C("A"), archivo_nombre: "x.csv", archivo_hash: "0".repeat(64), formato: "csv", lineas_archivo: 0, lineas_nuevas: 0, lineas_repetidas: 0, total_centavos: 0 } },
+  pos_importacion_lineas: { filtro: { importacion_id: pj3.impA, clave: pj3.claveLinea }, col: "clave", ins: { importacion_id: pj3.impA, club_id: C("A"), clave: "1".repeat(64) } },
+  pos_ventas: { filtro: { id: pj3.ventaA }, col: "producto", ins: { club_id: C("A"), importacion_id: pj3.impA, linea: 9, clave: "2".repeat(64), ticket: "x", fecha_hora_local: `${HOY}T22:00`, fecha_hora: new Date().toISOString(), fecha_operacion: HOY, producto: "x", cantidad: 1, total_centavos: 1, liga: "ninguna", estado_liga: "sin_mesa" } },
+  // 40 lista negra
+  club_bloqueos: { filtro: { id: pj3.bloqueoA }, col: "motivo", ins: { club_id: C("A"), telefono: "5500000000", motivo: "prueba t_rls" } },
+  club_noshow_politica: { filtro: { club_id: C("A") }, col: "avisar_desde", ins: { club_id: C("B"), avisar_desde: 1, ventana_dias: 30 } },
+  lista_negra_eventos: { filtro: { id: pj3.eventoLN }, col: "tipo", ins: { club_id: C("A"), tipo: "bloqueo" } },
+  // 50 /para-clubes
+  plataforma_banderas: { filtro: { clave: "para_clubes" }, col: "activa", ins: { clave: "contacto_requiere_captcha", activa: true } },
+  para_clubes_bitacora: { filtro: { hecho_por: A.admin.id, detalle: "t_rls" }, col: "detalle", ins: { accion: "bandera", detalle: "t_rls" } },
+  contactos_clubes: { filtro: { id: pj3.contacto }, col: "estado", ins: { nombre: "xx", club_nombre: "xx", ciudad: "xx", correo: `${TAG}x@example.com` } },
+  contacto_sal: { filtro: { id: 1 }, col: "sal", ins: { id: 1, sal: "0".repeat(64) } },
+  contacto_intentos: { filtro: { correo_hash: TAG }, col: "ip_hash", ins: { correo_hash: TAG + "x" } },
+  // 60 WhatsApp
+  club_whatsapp_plantillas: { filtro: { club_id: C("A"), tipo: "confirmacion" }, col: "texto", ins: { club_id: C("A"), tipo: "recordatorio", texto: "x" } },
+  whatsapp_plantillas_cambios: { filtro: { id: pj3.cambioWA }, col: "texto", ins: { club_id: C("A"), tipo: "confirmacion", texto: "x" } },
+  // 81 propinas (la configuración solo por funciones)
+  propinas_config: { filtro: { club_id: C("A") }, col: "pct_casa", ins: { club_id: C("B"), pct_personal: 100, pct_rp: 0, pct_casa: 0 } },
+  // ANTIFRAUDE (30, fraude_*): pendiente. Se agrega cuando su rama esté
+  // corregida; mientras, salen como «tabla sin matriz y sin GRANT» (aviso).
+});
+
+async function correrSinApi(t, g) {
+  const original = await leer(() => svc.from(t).select("*").match(g.filtro).maybeSingle(), "respaldo " + t);
+  if (!original) avisos.push(`${t}: no apareció la fila sembrada (${JSON.stringify(g.filtro)})`);
+  await Promise.all(ACTORES().map(async (a) => {
+    const c = celda(t, a.key);
+    const s = await a.c.from(t).select("*", { count: "exact", head: true });
+    const sf = await a.c.from(t).select("*").match(g.filtro);
+    const so = (!s.error && (s.count ?? 0) > 0) || (sf.data ?? []).length > 0;
+    anotar(t, "SELECT (alguna fila o la sembrada)", a.key, false, so, s.error?.code ?? "");
+    c.S = so ? "todo" : "—";
+    if (so) c.mal.push("S");
+    const i = await a.c.from(t).insert(g.ins);
+    const io = permitidoPorRls(i.error);
+    anotar(t, "INSERT", a.key, false, io, i.error ? i.error.code : "");
+    if (io) { c.I = "✓"; c.mal.push("I"); avisos.push(`${t}: ${a.key} insertó por la API (revisar a mano)`); }
+    if (original) {
+      const u = await a.c.from(t).update({ [g.col]: original[g.col] }, { count: "exact" }).match(g.filtro);
+      const uo = !u.error && (u.count ?? 0) > 0;
+      anotar(t, "UPDATE (mismo valor)", a.key, false, uo, u.error ? u.error.code : "");
+      if (uo) { c.U = "✓"; c.mal.push("U"); }
+    }
+  }));
+  if (!original) return;
+  for (const a of ACTORES()) {
+    const d = await a.c.from(t).delete({ count: "exact" }).match(g.filtro);
+    const dob = !d.error && (d.count ?? 0) > 0;
+    anotar(t, "DELETE", a.key, false, dob, d.error ? d.error.code : "");
+    if (dob) {
+      const c = celda(t, a.key);
+      c.D = "✓"; c.mal.push("D");
+      const re = await svc.from(t).insert(original);
+      if (re.error) avisos.push(`no se pudo restaurar ${t}: ${re.error.message}`);
+    }
+  }
+}
 
 // ---------------------------------------------------------------- matriz
 const ACTORES = () => ["anon", "sinperfil", "cliente", "rpA", "staffA", "gerenteA", "duenoA", "rpB", "staffB", "gerenteB", "duenoB", "duenoGrupo", "admin", "staffBajaA", "rpBaja", "gerenteTemp", "rpTemp", "duenoTemp", "gerenteSinClub"].map((k) => A[k]);
@@ -768,6 +952,194 @@ async function correrFunciones() {
     }
   }));
 }
+// ---------------------------------------------------------------- funciones de post-junta-3
+// Quién puede llamar cada función nueva (00–81, sin antifraude), con la
+// bandera de A apagada y encendida. Con la bandera apagada, quien SÍ tiene
+// permiso recibe «no está activa» y quien no, el rechazo de permiso (nunca se
+// le dice si el antro la tiene encendida). Las banderas de A se restauran al
+// terminar (encendidas, y reportes_pdf otra vez heredada del grupo).
+const APAGADA = /no est[áa]n? activ/i;
+const msg = (r) => r.error?.message ?? "";
+const sinError = (r) => !r.error;
+async function correrFuncionesPj3() {
+  const cA = C("A"), cB = C("B");
+  const ad = A.admin.c;
+  const ahora = new Date().toISOString();
+  const lunes = (() => { const d = new Date(HOY + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); })();
+  const manana = diaMenos(-1);
+  const gerA = (a) => adm(a) || (es(a, ...GER) && a.club === "A");
+  const gerOGrupoA = (a) => gerA(a) || a.key === "duenoGrupo";
+  const staffA = (a) => adm(a) || (es(a, ...STAFF) && a.club === "A"); // caja_tiene_permiso('puerta'/'cobrar')
+  const cajaA = (a) => staffA(a) || a.key === "duenoGrupo"; // caja_puede_ver
+  const puertaA = (a) => gerOGrupoA(a) || (es(a, "staff", "gerente") && a.club === "A"); // _lista_negra_ve_avisos
+  const trabajaA = (a) => puertaA(a) || (es(a, "rp") && a.club === "A"); // _whatsapp_trabaja
+  const conSesion = (a) => a.tipo !== "anon";
+  const todos = () => true;
+  const G = "RPC";
+  const lineasA = pj3.lineasA;
+
+  // ---- 1) Banderas de A apagadas (reportes_pdf: apagada en el antro aunque el grupo la tenga encendida).
+  for (const f of [...BANDERAS_PJ3, "reportes_pdf"]) ok(await ad.rpc("funcion_cambiar", { p_club_id: cA, p_funcion: f, p_activa: false }), "apagar " + f);
+  const apagada = (puede) => (r, a) => (puede(a) ? APAGADA.test(msg(r)) : !!r.error && !APAGADA.test(msg(r)));
+  const off = (nombre, args, puede) => rpc(G, nombre, args, todos, { autorizado: apagada(puede), etiqueta: `${nombre} con la bandera apagada (permiso antes que bandera)` });
+  await off("pos_mapeos_lista", { p_club_id: cA }, gerOGrupoA);
+  await off("pos_importar", { p_club_id: cA, p_archivo_nombre: "x.csv", p_archivo_hash: pj3.hashA, p_formato: "csv", p_mapeo_id: null, p_lineas: lineasA }, gerOGrupoA);
+  await off("puerta_copia_noche", { p_club_id: cA }, staffA);
+  await off("puerta_escanear_codigo", { p_club_id: cA, p_codigo: "ffffff" }, staffA);
+  await off("puerta_entrada_diferida", { p_club_id: cA, p_reservation_id: randomUUID(), p_clave: randomUUID(), p_escaneado_en: ahora }, staffA);
+  await off("lista_negra_bloqueos", { p_club: cA }, gerOGrupoA);
+  await off("lista_negra_bloquear", { p_club: cA, p_telefono: telPrueba(), p_reserva_id: null, p_motivo: "prueba t_rls", p_dias: null }, gerOGrupoA);
+  await off("whatsapp_plantilla_guardar", { p_club: cA, p_tipo: "confirmacion", p_texto: TEXTO_WA }, gerOGrupoA);
+  await off("clientes_noche", { p_club: cA, p_desfase: 0 }, puertaA);
+  await off("reporte_pdf_noche", { p_club_id: cA, p_fecha: HOY }, gerOGrupoA);
+  await off("inventario_historial", { p_producto_id: ids.productoA }, gerA);
+  await off("inventario_entrada", { p_producto_id: ids.productoA, p_cantidad: 1 }, gerA);
+  await off("caja_registrar_propina", { p_noche_id: pj3.nocheA, p_sesion_id: null, p_cuenta_id: null, p_metodo: "efectivo", p_monto_centavos: 100 }, staffA);
+  await off("propinas_config_leer", { p_club_id: cA }, cajaA);
+  await off("propinas_reporte_noche", { p_club_id: cA, p_fecha: HOY }, gerA);
+  // Las que no dan error sin permiso: con la bandera apagada no devuelven nada a nadie.
+  await rpc(G, "mis_funciones", { p_club_id: cA }, conSesion, { autorizado: (r) => !r.error && (r.data ?? []).length === 0, etiqueta: "mis_funciones de A con todo apagado: vacío" });
+  await rpc(G, "pos_mis_antros", {}, conSesion, { autorizado: (r) => !r.error && !(r.data ?? []).some((x) => x.club_id === cA), etiqueta: "pos_mis_antros sin A (bandera apagada)" });
+  await rpc(G, "boleto_muestra_codigo", { p_qr: ids["qr-resOrgA"] }, todos, { autorizado: (r) => !r.error && r.data === false, etiqueta: "boleto_muestra_codigo con la bandera apagada: no" });
+  await rpc(G, "lista_negra_aviso", { p_reserva_id: ids.resRpA }, conSesion, { autorizado: (r) => !r.error && r.data?.activa === false, etiqueta: "lista_negra_aviso con la bandera apagada: {activa:false}" });
+  await rpc(G, "whatsapp_plantillas", { p_club: cA }, conSesion, { autorizado: (r) => !r.error && (r.data ?? []).length === 0, etiqueta: "whatsapp_plantillas con la bandera apagada: vacío" });
+  // Con lista_negra apagada, el teléfono bloqueado reserva como hoy (el RP de A, mañana).
+  const libre = await A.rpA.c.from("reservations").insert({ cliente_nombre: `Libre ${TAG}`, cliente_telefono: pj3.telA, personas: 2, fecha: manana, club_id: cA, qr_code: `antro-${randomUUID()}`, status: "pendiente", source: "rp", rp_id: A.rpA.id });
+  anotar("candados", "lista negra apagada: el RP reserva con un teléfono bloqueado (como hoy)", "rpA", true, !libre.error, libre.error?.message ?? "");
+
+  // ---- 2) Encendidas otra vez; reportes_pdf vuelve a seguir al grupo (null = sin valor propio).
+  for (const f of BANDERAS_PJ3) ok(await ad.rpc("funcion_cambiar", { p_club_id: cA, p_funcion: f, p_activa: true }), "encender " + f);
+  ok(await ad.rpc("funcion_cambiar", { p_club_id: cA, p_funcion: "reportes_pdf", p_activa: null }), "reportes_pdf al grupo");
+  const efectivas = ok(await A.gerenteA.c.rpc("mis_funciones", { p_club_id: cA }), "mis_funciones");
+  anotar(G, "banderas de A restauradas (reportes_pdf heredada del grupo G)", "gerenteA", true,
+    [...BANDERAS_PJ3, "reportes_pdf"].every((f) => efectivas.includes(f)), efectivas.join(","));
+
+  // ---- 3) Con la bandera encendida: quién puede.
+  // 00 banderas
+  await rpc(G, "funciones_estado", {}, adm);
+  await rpc(G, "funcion_cambiar", { p_club_id: cA, p_funcion: "pos_ventas", p_activa: true }, adm);
+  await rpc(G, "grupo_funcion_cambiar", { p_grupo_id: ids.grupoG, p_funcion: "reportes_pdf", p_activa: true }, adm);
+  await rpc(G, "mis_funciones", { p_club_id: cA }, conSesion, { autorizado: (r) => (r.data ?? []).includes("pos_ventas"), etiqueta: "mis_funciones de A (publicado: toda sesión)" });
+  await rpc(G, "mis_funciones", { p_club_id: cB }, (a) => adm(a) || (N(a) && a.club === "B"), { autorizado: (r) => (r.data ?? []).includes("pos_ventas"), etiqueta: "mis_funciones de B (borrador: su gente y el admin)" });
+  // 10 POS: admin, dueño, dueño de grupo y gerente activo del antro.
+  await rpc(G, "pos_mis_antros", {}, gerOGrupoA, { autorizado: (r) => (r.data ?? []).some((x) => x.club_id === cA), etiqueta: "pos_mis_antros incluye A" });
+  await rpc(G, "pos_mapeos_lista", { p_club_id: cA }, gerOGrupoA);
+  await rpc(G, "pos_mapeo_guardar", { p_club_id: cA, p_nombre: `Mapeo ${TAG}`, p_config: { columnas: { ticket: "Ticket", fecha: "Fecha", producto: "Producto", total: "Total" } } }, gerOGrupoA);
+  await rpc(G, "pos_preparar", { p_club_id: cA, p_lineas: lineasA, p_archivo_hash: pj3.hashA }, gerOGrupoA);
+  await rpc(G, "pos_importar", { p_club_id: cA, p_archivo_nombre: "x.csv", p_archivo_hash: pj3.hashA, p_formato: "csv", p_mapeo_id: null, p_lineas: lineasA }, gerOGrupoA, { etiqueta: "pos_importar (mismo archivo: «ya se importó»)" });
+  await rpc(G, "pos_importaciones_lista", { p_club_id: cA }, gerOGrupoA);
+  await rpc(G, "pos_importacion_deshacer", { p_importacion_id: pj3.impA, p_motivo: "" }, gerOGrupoA, { etiqueta: "pos_importacion_deshacer (sin motivo)" });
+  await rpc(G, "pos_asignar", { p_club_id: cA, p_venta_ids: [], p_cuenta_id: null }, gerOGrupoA, { etiqueta: "pos_asignar (sin ventas)" });
+  await rpc(G, "pos_religar", { p_club_id: cA, p_fecha: HOY }, gerOGrupoA);
+  await rpc(G, "pos_conciliacion", { p_club_id: cA, p_fecha: HOY }, gerOGrupoA);
+  await rpc(G, "pos_tickets", { p_club_id: cA, p_fecha: HOY }, gerOGrupoA);
+  await rpc(G, "pos_cuentas_noche", { p_club_id: cA, p_fecha: HOY }, gerOGrupoA);
+  // pos_mapeo_borrar no distingue «no existe» de «no es tuyo»: una por una, con un mapeo de sacrificio.
+  for (const a of ACTORES()) {
+    const id = ok(await A.gerenteA.c.rpc("pos_mapeo_guardar", { p_club_id: cA, p_nombre: `Borrar ${TAG}`, p_config: { columnas: { ticket: "T" } } }), "mapeo de sacrificio");
+    const r = await a.c.rpc("pos_mapeo_borrar", { p_mapeo_id: id });
+    anotar(G, "pos_mapeo_borrar", a.key, gerOGrupoA(a), !r.error, r.error ? `${r.error.code} ${msg(r).slice(0, 80)}` : "");
+  }
+  // 20 escáner de respaldo: permiso de caja «puerta» (el dueño de grupo no opera la caja).
+  await rpc(G, "puerta_copia_noche", { p_club_id: cA }, staffA);
+  await rpc(G, "puerta_escanear_codigo", { p_club_id: cA, p_codigo: "ffffff" }, staffA, { etiqueta: "puerta_escanear_codigo (sin coincidencia)" });
+  await rpc(G, "puerta_entrada_diferida", { p_club_id: cA, p_reservation_id: randomUUID(), p_clave: null, p_escaneado_en: ahora }, staffA, { etiqueta: "puerta_entrada_diferida (sin clave)" });
+  await rpc(G, "boleto_muestra_codigo", { p_qr: ids["qr-resOrgA"] }, todos, { autorizado: (r) => !r.error && r.data === true, etiqueta: "boleto_muestra_codigo con la bandera encendida: sí (también sin sesión)" });
+  // 40 lista negra: gestionan admin, dueño, dueño de grupo y gerente activo; avisos también staff; el RP solo de sus reservas.
+  await rpc(G, "lista_negra_politica", { p_club: cA }, gerOGrupoA);
+  await rpc(G, "lista_negra_politica_guardar", { p_club: cA, p_avisar_desde: 2, p_ventana_dias: 90, p_bloquear_desde: null }, gerOGrupoA);
+  await rpc(G, "lista_negra_bloquear", { p_club: cA, p_telefono: pj3.telA, p_reserva_id: null, p_motivo: "prueba t_rls", p_dias: null }, gerOGrupoA, { etiqueta: "lista_negra_bloquear (ya bloqueado)" });
+  await rpc(G, "lista_negra_desbloquear", { p_club: cA, p_bloqueo_id: randomUUID(), p_reserva_id: null, p_motivo: "prueba t_rls" }, gerOGrupoA, { etiqueta: "lista_negra_desbloquear (bloqueo inexistente)" });
+  await rpc(G, "lista_negra_bloqueos", { p_club: cA }, gerOGrupoA);
+  await rpc(G, "lista_negra_ver_telefono", { p_club: cA, p_bloqueo_id: pj3.bloqueoA }, gerOGrupoA);
+  await rpc(G, "lista_negra_noshows", { p_club: cA }, gerOGrupoA);
+  await rpc(G, "lista_negra_historial", { p_club: cA }, gerOGrupoA);
+  await rpc(G, "lista_negra_aviso", { p_reserva_id: ids.resRpA }, (a) => puertaA(a) || (a.key === "rpA"), { autorizado: (r) => r.data?.activa === true, etiqueta: "lista_negra_aviso (reserva del RP de A)" });
+  await rpc(G, "lista_negra_aviso", { p_reserva_id: ids.resRpA }, puertaA, { autorizado: (r) => typeof r.data?.bloqueado === "boolean", etiqueta: "lista_negra_aviso: «bloqueado» solo para la puerta y los gestores" });
+  await rpc(G, "lista_negra_tachar", { p_bloqueo_id: randomUUID() }, adm, { etiqueta: "lista_negra_tachar (inexistente)" });
+  await rpc(G, "lista_negra_tel", { p: "+52 1 55 1234 5678" }, todos, { autorizado: (r) => r.data === "5512345678", etiqueta: "lista_negra_tel (pura, también sin sesión)" });
+  // 50 /para-clubes: todo del admin salvo saber si está activa y enviar el formulario.
+  await rpc(G, "para_clubes_activa", {}, todos, { autorizado: sinError });
+  await rpc(G, "plataforma_banderas_estado", {}, adm);
+  await rpc(G, "plataforma_bandera_cambiar", { p_clave: `no_existe_${TAGX}`, p_activa: false }, adm, { etiqueta: "plataforma_bandera_cambiar (clave inexistente: no cambia nada)" });
+  await rpc(G, "contactos_clubes_admin", {}, adm);
+  await rpc(G, "contactos_clubes_conteo", {}, adm);
+  await rpc(G, "contacto_club_marcar", { p_id: pj3.contacto, p_estado: "nuevo" }, adm);
+  await rpc(G, "contacto_club_borrar", { p_id: randomUUID() }, adm, { etiqueta: "contacto_club_borrar (inexistente)" });
+  const paraClubes = ok(await svc.rpc("para_clubes_activa"), "para_clubes_activa");
+  if (!paraClubes) {
+    await rpc(G, "para_clubes_contacto_enviar", { p_nombre: "T rls", p_club: "Antro t_rls", p_ciudad: "CDMX", p_correo: `${TAG}@example.com` }, nadie,
+      { autorizado: (r) => !r.error, etiqueta: "para_clubes_contacto_enviar con /para-clubes apagada: nadie" });
+  } else avisos.push("para_clubes está encendida en dev (otro carril): se saltó el envío del formulario en la matriz (lo cubre C5 con IP de prueba)");
+  // 60 WhatsApp
+  await rpc(G, "whatsapp_plantillas", { p_club: cA }, trabajaA, { autorizado: (r) => (r.data ?? []).length > 0 });
+  await rpc(G, "whatsapp_plantilla_guardar", { p_club: cA, p_tipo: "confirmacion", p_texto: TEXTO_WA }, gerOGrupoA);
+  await rpc(G, "whatsapp_reserva", { p_reserva_id: ids.resRpA }, (a) => puertaA(a) || a.key === "rpA", { autorizado: sinError, etiqueta: "whatsapp_reserva (reserva del RP de A)" });
+  await rpc(G, "whatsapp_reserva", { p_reserva_id: ids.resOrgA }, puertaA, { autorizado: sinError, etiqueta: "whatsapp_reserva (orgánica: el RP no)" });
+  await rpc(G, "clientes_noche", { p_club: cA, p_desfase: 0 }, puertaA);
+  // 70 reportes PDF: admin, dueño, dueño de grupo y gerente activo.
+  await rpc(G, "reporte_pdf_noche", { p_club_id: cA, p_fecha: HOY }, gerOGrupoA);
+  await rpc(G, "reporte_pdf_semana", { p_club_id: cA, p_lunes: lunes }, gerOGrupoA);
+  // 80 inventario: gerente o dueño (sin dueño de grupo). Sin permiso: «Producto no encontrado».
+  const inv = (r) => !r.error || !/Producto no encontrado|permission denied|Solo el gerente/.test(msg(r));
+  await rpc(G, "inventario_entrada", { p_producto_id: ids.productoA, p_cantidad: 0 }, gerA, { autorizado: inv, etiqueta: "inventario_entrada (cantidad 0)" });
+  await rpc(G, "inventario_merma", { p_producto_id: ids.productoA, p_cantidad: 0, p_motivo: "prueba" }, gerA, { autorizado: inv, etiqueta: "inventario_merma (cantidad 0)" });
+  await rpc(G, "inventario_conteo", { p_producto_id: ids.productoA, p_contado: -1 }, gerA, { autorizado: inv, etiqueta: "inventario_conteo (conteo inválido)" });
+  await rpc(G, "inventario_historial", { p_producto_id: ids.productoA }, gerA, { autorizado: inv });
+  await rpc(G, "inventario_reporte_noche", { p_club_id: cA, p_fecha: HOY }, gerA);
+  // 81 propinas: registrar = «cobrar»; anular = «anular» (el staff no, por defecto y por el permiso del escenario); reparto y reporte = gerente o dueño.
+  await rpc(G, "caja_registrar_propina", { p_noche_id: pj3.nocheA, p_sesion_id: null, p_cuenta_id: null, p_metodo: "no_existe", p_monto_centavos: 100 }, staffA, { etiqueta: "caja_registrar_propina (método inválido)" });
+  await rpc(G, "caja_anular_propina", { p_propina_id: pj3.propinaA, p_motivo: "prueba t_rls" }, gerA, { etiqueta: "caja_anular_propina (noche ya repartida)" });
+  await rpc(G, "propinas_anular_de_cobro", { p_pago_id: pj3.pagoA, p_motivo: "prueba t_rls" }, gerA, { etiqueta: "propinas_anular_de_cobro (noche ya repartida)" });
+  await rpc(G, "propinas_config_leer", { p_club_id: cA }, cajaA, { autorizado: sinError });
+  await rpc(G, "propinas_config_guardar", { p_club_id: cA, p_pct_personal: 80, p_pct_rp: 10, p_pct_casa: 10, p_incluye_gerente: false }, gerA);
+  await rpc(G, "propinas_calcular", { p_noche_id: pj3.nocheA, p_participantes: [A.staffA.id] }, gerA);
+  await rpc(G, "propinas_repartir", { p_noche_id: pj3.nocheA, p_participantes: [A.staffA.id], p_total_visto: 0, p_pct_personal: 80, p_pct_rp: 10, p_pct_casa: 10, p_incluye_gerente: false }, gerA, { etiqueta: "propinas_repartir (noche abierta)" });
+  await rpc(G, "propinas_anular_reparto", { p_reparto_id: pj3.repartoA, p_motivo: "" }, gerA, { autorizado: (r) => !/Reparto no encontrado|permission denied/.test(msg(r)), etiqueta: "propinas_anular_reparto (sin motivo)" });
+  await rpc(G, "propinas_reporte_noche", { p_club_id: cA, p_fecha: HOY }, gerA);
+  // ANTIFRAUDE (30): pendiente; cuando su rama esté corregida, sus funciones van aquí.
+}
+
+// Catálogo: qué funciones nuevas puede ejecutar cada rol de la API y que las
+// SECURITY DEFINER tengan search_path fijo. Lo interno, solo service_role.
+const FN_INTERNAS_PJ3 = ["funcion_activa", "pos_puede_usar", "pos_exigir", "pos_clave_mesa", "pos_leer_lineas", "pos_candidatos", "pos_resolver_lote",
+  "ip_cliente", "_lista_negra_mascara", "_lista_negra_gestiona", "_lista_negra_ve_avisos", "_lista_negra_politica", "_lista_negra_noshows",
+  "_lista_negra_auto", "_lista_negra_manual", "_lista_negra_exigir", "contacto_huella", "contacto_intentos_limpiar", "_whatsapp_trabaja",
+  "_clientes_estado", "reporte_pdf_autorizar", "inventario_producto_para_escribir", "inventario_movimiento_previo", "propinas_detalle",
+  "propinas_de_noche", "propinas_partes", "propinas_regla"];
+const FN_TRIGGER_PJ3 = ["pos_ventas_caja_borrada", "reservations_antiabuso_anon", "lista_negra_sin_borrar", "reservations_lista_negra", "propinas_candado"];
+const FN_ANON_PJ3 = ["lista_negra_tel", "boleto_muestra_codigo", "para_clubes_activa", "para_clubes_contacto_enviar"];
+const FN_APP_PJ3 = ["mis_funciones", "funciones_estado", "funcion_cambiar", "grupo_funcion_cambiar",
+  "pos_mis_antros", "pos_mapeos_lista", "pos_mapeo_guardar", "pos_mapeo_borrar", "pos_preparar", "pos_importar", "pos_importaciones_lista",
+  "pos_importacion_deshacer", "pos_asignar", "pos_religar", "pos_conciliacion", "pos_tickets", "pos_cuentas_noche",
+  "puerta_copia_noche", "puerta_escanear_codigo", "puerta_entrada_diferida",
+  "lista_negra_politica", "lista_negra_politica_guardar", "lista_negra_bloquear", "lista_negra_desbloquear", "lista_negra_bloqueos",
+  "lista_negra_ver_telefono", "lista_negra_noshows", "lista_negra_historial", "lista_negra_aviso", "lista_negra_tachar",
+  "plataforma_bandera_cambiar", "plataforma_banderas_estado", "contactos_clubes_admin", "contactos_clubes_conteo", "contacto_club_marcar", "contacto_club_borrar",
+  "whatsapp_plantillas", "whatsapp_plantilla_guardar", "whatsapp_reserva", "clientes_noche",
+  "reporte_pdf_noche", "reporte_pdf_semana",
+  "inventario_entrada", "inventario_merma", "inventario_conteo", "inventario_historial", "inventario_reporte_noche",
+  "caja_registrar_propina", "caja_anular_propina", "propinas_anular_de_cobro", "propinas_config_leer", "propinas_config_guardar",
+  "propinas_calcular", "propinas_repartir", "propinas_anular_reparto", "propinas_reporte_noche"];
+async function catalogoPj3(db) {
+  const nombres = [...FN_INTERNAS_PJ3, ...FN_TRIGGER_PJ3, ...FN_ANON_PJ3, ...FN_APP_PJ3];
+  const fs = await db.q(`select p.proname, p.oid::regprocedure::text as firma, p.prosecdef as definer,
+      coalesce(array_to_string(p.proconfig, ','), '') like '%search_path=%' as con_ruta,
+      has_function_privilege('anon', p.oid, 'execute') as anon, has_function_privilege('authenticated', p.oid, 'execute') as auth
+    from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = any($1)`, [nombres]);
+  for (const n of nombres) if (!fs.some((f) => f.proname === n)) anotar("RPC", `catálogo: existe ${n}`, "-", true, false, "no está en dev");
+  for (const f of fs) {
+    const firma = f.firma.replace(/^public\./, "");
+    const n = f.proname;
+    const [anon, auth] = FN_ANON_PJ3.includes(n) ? [true, true] : FN_APP_PJ3.includes(n) ? [false, true] : [false, false];
+    if (!FN_TRIGGER_PJ3.includes(n)) {
+      anotar("RPC", `catálogo: anon ejecuta ${firma}`, "anon", anon, f.anon);
+      anotar("RPC", `catálogo: authenticated ejecuta ${firma}`, "authenticated", auth, f.auth);
+    }
+    if (f.definer) anotar("RPC", `catálogo: ${firma} (security definer) con search_path fijo`, "-", true, f.con_ruta);
+  }
+}
+
 // ---------------------------------------------------------------- candados y coherencia
 async function coherencia() {
   const g = "candados";
@@ -829,6 +1201,53 @@ async function coherencia() {
   if (bajo) {
     const db = await conectarDevEscritura();
     try { await db.q("begin"); await db.q("select set_config('antroapp.cambio_personal','si',true)"); await db.q("update public.profiles set activo = true where id = $1", [A.staffB.id]); await db.q("commit"); } finally { await db.fin(); }
+  }
+}
+
+// Candados de post-junta-3: lista negra (40) con la bandera encendida y
+// cruces entre antros en las funciones nuevas (pedir por A con datos de B).
+async function candadosPj3() {
+  const g = "candados";
+  const cA = C("A"), cB = C("B"), manana = diaMenos(-1), ahora = new Date().toISOString();
+  const res = (extra) => ({ cliente_nombre: `Ins ${TAG}`, personas: 2, fecha: manana, qr_code: `antro-${randomUUID()}`, status: "pendiente", ...extra });
+  const neutro = /^No pudimos apartar tu lugar en este antro/;
+  const casos = [
+    ["el cliente reserva con un teléfono bloqueado", "cliente", res({ club_id: cA, cliente_telefono: pj3.telA, source: "organica", cliente_id: A.cliente.id }), neutro],
+    ["el cliente reserva con el teléfono bloqueado escrito «+52 1 …»", "cliente", res({ club_id: cA, cliente_telefono: `+52 1 ${pj3.telA.slice(0, 2)} ${pj3.telA.slice(2, 6)} ${pj3.telA.slice(6)}`, source: "organica", cliente_id: A.cliente.id }), neutro],
+    ["sin cuenta, con un teléfono bloqueado", "anon", res({ club_id: cA, cliente_telefono: pj3.telA, source: "organica" }), neutro],
+    ["el RP reserva con un teléfono bloqueado", "rpA", res({ club_id: cA, cliente_telefono: pj3.telA, source: "rp", rp_id: A.rpA.id }), /habla con tu gerente/],
+  ];
+  for (const [texto, quien, filaRes, re] of casos) {
+    const r = await A[quien].c.from("reservations").insert(filaRes);
+    anotar(g, texto, quien, false, !r.error, msg(r).slice(0, 80));
+    anotar(g, `${texto}: aviso P0001 propio de su rol, sin motivo`, quien, true, r.error?.code === "P0001" && re.test(msg(r)) && !msg(r).includes(TAG), msg(r).slice(0, 80));
+  }
+  const rb = await A.rpB.c.from("reservations").insert(res({ club_id: cB, cliente_telefono: pj3.telA, source: "rp", rp_id: A.rpB.id }));
+  anotar(g, "un bloqueo de A no afecta a B (el RP de B reserva en B con ese teléfono)", "rpB", true, !rb.error, msg(rb).slice(0, 80));
+  const antes = ok(await svc.from("reservations").select("cliente_telefono").eq("id", ids.resPuertaA).single(), "teléfono").cliente_telefono;
+  const ru = await A.staffA.c.from("reservations").update({ cliente_telefono: pj3.telA }, { count: "exact" }).eq("id", ids.resPuertaA);
+  const cambio = !ru.error && (ru.count ?? 0) > 0;
+  anotar(g, "el staff cambia el teléfono de una reserva a uno bloqueado", "staffA", false, cambio, msg(ru).slice(0, 80));
+  if (cambio) await svc.from("reservations").update({ cliente_telefono: antes }).eq("id", ids.resPuertaA);
+  // Pedir por A con datos de B (el permiso se revisa contra A; los datos tienen que ser de A).
+  const cruces = [
+    ["el gerente de A bloquea en A desde una reserva de B", "gerenteA", (c) => c.rpc("lista_negra_bloquear", { p_club: cA, p_telefono: null, p_reserva_id: ids.resRpB, p_motivo: "prueba t_rls", p_dias: null })],
+    ["el gerente de A ve el teléfono de un bloqueo de B (pidiendo por A)", "gerenteA", (c) => c.rpc("lista_negra_ver_telefono", { p_club: cA, p_bloqueo_id: pj3.bloqueoB })],
+    ["el gerente de A desbloquea un bloqueo de B (pidiendo por A)", "gerenteA", (c) => c.rpc("lista_negra_desbloquear", { p_club: cA, p_bloqueo_id: pj3.bloqueoB, p_reserva_id: null, p_motivo: "prueba t_rls" })],
+    ["el gerente de A liga una venta de A a una cuenta de B", "gerenteA", (c) => c.rpc("pos_asignar", { p_club_id: cA, p_venta_ids: [pj3.ventaA], p_cuenta_id: ids.cuenta2B })],
+    ["el gerente de A deshace una importación de B", "gerenteA", (c) => c.rpc("pos_importacion_deshacer", { p_importacion_id: pj3.impB, p_motivo: "prueba t_rls" })],
+    ["el staff de A registra una propina en la noche de B", "staffA", (c) => c.rpc("caja_registrar_propina", { p_noche_id: pj3.nocheB, p_sesion_id: null, p_cuenta_id: null, p_metodo: "efectivo", p_monto_centavos: 100, p_clave: randomUUID() })],
+    ["el staff de A registra una propina en su mesa con una cuenta de B", "staffA", (c) => c.rpc("caja_registrar_propina", { p_noche_id: pj3.nocheA, p_sesion_id: ids.sesion2A, p_cuenta_id: ids.cuenta2B, p_metodo: "efectivo", p_monto_centavos: 100, p_clave: randomUUID() })],
+    ["el gerente de A anula el reparto de B", "gerenteA", (c) => c.rpc("propinas_anular_reparto", { p_reparto_id: pj3.repartoB, p_motivo: "prueba t_rls" })],
+    ["el staff de A manda una entrada diferida de una reserva de B (pidiendo por A)", "staffA", (c) => c.rpc("puerta_entrada_diferida", { p_club_id: cA, p_reservation_id: ids.resPuertaB, p_clave: randomUUID(), p_escaneado_en: ahora })],
+    ["el staff de A escanea por código una reserva de B (pidiendo por A)", "staffA", (c) => c.rpc("puerta_escanear_codigo", { p_club_id: cA, p_codigo: ids["qr-resPuertaB"].slice(-6) })],
+    ["el gerente de A da merma a un producto de B", "gerenteA", (c) => c.rpc("inventario_merma", { p_producto_id: ids.productoB, p_cantidad: 1, p_motivo: "prueba t_rls" })],
+    ["el staff de A arma el WhatsApp de una reserva de B", "staffA", (c) => c.rpc("whatsapp_reserva", { p_reserva_id: ids.resRpB })],
+    ["el RP de A pide el aviso de no-shows de una reserva de otro RP (B)", "rpA", (c) => c.rpc("lista_negra_aviso", { p_reserva_id: ids.resRpB }).then((r) => (r.data?.activa ? r : { error: { message: "activa:false" } }))],
+  ];
+  for (const [texto, quien, fn] of cruces) {
+    const r = await fn(A[quien].c);
+    anotar(g, texto, quien, false, !r.error, r.error ? msg(r).slice(0, 80) : "PASÓ");
   }
 }
 
@@ -973,6 +1392,9 @@ async function limpiar() {
     await borrar("delete from public.reserva_intentos where club_id = any($1::uuid[]) or telefono_hash = $2", [clubIds, TAG]);
     await borrar("delete from public.invitacion_intentos where ip_hash = $1", [IPH]);
     await borrar("delete from public.correos_salida where destinatario like $1", [`${TAG}%`]);
+    // Post-junta-3 sin FK a antros ni perfiles (lo demás se va por las FK de arriba).
+    await borrar("delete from public.contactos_clubes where correo like $1", [`${TAG}%`]);
+    await borrar("delete from public.contacto_intentos where correo_hash like $1", [`${TAG}%`]);
     await borrar("delete from public.profiles where id = any($1::uuid[])", [perfiles]);
     await db.q("commit");
     for (const b of ["club-photos", "verificacion-docs"]) for (const id of clubIds) {
@@ -989,9 +1411,13 @@ async function limpiar() {
       if (!(await borrar("delete from public.clubs where id = any($1::uuid[])", [clubIds]))) console.log("Limpieza: segunda vuelta de antros falló: " + ultimoError);
       await db.q("commit");
     }
-    const quedan = await db.q("select (select count(*) from public.clubs where nombre like $1)::int as clubs, (select count(*) from auth.users where email like $2)::int as cuentas, (select count(*) from public.profiles where nombre like $3)::int as perfiles", [`T rls%${TAG}%`, `${TAG}%`, `%${TAG}%`]);
+    const quedan = await db.q(`select (select count(*) from public.clubs where nombre like $1)::int as clubs, (select count(*) from auth.users where email like $2)::int as cuentas,
+        (select count(*) from public.profiles where nombre like $3)::int as perfiles,
+        (select count(*) from public.contactos_clubes where correo like $2)::int + (select count(*) from public.contacto_intentos where correo_hash like $2)::int
+        + (select count(*) from public.club_funciones where club_id = any($4::uuid[]))::int + (select count(*) from public.grupo_funciones where grupo_id = any($5::uuid[]))::int as pj3`,
+      [`T rls%${TAG}%`, `${TAG}%`, `%${TAG}%`, clubIds, creados.grupos]);
     console.log(`\nLimpieza: ${borradas} filas, ${perfiles.length} cuentas. Quedan: ${JSON.stringify(quedan[0])}`);
-    if (quedan[0].clubs || quedan[0].cuentas || quedan[0].perfiles) avisos.push("la limpieza dejó restos: " + JSON.stringify(quedan[0]));
+    if (quedan[0].clubs || quedan[0].cuentas || quedan[0].perfiles || quedan[0].pj3) avisos.push("la limpieza dejó restos: " + JSON.stringify(quedan[0]));
   } catch (e) {
     await db.q("rollback").catch(() => {});
     console.log("Limpieza falló: " + e.message);
@@ -1026,6 +1452,20 @@ function markdown(est) {
 }
 
 // ---------------------------------------------------------------- principal
+if (LIMPIAR) {
+  // Rearma lo creado a partir de la marca (antros, cuentas, grupos y planes) y limpia como al final de una corrida.
+  const db = await conectarDevEscritura();
+  try {
+    creados.clubs = Object.fromEntries((await db.q("select id from public.clubs where nombre like $1", [`T rls%${TAG}%`])).map((x, i) => [i, x.id]));
+    creados.usuarios = (await db.q("select id from auth.users where email like $1", [`${TAG}%`])).map((x) => x.id);
+    creados.grupos = (await db.q("select id from public.grupos where nombre like $1", [`${TAG}%`])).map((x) => x.id);
+    creados.planes = (await db.q("select id from public.planes where clave like $1", [`${TAG}%`])).map((x) => x.id);
+  } finally { await db.fin(); }
+  console.log(`Limpiando restos de ${TAG}: ${Object.keys(creados.clubs).length} antros, ${creados.usuarios.length} cuentas`);
+  await limpiar();
+  for (const a of avisos) console.log("AVISO  " + a);
+  process.exit(0);
+}
 let est = { total: 0, filas: [] };
 // ¿Sigue la política vieja «el RP lee sus reservas directo»? (b-cliente 41 la quita.)
 let RP_LEE_RESERVAS = true;
@@ -1044,14 +1484,20 @@ try {
       (has_table_privilege('anon', c.oid, 'select,insert,update,delete') or has_table_privilege('authenticated', c.oid, 'select,insert,update,delete')
        or has_any_column_privilege('anon', c.oid, 'select,insert,update') or has_any_column_privilege('authenticated', c.oid, 'select,insert,update')) as expuesta
     from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r','p') order by 1`); } finally { await db.fin(); } })());
+  const sinApi = SIN_API_PJ3();
   for (const { t, rls, expuesta } of tablas) {
+    if (process.env.AUDITORIA_TRAZA) console.log(`… ${t}`);
     anotar("tablas", `${t} tiene RLS`, "-", true, rls);
     if (SPEC[t]) await correrTabla(t, SPEC[t]);
     else if (GLOBALES[t]) await correrGlobal(t, GLOBALES[t]);
-    else if (!expuesta) {
+    else if (sinApi[t]) {
+      // Post-junta-3 sin acceso por la API: además de la fila sembrada, que no tenga GRANT.
+      anotar("tablas", `${t} sin GRANT para anon ni authenticated`, "-", true, !expuesta);
+      await correrSinApi(t, sinApi[t]);
+    } else if (!expuesta) {
       // Tabla nueva sin GRANT para anon ni authenticated (solo service_role y funciones): se comprueba que nadie la toque.
       await correrGlobal(t, { ver: nadie, ins: {} });
-      avisos.push(`tabla sin matriz y sin GRANT para la API: ${t} (comprobado: nadie la lee ni la escribe)`);
+      avisos.push(`tabla sin matriz y sin GRANT para la API: ${t} (comprobado: nadie la lee ni la escribe)${/^fraude_/.test(t) ? " — ANTIFRAUDE (30), pendiente a propósito" : ""}`);
     } else {
       // Tabla nueva sin matriz: nadie que no sea admin debería ver filas sin que alguien lo decida.
       const vistas = await Promise.all(ACTORES().map(async (a) => [a.key, (await a.c.from(t).select("*", { count: "exact", head: true })).count ?? 0]));
@@ -1059,12 +1505,19 @@ try {
       if (ESTRICTO) anotar("tablas", `${t} expuesta a la API sin matriz`, "-", true, false, "falta su especificación en SPEC");
     }
   }
+  if (process.env.AUDITORIA_TRAZA) console.log("… funciones");
   await correrFunciones();
+  if (process.env.AUDITORIA_TRAZA) console.log("… funciones pj3");
+  await correrFuncionesPj3();
   await coherencia();
+  if (process.env.AUDITORIA_TRAZA) console.log("… candados pj3");
+  await candadosPj3();
+  if (process.env.AUDITORIA_TRAZA) console.log("… storage");
   await storage();
+  if (process.env.AUDITORIA_TRAZA) console.log("… rutas");
   await rutas();
   const db = await conectarDevEscritura();
-  try { est = await escaneoEstatico(db); } finally { await db.fin(); }
+  try { est = await escaneoEstatico(db); await catalogoPj3(db); } finally { await db.fin(); }
 } catch (e) {
   anotar("ejecución", "error inesperado", "-", true, false, e.stack?.split("\n").slice(0, 3).join(" | "));
 } finally {
