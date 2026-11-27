@@ -1,10 +1,31 @@
 # Avance hacia la junta del 25/11/2026
 
-> Se actualiza al terminar cada bloque. Todo el trabajo está en la rama
-> `desarrollo` y en **antroapp-dev**. Nada se ha aplicado en producción, no
-> hay push a `master` ni deploy a producción, y no se tocaron las variables
-> de Production en Vercel. El bloque 6 (pase a producción) espera a que Diego
-> lo pida de forma explícita.
+## Estado real (27/11/2026)
+
+**En producción** (detalle y verificaciones en `docs/reporte-pase.md`):
+
+| Qué | Cuándo |
+|---|---|
+| **Pase 1 completo, pasos 1 a 10** (SQL 2b a 9, merge a `master` `771e7d3`, recorrido 49/49, humo 84/84) | 24/11 |
+| Ajustes de Club Demo (cuentas demo, ficha, Club Demo Tijuana oculto, grupo) | 24/11 |
+| **Paso 11, `demo-datos` para la junta**: 4 noches, 35 mesas, 173 consumos, 66 comisiones, cuadre sin diferencias, solo Club Demo | 25/11 |
+| **Hueco CRÍTICO del perfil cerrado**: `sql/2026-11-25-perfil-sin-club-ajeno.sql`, pegado por Diego. Verificado: catálogo, prueba del hueco en dev 4/4, recorrido 49/49, humo 84/84 | 27/11 |
+
+**Lo que sigue (no está en producción):**
+
+- **El pase 2**, rama `post-junta-2`: alta de antros, equipo, reportes, boleto, caja con mala señal, seguridad y rendimiento.
+- Su orden completo está en `docs/pase-2.md` y su avance en `docs/avance.md` de esa rama.
+- Espera a que Diego lo pida.
+
+**Ramas:**
+
+- `master` = producción.
+- `desarrollo` = `master` + docs y SQL de lo que ya está en producción.
+- `post-junta-2` = el pase 2.
+- `prejunta` = lo de la junta.
+
+> Bitácora original (antes del pase 1): el trabajo se hizo en `desarrollo` y en
+> **antroapp-dev**. Los bloques 1 a 5 de abajo describen ese momento.
 
 ## Cómo probar lo de `desarrollo`
 

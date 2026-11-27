@@ -1,5 +1,163 @@
 # Reporte: preparación del pase y de la junta (23/11/2026)
 
+## Estado real de producción (actualizado el 27/11/2026)
+
+| Qué | Cuándo | Estado |
+|---|---|---|
+| Pase 1, pasos 1 a 10 (tabla de abajo) | 24/11 | Aplicado y verificado: humo 84/84, recorrido 49/49 |
+| Ajustes de Club Demo (`scripts/ajustes-club-demo.mjs --si`) | 24/11, 21:02 | Aplicado y verificado |
+| Paso 11: `demo-datos` para la junta | 25/11, 10:00 | Aplicado y verificado (abajo) |
+| Hueco CRÍTICO del perfil: `sql/2026-11-25-perfil-sin-club-ajeno.sql` | 27/11 | Aplicado a mano por Diego y verificado (abajo) |
+
+Nada más se ha escrito en producción. El pase 2 (`post-junta-2`) **no** se ha hecho.
+
+### Paso 11: `demo-datos` del 25/11 (autorizado por Diego)
+
+- **Revisión previa (solo lectura):**
+  - fecha operativa 2026-11-25;
+  - Club Demo publicado;
+  - `staff.demo` activo en Club Demo;
+  - `demo-datos` no había corrido ese día.
+- **Respaldo:** `backups/prod-2026-11-25-antes-demo-datos/`, solo local. Trae reservas, consumos, comisiones y caja de Club Demo, más las tablas de RP de las cuentas `demo_*`.
+- **Corrida:** `node scripts/demo-datos.mjs --fecha=2026-11-25 --si`, de 10:00:28 a 10:01:55. Primero se simuló sin `--si`.
+- **Resultado:** 4 noches, 35 mesas, 173 consumos, 64 pagos, 32 cuadres y 66 comisiones. Cada noche quedó «✓ coincide con la base».
+- **Verificación (solo lectura):**
+  - cuadre sin diferencias al centavo, en 651 revisiones;
+  - solo cambió Club Demo: los otros antros siguen con 0 reservas y 0 caja, y grupos y antros siguen iguales;
+  - humo 84/84;
+  - ensayo del guion de la junta: sin fallas.
+- **Rollback** (no hizo falta): `sql/limpiar-demo-caja.sql` en el SQL Editor y luego reponer desde el respaldo.
+
+### Hueco CRÍTICO del perfil (aplicado el 27/11)
+
+- **El hueco:** `profiles_insert_propio` dejaba que una cuenta recién registrada creara su perfil como `dueno` con el `club_id` de **cualquier** antro. Con eso leía reservas con teléfono, personal, sueldos y comisiones de ese antro. Se probó en dev con sesión real.
+  - En producción había 0 perfiles de cliente o dueño con `club_id`, así que no se explotó.
+- **Arreglo:** `sql/2026-11-25-perfil-sin-club-ajeno.sql`. Rollback: `sql/2026-11-25-perfil-sin-club-ajeno-rollback.sql`.
+  - `profiles_insert_propio` ahora exige `club_id IS NULL`.
+  - La nueva restrictiva `profiles_insert_sin_club_restrictiva` exige lo mismo con AND.
+- **Respaldo previo:** `backups/prod-2026-11-25-antes-perfil/`, solo local. Trae 28 perfiles y las políticas de `profiles`.
+- **Verificación (27/11, solo lectura en producción):**
+  - catálogo: las 2 políticas de INSERT, tal como dice el archivo, y las otras 6 políticas de `profiles` sin cambios (8 en total; antes 7);
+  - prueba del hueco en dev (`scripts/dev/probar-perfil-club-ajeno.mjs`, rama `post-junta-2`): 4/4. El registro legítimo de cliente y dueño sigue funcionando, y un perfil con antro ajeno se rechaza con 42501;
+  - recorrido de los roles en producción: 49/49, con login de RP, cliente, staff, gerente, dueño de grupo y admin;
+  - humo 84/84, que incluye los registros de cliente y de dueño;
+  - no se crearon cuentas en producción.
+
+## Pase ejecutado (24/11/2026)
+
+Rama del pase: **`pase-final`** (`bcfe50b`) = `candidato-pase` + solo
+`sql/post-junta/10a-pase1-autorizacion-sin-nulos.sql` (paso 7c) y los pasos
+nuevos 2b y 7d. Nada más de `post-junta`, `fase2` ni `noche2`.
+
+Diego pegó cada SQL en el SQL Editor de producción. Después de cada uno se
+verificó por introspección, con el catálogo en solo lectura
+(`conectarProdLectura`). Horas de México.
+
+| Paso | Qué | Hora | Verificación |
+|---|---|---|---|
+| 1 | Respaldo del día (`backups/prod-2026-11-24-17-27-antes-del-pase`, solo local) | antes de 13:33 | Confirmado por Diego |
+| 2b | `registrar_*` sin EXECUTE para el anónimo | 13:33 | anon sin EXECUTE en ambas funciones |
+| 3 | Cover | 13:37 | `cover_modo` / `cover_monto` y sus 2 constraints; default de `deposito_monto` = 0 |
+| 4 | Caja por mesa | 13:43 | Las 11 tablas con RLS y sin privilegios para anon. Funciones ejecutables por anon: solo las previstas. Humo pública 22/22 |
+| 5 | Estabilidad | 13:50 | 2 índices únicos. `login_intentos` y `app_errores` con RLS. `registrar_*` en versión nueva |
+| 6 | Nómina y grupo | 13:54 | Las 7 funciones, ninguna para anon. `nomina_semana_datos` tampoco para authenticated |
+| 7 | Panel RP y permisos de caja | 17:12 | 5 funciones (anon no, authenticated sí) y 2 restrictivas `*_rp_dado_de_baja` |
+| 7b | Caja en condiciones reales | 17:14 | Firmas con `p_clave` y `p_saldo_esperado`, `caja_firma_noche`, `grupo_rendimiento_rp` y `clave_cliente` |
+| 7c | 10a: autorización sin NULL | 17:15 | Las 6 funciones corregidas, solo `puede_ver_club` para anon. El anónimo sigue viendo solo Club Demo |
+| 7d | `registrar_*` sin NULL | 17:16 | Cuerpos idénticos al archivo; anon sin EXECUTE |
+| 8 | Merge `pase-final` → `master` (`771e7d3`) y push | 17:20 | Deploy de Vercel listo a las 17:21 (41 s), en antroapp.vercel.app. Humo **84/84** |
+| 9 | Candado de puerta | 20:43 | Trigger `reservations_candado_puerta` (BEFORE INSERT OR UPDATE). Función sin SECURITY DEFINER y con `search_path` fijo. Ni anon ni authenticated la ejecutan. Humo **84/84** |
+| 10 | Recorrido de los roles en producción, solo lectura | 21:03–21:05 | **49/49** (abajo) |
+
+- **Qué se revirtió:** nada.
+  - Cerca de las 17:47 se pegó por error el **rollback** del paso 9 en lugar del paso 9. Como el candado no existía, no hizo nada: se verificó que no había trigger ni función y que todo lo anterior seguía intacto.
+  - El paso 9 correcto se aplicó a las 20:43.
+- **Comparación de funciones, producción vs dev (`pase-final`) después del paso 7d:** las únicas diferencias eran:
+  - `registrar_*`, porque 7d es posterior a la foto de dev;
+  - el candado de puerta, que faltaba y es el paso 9;
+  - el ACL de `clubs_candado_zona_horaria`: anon la puede ejecutar, pero es función de trigger y no tiene efecto.
+- **Rollback de Vercel disponible:** Instant Rollback a `antroapp-p86citl6v-antroapp.vercel.app`, el deploy anterior. No hizo falta.
+
+### Ajustes de Club Demo (después del pase verificado)
+
+Se aplicaron a las 21:02 con `node scripts/ajustes-club-demo.mjs --si` (service role).
+El ciclo completo se ensayó antes en dev con `--dev`: aplicar, recorrido 34/35, rollback parcial y rollback completo. La única falla esperada fue `?tema=`, que en dev sí debe funcionar.
+Antes de correrlo, una revisión adversarial con 3 revisores encontró varios problemas, ya corregidos:
+- una sola contraseña para todas las cuentas;
+- un rollback que bloqueaba todo o nada;
+- objetos perdidos si se caía una respuesta.
+
+- **a) Cuentas demo**, todas `@example.com`, cada una con su contraseña. Las contraseñas están **solo** en `backups/2026-11-24-prod-cuentas-demo.json`:
+  - `admin.demo` (admin);
+  - `cliente.demo`;
+  - `staff.demo` y `gerente.demo`, de Club Demo;
+  - `dueno.grupo.demo`;
+  - `gerente.tijuana.demo`.
+
+  El RP del recorrido es `demo_mariana`, que ya existía.
+- **b) Ficha de Club Demo:**
+  - horario: **"Mié a Sáb 9pm a 3am"** (antes "Jue a Sáb");
+  - música: "Reggaetón, house y pop";
+  - vestimenta: "Casual elegante";
+  - edad mínima: 18.
+- **c) "Club Demo Tijuana"**, **oculto**:
+  - borrador, sin suscripción;
+  - zona `America/Tijuana`, 10 mesas;
+  - dueño `dueno.grupo.demo`, gerente `gerente.tijuana.demo`.
+
+  Grupo "Grupo Club Demo" = Club Demo + Tijuana, con `dueno.grupo.demo` como dueño de grupo.
+- **Verificado:**
+  - el anónimo sigue viendo solo Club Demo, ya con la ficha nueva;
+  - hay 4 antros, 1 publicado;
+  - el anónimo no lee `grupos`.
+- **Rollback:** `node scripts/ajustes-club-demo.mjs --rollback --si`. Borra solo lo que creó el script. Una cuenta a la que ya apunten caja o reservas se **desactiva y bloquea** en vez de borrarse; la caja no se borra. La simulación actual dice "borrar" para todo.
+- **Para el 25/11:** `demo-datos` necesitaba un staff en Club Demo y no había ninguno. Habría fallado con "El antro demo necesita un staff y un gerente".
+  - Ahora usará `staff.demo`, y de gerente a Lorena o a `gerente.demo`: `demo-caja.mjs` toma el primero que devuelve la consulta.
+  - Después de eso, el rollback desactivará esas cuentas en lugar de borrarlas.
+
+### Recorrido en producción (paso 10): 49/49
+
+Playwright a 390 px contra https://antroapp.vercel.app. Solo navega: no pulsa nada que escriba.
+
+| Rol | Pantallas |
+|---|---|
+| Anónimo | `/`, `/cliente`, ficha, `/acceso-negocios`, logins y signups |
+| RP `demo_mariana` | 4 pestañas |
+| Cliente | catálogo, ficha, reservar (sin enviar), perfil |
+| Staff | panel, caja, nómina ("Solo el gerente") |
+| Gerente | panel, caja, nómina |
+| Gerente de Tijuana | ve su antro |
+| Dueño de grupo | panel de Tijuana, nómina, `/grupo` con los 2 antros |
+| Admin | `/admin` |
+
+- **Sin errores:** sin pantallas de error, sin scroll horizontal y sin errores de consola ni respuestas 4xx/5xx.
+- **Sin escrituras:** las únicas peticiones que no son GET fueron el login y RPC `STABLE` (de lectura). La caja sigue en 0 filas.
+- **`app_errores`:** 0 en las últimas 3 horas.
+- **`?tema=claro` no aplica en producción:** `/grupo` sigue con el tema oscuro.
+
+Notas, no son fallas:
+- `/cliente` sin sesión manda al login; así es el código.
+- Las reservas demo del 25/11 se ven "Llegó, sin consumo" porque son del modelo viejo. Se arreglan con `demo-datos` el 25/11 después de las 08:00.
+
+### Qué se escribió en producción y qué no
+
+- **Sí:**
+  - el SQL de los pasos 2b a 9, pegado por Diego;
+  - el merge y push a `master` → deploy automático;
+  - los ajustes de Club Demo (a, b, c) con el script de arriba.
+- **No:**
+  - `demo-datos` (se corrió después, el 25/11: ver «Estado real» arriba);
+  - ninguna contraseña existente ni ninguna llave;
+  - nada en otros proyectos;
+  - ningún dato real tocado fuera de los 4 campos de la ficha de Club Demo.
+- **Git:**
+  - `master` = `771e7d3`, árbol idéntico a `pase-final`;
+  - `desarrollo` = `master` + este reporte y `scripts/ajustes-club-demo.mjs` (`5c8edfb`, subido el 24/11 en la noche);
+  - sin credenciales ni respaldos en Git (`backups/` está ignorada).
+- **Hecho después:** `post-junta` adoptó 2b, 7c/10a y 7d al integrar `master` (`85f5a5e`).
+
+---
+
 Rama de trabajo: **`candidato-pase`** = `desarrollo` + `noche2` (sin `fase2`).
 Base: **antroapp-dev** únicamente.
 
