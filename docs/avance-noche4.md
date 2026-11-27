@@ -55,3 +55,17 @@ Reglas:
   - Con mala señal se borraba la copia local.
 - **Bloque 1, POS: terminado** (160/160, 135/135, 50/50) y en revisión.
 - **En curso:** clientes (lista negra y WhatsApp), landing y fase 2.
+
+## Actualización 14:55
+
+- **Integrados en `post-junta-3`:**
+  - bloque 7, reportes PDF;
+  - bloque 2, PWA y escáner de respaldo (`c51757a`), con sus 8 hallazgos corregidos. Pruebas: 47/47, 58/58, 48/48, 42/42, 13/13 y 41/41.
+  - Después de cada merge: typecheck, lint y build limpios; C4 57/57.
+- **`02-ip-cliente.sql` (`67f8fb4`): hallazgo de seguridad confirmado en dev con el gateway real.**
+  - El primer valor de `X-Forwarded-For` lo escribe quien llama. Los topes por IP del 72/66 (reservas sin cuenta, que es pase 2) se esquivaban: sin el arreglo pasaron 21 de 21.
+  - Arreglo: `ip_cliente()` usa `cf-connecting-ip` o el último salto. Prueba 10/10. Antiabuso 14/14 y concurrencia 52/52.
+  - **Si el pase 2 sale antes que el 3, el 02 debe ir con el pase 2.**
+- **`lib/funciones.ts` (`b124d9b`):** sin señal al abrir se usa la última respuesta guardada. Sale de la revisión de fase 2.
+- **Revisiones adversariales hechas:** POS, antifraude, clientes, landing y fase 2. Todos sus hallazgos están en corrección dentro de cada carril.
+- **14:40, límite de uso:** los 5 carriles en corrección se detuvieron y se reanudaron con su contexto a las 14:55.
