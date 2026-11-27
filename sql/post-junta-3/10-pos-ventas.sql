@@ -614,6 +614,11 @@ begin
     raise exception 'El formato de montos va «punto» (1,234.50) o «coma» (1.234,50).' using errcode = 'P0001';
   end if;
 
+  -- Un candado por antro (bloque 9, C5 «D2»): sin él, dos gerentes que
+  -- guardan a la vez un mapeo NUEVO con el mismo nombre chocaban en el índice
+  -- único (el segundo veía «Eso ya está registrado») y el tope de 30 se podía
+  -- rebasar. Con el candado el segundo espera y reemplaza al primero.
+  perform pg_advisory_xact_lock(hashtextextended('pos_mapeo|' || p_club_id::text, 0));
   select m.id into v_id from public.pos_mapeos m
    where m.club_id = p_club_id and lower(btrim(m.nombre)) = lower(v_nombre)
    for update;

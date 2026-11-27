@@ -620,6 +620,11 @@ begin
     raise exception 'Escribe un teléfono de 10 dígitos (o completo, con lada, si no es de México).' using errcode = 'P0001';
   end if;
 
+  -- Un candado por antro y teléfono (bloque 9, C5 «D1»): sin él, dos
+  -- bloqueos del mismo teléfono a la vez pasaban los dos el «if exists» y el
+  -- segundo chocaba en el índice único (veía «Eso ya está registrado»). Con
+  -- el candado el segundo espera y recibe el aviso claro de abajo.
+  perform pg_advisory_xact_lock(hashtextextended('lista_negra|' || p_club::text || '|' || v_tel, 0));
   -- Un bloqueo vencido que sigue abierto se cierra (queda en el historial).
   update public.club_bloqueos b
      set desbloqueado_en = b.vence_en, motivo_desbloqueo = 'Venció.'
