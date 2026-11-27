@@ -569,6 +569,9 @@ solo lectura) que quedó, como en el pase 1.
 
 ## Merge (P13)
 
+> **Desactualizado:** el merge ahora sale de `origin/post-junta-2`, no de
+> `post-junta`. El comando vigente está en `docs/pase-2.md`.
+
 ```bash
 git fetch origin
 git checkout master && git pull --ff-only

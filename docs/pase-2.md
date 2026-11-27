@@ -62,8 +62,17 @@ dev. La simulación incluye un control que confirma que reproduce producción.
 
 ### Merge (P13)
 
-Igual que en `docs/pase-produccion.md`, pero de **`post-junta-2`**, que ya
-incluye `post-junta`. Las banderas quedan apagadas.
+De **`post-junta-2`**, que ya incluye `post-junta`. Las banderas quedan
+apagadas.
+
+```bash
+git fetch origin
+git checkout master && git pull --ff-only
+git merge --no-ff origin/post-junta-2 -m "Pase 2: post-junta-2 (banderas apagadas)"
+git push origin master          # publica en producción (Vercel)
+```
+
+Si GitHub protege `master` con PR obligatorio, el merge va por PR.
 
 ### Después del merge
 
@@ -86,12 +95,16 @@ En orden inverso, cada uno con su `-rollback.sql`. Cuidados:
 Criterios para parar: los mismos de `docs/pase-produccion.md`. Lo más
 delicado es la caja en plena noche: **no** revertir SQL a media noche.
 
-## Variables nuevas (Vercel, después del pase, una por una)
+## Variables nuevas (Vercel)
 
-| Variable | Qué hace | Por defecto |
+| Variable | Qué hace | Cuándo |
 |---|---|---|
-| `CORREO_MODO` | `archivo` (los correos se guardan y se ven en `/admin/correos`), `enviar` (Resend) o `apagado` | `archivo`: no sale ningún correo |
-| `RESEND_API_KEY`, `CORREO_DE` | Llave y remitente para el modo `enviar` | — |
+| `CRON_SECRET` (**Sensitive**, solo Production) | Autoriza la tarea diaria `/api/cron/mensualidad` (`vercel.json`, 16:00 UTC). Esa tarea **siempre** purga la bandeja de correos de más de 30 días y corre `invitaciones_limpiar`. Sin la variable responde 401 y no limpia nada | **En el pase**, antes del merge. Es un texto largo al azar: Vercel lo manda solo, no hay que dárselo a nadie |
+| `CORREO_MODO` | `archivo` (los correos se guardan y se ven en `/admin/correos`), `enviar` (Resend) o `apagado` | Opcional. Sin ella queda `archivo`: no sale ningún correo |
+| `RESEND_API_KEY` (**Sensitive**), `CORREO_DE` | Llave y remitente para el modo `enviar` | Solo al encender correos reales |
+| `CORREO_LISTA_BLANCA` | En Preview, solo a esos correos | Solo en Preview |
+| `ALERTAS_CORREO=1`, `ALERTAS_PARA` | Alertas por correo al admin (`docs/operacion.md`) | Bandera, después |
+| `URL_PUBLICA` | Base de los enlaces de invitación. Sin ella se usa la URL de producción del proyecto | Solo con dominio propio |
 
 Antes de poner `CORREO_MODO=enviar` en producción: los cupos del SQL 24 ya
 frenan el abuso de invitaciones (30 sueltas por hora por persona, 400 por
@@ -107,6 +120,89 @@ producción**. Los cinco se aplican solos sobre el esquema de producción
 
 - Probar su comportamiento sobre el esquema de producción. Las pruebas de hoy corrieron con todo el pase 2 aplicado.
 - Su bloque listo para pegar, con rollback.
+
+## Ensayo paso a paso (27/11, dev)
+
+`node scripts/dev/ensayo-pase2-paso-a-paso.mjs` arranca con dev revertido al
+esquema de producción. Antes de empezar, compara contra el catálogo de
+producción en solo lectura: solo difieren GRANT a `service_role`, que vienen
+de los privilegios por defecto de cada proyecto.
+
+Para cada uno de los 38 pasos de arriba, en orden:
+- aplica el paso;
+- corre su rollback y revisa que el esquema quede **idéntico** al de antes del paso;
+- lo vuelve a aplicar y revisa que quede **idéntico** al primer aplicar.
+
+Q23 se probó con la versión de producción (`CONCURRENTLY`, una sentencia a la vez, sin transacción).
+
+- **Resultado: 38/38.**
+  - En la primera corrida, Q1 (`60`) dejaba de más un GRANT a `service_role` en `personal_cambiar_estado` después del rollback.
+  - Se corrigió en el `60` y en su rollback: el GRANT queda solo para `authenticated`, como en `post-junta/02`. La app la llama con la sesión del usuario.
+- **Después, con todo aplicado:**
+  - C4 (punta a punta, build de producción contra dev): 57/57 pasos, 9/9 flujos;
+  - C1 (`auditoria-rls.mjs`, 23 sesiones reales): 9,113/9,113;
+  - C5 (`probar-concurrencia-noche3.mjs`): 52/52;
+  - humo local: 83/84. Lo único que falla es HSTS, que agrega Vercel en HTTPS; en local no existe;
+  - humo de producción: 84/84 (sin cambios).
+- **Tiempo:** en dev, por script, cada paso tarda de 1.3 a 1.8 s (52 s en total).
+
+### Tiempo estimado en producción (a mano)
+
+| Bloque | Pegadas | Estimado |
+|---|---|---|
+| P0: respaldo visible, comparar esquema y `22-importar-mesas-diagnostico.sql` | — | 15 min |
+| `CRON_SECRET` en Vercel (Production) | — | 5 min |
+| P1–P12, con la fase 2 opcional (13 archivos) | 13 | 25–30 min |
+| Q1–Q22 y Q24 | 23 | 45 min |
+| Q23: índices, una sentencia a la vez | 16 | 15 min |
+| P13: merge y deploy | — | 10 min |
+| R1 (41) | 1 | 3 min |
+| R2: humo, `/api/salud` y recorrido de roles | — | 30 min |
+| **Total** | **53** | **≈ 2 h 30 min** |
+
+Cada pegada cuenta unos 2 minutos: pegar, Run y la verificación por catálogo
+(en el pase 1 fueron de 1 a 5 minutos). Se puede bajar a cerca de 1 hora
+juntando cada bloque en una sola pegada. Eso pide su propio ensayo, porque
+hoy cada archivo trae su `begin/commit`.
+
+### Lo que Diego hace a mano
+
+**Para el pase (obligatorio):**
+
+1. **Supabase → Database → Backups:** confirmar que está el respaldo del día y anotar la hora.
+2. **Supabase → SQL Editor** (proyecto Antroapp, `kigltjvakwuuulvzbyri`), una consulta nueva por archivo, en el orden de las tablas de arriba:
+   - **antes del Q16**, `22-importar-mesas-diagnostico.sql`, que solo lee. Si devuelve filas, avisar antes de seguir;
+   - **Q23**, `70-indices-prod.sql`: una sentencia a la vez, fuera del horario del antro;
+   - **R1**, `41`, **después** del merge.
+3. **Vercel → Settings → Environment Variables → Production:** crear `CRON_SECRET` (Sensitive) con un texto largo al azar, antes del merge. Después del merge, revisar en **Settings → Cron Jobs** que aparezca `/api/cron/mensualidad`.
+4. **GitHub:** el merge sale de `post-junta-2`. Hoy esa rama **no está en GitHub**: hay que subirla antes, y eso lo autoriza Diego.
+5. **Revisar, por si acaso** (vienen del pase 1):
+   - en Authentication: contraseñas filtradas, longitud mínima y límites;
+   - en Authentication → URL Configuration: Site URL y Redirect URLs. `/recuperar-contrasena` regresa a `/actualizar-contrasena`.
+
+**Solo al encender cada bandera, después del pase (una por una, primero en Preview):**
+
+- **`NEXT_PUBLIC_MENSUALIDAD`, Stripe** (`docs/stripe-mensualidad.md`):
+  1. contestar las 9 preguntas del negocio (precio con IVA, prueba gratis, gracia, CFDI…);
+  2. en Test mode, crear el producto con su precio mensual en MXN;
+  3. crear una llave restringida de prueba;
+  4. crear el webhook a `/api/stripe/webhook` con 7 eventos: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed` e `invoice.voided`;
+  5. configurar el portal de cliente y Smart Retries;
+  6. en Vercel, poner `STRIPE_SECRET_KEY` y `STRIPE_WEBHOOK_SECRET` (Sensitive) y `NEXT_PUBLIC_MENSUALIDAD=1`;
+  7. dar de alta los planes en `/admin/mensualidad`.
+
+  Para cobrar de verdad: repetir en modo live, poner `STRIPE_PERMITIR_PRODUCCION=1` y correr el `update` de `mensualidad_real` en el SQL Editor.
+- **`NEXT_PUBLIC_CAPTCHA_TURNSTILE`** (`docs/captcha.md`):
+  - dos widgets de Cloudflare Turnstile (producción y previews);
+  - sus llaves en Vercel;
+  - si se usa el modo `supabase`: en Supabase → Attack Protection, encender CAPTCHA con la Secret Key, **después** del deploy con la bandera.
+- **`NEXT_PUBLIC_LEGALES`** (`docs/legal/README.md`):
+  - textos revisados por un abogado;
+  - `insert` de la versión en `versiones_legales` por el SQL Editor.
+- **Correos reales y `ALERTAS_CORREO`** (`docs/operacion.md`):
+  - cuenta y dominio verificado en Resend;
+  - en Vercel: `RESEND_API_KEY`, `CORREO_DE`, `CORREO_MODO=enviar` y `ALERTAS_PARA`.
+- **`NEXT_PUBLIC_FASE2`:** solo si se aplicó el P11.
 
 ## Pruebas en dev del pase 2 (25/11, con todo integrado)
 

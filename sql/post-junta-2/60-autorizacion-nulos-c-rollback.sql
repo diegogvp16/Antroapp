@@ -83,6 +83,6 @@ AS $function$
 $function$;
 
 revoke all on function public.personal_cambiar_estado(uuid, boolean, text) from public, anon;
-grant execute on function public.personal_cambiar_estado(uuid, boolean, text) to authenticated, service_role;
+grant execute on function public.personal_cambiar_estado(uuid, boolean, text) to authenticated; -- como en post-junta/02 (sin service_role)
 revoke all on function public.nomina_transicion_valida(text, text) from public, anon;
 grant execute on function public.nomina_transicion_valida(text, text) to authenticated, service_role;
