@@ -66,6 +66,19 @@
 | `invitaciones.nombre`, `correo`, `telefono` (el teléfono es opcional y solo llega por la importación en lote) | Datos de la persona invitada a trabajar en un antro, escritos por quien la invita | Mandarle la invitación; al aceptarla pasan a su perfil. Las ven el dueño, el gerente o el staff que pueden invitar ese rol en ese antro, y el admin. Hoy no se borran (son la bitácora de quién invitó a quién): plazo pendiente de definir con el abogado |
 | `invitacion_lotes.hecho_por`, `club_id`, `total` | Quién importó una lista de personal, cuándo y cuántas (sin correos ni nombres) | Auditoría y límite de importaciones |
 
+### Antros interesados (formulario de /para-clubes)
+
+Solo con la bandera de plataforma `para_clubes` encendida (`sql/post-junta-3/50-para-clubes.sql`; apagada por defecto). No se manda ningún correo.
+
+| Tabla.columna | Dato | Para qué | Quién lo ve |
+|---|---|---|---|
+| `contactos_clubes.nombre`, `club_nombre`, `ciudad`, `correo`, `telefono` (opcional), `mensaje` (opcional) | Datos de contacto que escribe quien se interesa por AntroApp | Contactarlo para platicar del servicio | Solo el admin (`/admin/contactos`); nadie más por la API. El admin lo puede borrar si lo piden (`contacto_club_borrar`). Hoy no se borra solo: plazo pendiente de definir con el abogado |
+| `contactos_clubes.estado`, `atendido_por`, `atendido_en` | Si ya se atendió, quién y cuándo | Seguimiento | Solo el admin |
+| `contacto_intentos.ip_hash`, `correo_hash`, `creado_en` | Huella de la IP y del correo de cada envío guardado: sha256 con una **sal secreta** (`contacto_sal`, no se lee por la API), no la IP ni el correo en claro. Quien tenga acceso directo a la base (sal incluida) podría revertir la de una IPv4 probando todas | Límites contra spam (por conexión, por correo y en total). Los envíos que caen en la casilla trampa no dejan nada | Nadie por la API. Se borran las de más de 7 días en cada envío, al abrir `/admin/contactos` y en la tarea diaria (`/api/cron/mensualidad`) |
+| `para_clubes_bitacora.accion`, `detalle`, `contacto_id`, `hecho_por`, `hecho_en` | Quién cambió las banderas de la página o marcó/borró un contacto, y cuándo. **Sin** los datos del contacto (solo su id) | Auditoría | Nadie por la API (solo service role / SQL Editor). Hoy no se borra |
+
+La IP sale de `public.ip_cliente()` (`sql/post-junta-3/02-ip-cliente.sql`: `cf-connecting-ip`, no el primer valor de `x-forwarded-for`, que lo puede inventar quien llama). El formulario dice qué se guarda, para qué y por cuánto tiempo, y enlaza al aviso de privacidad solo si `NEXT_PUBLIC_LEGALES` está encendida. Con el CAPTCHA encendido, Cloudflare Turnstile también recibe la IP de quien lo llena. El aviso de privacidad borrador todavía **no** menciona este formulario.
+
 ## Lo que la app NO guarda
 
 - Datos de tarjetas (no hay cobros a clientes; la mensualidad del antro, si
