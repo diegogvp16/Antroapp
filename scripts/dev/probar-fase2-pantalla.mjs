@@ -134,6 +134,10 @@ try {
   clubId = randomUUID();
   ok(await svc.from("clubs").insert({ id: clubId, nombre: `Prueba ${TAG}`, direccion: "Calle Prueba 1", horario: "22:00-03:00", suscripcion_activa: false }), "club");
   ok(await svc.from("clubs").update({ estado_verificacion: "verificado", verificado_en: new Date().toISOString(), suscripcion_activa: true, pago_rp_modo: "reserva" }).eq("id", clubId), "publicar");
+  // Bloque 8: además de NEXT_PUBLIC_FASE2, inventario y propinas van detrás
+  // de la bandera del antro. Solo en este antro de prueba (se borra al final
+  // junto con el antro).
+  ok(await svc.from("club_funciones").insert(["inventario", "propinas"].map((funcion) => ({ club_id: clubId, funcion, activa: true }))), "banderas");
   await usuario("staff", "staff");
   await usuario("gerente", "gerente");
   const mesas = ok(await svc.from("club_tables").insert([1, 2].map((n) => ({ club_id: clubId, numero: String(n), capacidad: 8 }))).select("id, numero"), "mesas");

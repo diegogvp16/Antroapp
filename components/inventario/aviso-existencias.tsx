@@ -4,24 +4,26 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { bajoStock } from "@/lib/domain/inventario";
-import { FASE2_ACTIVA } from "@/lib/fase2";
+import { useFase2DeClub } from "@/lib/fase2-contexto";
 
-// Alerta de existencias bajas para el gerente (fase 2). Solo avisa: la caja
+// Alerta de existencias bajas para el gerente (fase 2). Solo con
+// NEXT_PUBLIC_FASE2 y la bandera «inventario» del antro. Solo avisa: la caja
 // nunca deja de vender por existencias (si el conteo dice 0, queda negativo).
 export function AvisoExistencias({ clubId }: { clubId: string }) {
+  const { inventario } = useFase2DeClub(clubId);
   const [bajos, setBajos] = useState<{ nombre: string; existencias: number }[]>([]);
 
   useEffect(() => {
-    if (!FASE2_ACTIVA) return;
+    if (!inventario) return;
     createClient()
       .from("productos")
       .select("nombre, existencias, existencias_minimas")
       .eq("club_id", clubId)
       .eq("activo", true)
       .then(({ data }) => setBajos((data ?? []).filter(bajoStock).sort((a, b) => a.existencias - b.existencias)));
-  }, [clubId]);
+  }, [clubId, inventario]);
 
-  if (!FASE2_ACTIVA || bajos.length === 0) return null;
+  if (!inventario || bajos.length === 0) return null;
   return (
     <Link
       href="/staff/catalogo"

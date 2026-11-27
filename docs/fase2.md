@@ -58,7 +58,7 @@ la bandera apagada en esta rama).
 
 ## Pendiente
 
-- Reporte de inventario por noche (vendido por producto) y exportar.
+- Exportar el reporte de inventario (el reporte por noche ya existe: bloque 8, abajo).
 - Catálogo desde el panel del dueño.
 - La firma de la noche no incluye cambios del catálogo: si el gerente cambia
   un precio, la caja lo ve al siguiente movimiento o al recargar.
@@ -76,3 +76,31 @@ la bandera apagada en esta rama).
 - **Alerta de existencias bajas** también en el panel del gerente (enlaza al
   catálogo). La venta sigue sin bloquearse por existencias.
 - Pruebas: `probar-fase2.mjs` 51/51 y `probar-catalogo-csv.mjs` 16/16.
+
+## Bloque 8 (post-junta-3, 27/11/2026): fase 2 completa, detrás de banderas por antro
+
+Además de `NEXT_PUBLIC_FASE2`, el inventario va detrás de la bandera del antro
+`inventario` y las propinas detrás de `propinas` (`club_funciones`, apagadas
+por defecto; solo el admin las enciende). Con la bandera del antro apagada la
+caja es la de siempre.
+
+- **Inventario** (`sql/post-junta-3/80-inventario.sql`): entradas (costo y
+  referencia opcionales), mermas con motivo, conteo físico (la base compara
+  contra lo que el sistema decía al empezar a contar: las ventas de mientras
+  no se absorben), historial con saldo por movimiento y reporte por noche
+  (`/staff/inventario`). En el catálogo, «Existencias» abre Entrada / Merma /
+  Conteo y hay «Historial».
+- **Propinas** (`sql/post-junta-3/81-propinas.sql`): propina suelta por mesa,
+  cuenta o sin mesa (también desde una mesa ya cuadrada), anulación con
+  motivo, anular solo la propina de un cobro sin tocar el cobro, regla de
+  reparto por antro (% personal, % RP activo de la cuenta, % casa, gerente
+  sí/no; con 0 % al personal o sin personal, el resto va a la casa), reparto
+  con la noche cerrada que se rechaza si la regla cambió, y reporte por noche
+  (`/staff/propinas`, con las propinas del cobro aparte). Nada de esto toca
+  saldo, cuadres, conteo de caja ni comisiones. **El rollback del 81 borra
+  registros de dinero**: respaldar antes (consulta en el archivo).
+- Pruebas: `probar-fase2-completa.mjs` 206/206, `probar-fase2-dominio.mjs`
+  32/32, `probar-fase2-completa-pantalla.mjs` 45/45. Datos de ejemplo:
+  `scripts/dev/fase2-datos-ejemplo.mjs` (y `--limpiar`, que deja banderas y
+  regla como estaban).
+- Detalle, decisiones pendientes y riesgos: `docs/post-junta-3/fase2.md`.

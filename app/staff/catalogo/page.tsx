@@ -7,18 +7,22 @@ import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AjusteExistencias, FormularioProducto } from "@/components/inventario/formulario-producto";
+import { FormularioProducto } from "@/components/inventario/formulario-producto";
+import { HistorialProducto, MovimientoInventario } from "@/components/inventario/movimiento-inventario";
 import { ImportarCsv } from "@/components/inventario/importar-csv";
 import { formatearCentavos, type Producto } from "@/lib/domain/caja";
 import { bajoStock, categorias, textoExistencias } from "@/lib/domain/inventario";
 import { mensajeParaUsuario } from "@/lib/errores-base";
 import { FASE2_ACTIVA } from "@/lib/fase2";
+import { useFase2DeClub } from "@/lib/fase2-contexto";
 import { cn } from "@/lib/utils";
 
-// Catálogo de productos del antro (fase 2, bandera NEXT_PUBLIC_FASE2). Lo
-// carga y edita el gerente; la base revisa el permiso en cada cambio.
+// Catálogo de productos del antro (fase 2, bandera NEXT_PUBLIC_FASE2 y, desde
+// el bloque 8, la bandera «inventario» del antro). Lo carga y edita el
+// gerente; la base revisa el permiso (y la bandera, en entradas, mermas,
+// conteos e historial) en cada cambio.
 type Estado = { tipo: "cargando" } | { tipo: "apagado" } | { tipo: "error"; mensaje: string } | { tipo: "listo"; clubId: string };
-type Edicion = { id: string; modo: "editar" | "ajustar" } | null;
+type Edicion = { id: string; modo: "editar" | "movimiento" | "historial" } | null;
 
 export default function CatalogoPage() {
   const router = useRouter();
@@ -42,7 +46,10 @@ export default function CatalogoPage() {
     })();
   }, [router]);
 
-  const clubId = estado.tipo === "listo" ? estado.clubId : null;
+  // Bloque 8: además de la bandera global, la del antro.
+  const banderas = useFase2DeClub(estado.tipo === "listo" ? estado.clubId : null);
+  const clubId = estado.tipo === "listo" && banderas.inventario ? estado.clubId : null;
+  const sinBandera = estado.tipo === "listo" && !banderas.cargando && !banderas.inventario;
   const cargar = useCallback(async () => {
     if (!clubId) return;
     const { data, error } = await createClient()
@@ -79,12 +86,12 @@ export default function CatalogoPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Catálogo e inventario</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Lo que se vende en la caja. Cada venta descuenta existencias; anular un cargo las regresa. Nada se borra: un producto se apaga.
+            Lo que se vende en la caja. Cada venta descuenta existencias; anular un cargo las regresa. Las entradas, mermas y conteos quedan en el historial de cada producto. Nada se borra: un producto se apaga.
           </p>
         </div>
 
-        {estado.tipo === "apagado" && <p className="text-sm text-muted-foreground">El catálogo todavía no está activo en tu antro.</p>}
-        {estado.tipo === "cargando" && <p className="text-sm text-muted-foreground">Cargando…</p>}
+        {(estado.tipo === "apagado" || sinBandera) && <p className="text-sm text-muted-foreground">El catálogo todavía no está activo en tu antro.</p>}
+        {(estado.tipo === "cargando" || (estado.tipo === "listo" && banderas.cargando)) && <p className="text-sm text-muted-foreground">Cargando…</p>}
         {estado.tipo === "error" && (
           <p className="text-sm text-destructive" role="alert">
             {estado.mensaje}
@@ -147,8 +154,11 @@ export default function CatalogoPage() {
                         </span>
                         {!p.activo && <Badge variant="neutral">No se vende</Badge>}
                         <span className="ml-auto flex gap-1">
-                          <Button type="button" variant="ghost" className="h-11" onClick={() => setEdicion({ id: p.id, modo: "ajustar" })}>
+                          <Button type="button" variant="ghost" className="h-11" onClick={() => setEdicion({ id: p.id, modo: "movimiento" })}>
                             Existencias
+                          </Button>
+                          <Button type="button" variant="ghost" className="h-11" onClick={() => setEdicion({ id: p.id, modo: "historial" })}>
+                            Historial
                           </Button>
                           <Button type="button" variant="ghost" className="h-11" onClick={() => setEdicion({ id: p.id, modo: "editar" })}>
                             Editar
@@ -158,9 +168,10 @@ export default function CatalogoPage() {
                       {edicion?.id === p.id && edicion.modo === "editar" && (
                         <FormularioProducto clubId={clubId} producto={p} categoriasExistentes={listaCategorias} onGuardado={tras} onCancelar={() => setEdicion(null)} />
                       )}
-                      {edicion?.id === p.id && edicion.modo === "ajustar" && (
-                        <AjusteExistencias producto={p} onGuardado={tras} onCancelar={() => setEdicion(null)} />
+                      {edicion?.id === p.id && edicion.modo === "movimiento" && (
+                        <MovimientoInventario producto={p} onGuardado={tras} onCancelar={() => setEdicion(null)} />
                       )}
+                      {edicion?.id === p.id && edicion.modo === "historial" && <HistorialProducto producto={p} onCerrar={() => setEdicion(null)} />}
                     </li>
                   ))}
                 </ul>

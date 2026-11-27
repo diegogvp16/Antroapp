@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { nuevaClave } from "@/lib/clave";
-import { FASE2_ACTIVA } from "@/lib/fase2";
+import { useFase2 } from "@/lib/fase2-contexto";
 import { bajoStock, categorias, filtrarCatalogo, textoExistencias } from "@/lib/domain/inventario";
 import { BotonPrincipal, Contador, Hoja } from "@/components/caja/hoja";
 import { MensajeError } from "@/components/caja/accion";
@@ -74,7 +74,8 @@ export function HojaConsumo({
   error: string | null;
   onAgregar: (renglones: RenglonNuevo[], cuentaId: string) => void;
 }) {
-  const conCatalogo = FASE2_ACTIVA && catalogo.length > 0;
+  // Fase 2: catálogo solo con la bandera global y la del antro («inventario»).
+  const conCatalogo = useFase2().inventario && catalogo.length > 0;
   const [busqueda, setBusqueda] = useState("");
   const [categoria, setCategoria] = useState<string | null>(null);
   const [cantidades, setCantidades] = useState<Record<string, number>>({});
@@ -307,6 +308,8 @@ export function HojaCobro({
   const [clave] = useState(nuevaClave);
   const [saldoBase, setSaldoBase] = useState(saldo);
   const [propina, setPropina] = useState("");
+  // Fase 2: propina solo con la bandera global y la del antro («propinas»).
+  const conPropina = useFase2().propinas;
   const propinaCent = propina.trim() === "" ? 0 : pesosACentavos(propina);
   const propinaValida = propinaCent !== null && propinaCent >= 0;
   const cent = pesosACentavos(monto);
@@ -327,7 +330,7 @@ export function HojaCobro({
           ) : (
             <BotonPrincipal
               disabled={ocupado || !valido || saldoCambio || !propinaValida}
-              onClick={() => cent !== null && onCobrar(metodo, cent, referencia, clave, saldoBase, FASE2_ACTIVA ? (propinaCent ?? 0) : 0)}
+              onClick={() => cent !== null && onCobrar(metodo, cent, referencia, clave, saldoBase, conPropina ? (propinaCent ?? 0) : 0)}
             >
               {ocupado
                 ? "Cobrando..."
@@ -383,7 +386,7 @@ export function HojaCobro({
           </div>
         )}
         {!saldoCambio && cent !== null && cent > saldoBase && <p className="text-xs text-caja-aviso">Es más que el saldo de la mesa.</p>}
-        {FASE2_ACTIVA && (
+        {conPropina && (
           <label>
             <span className={ETIQUETA}>Propina ($, opcional) · va aparte: no cambia el saldo ni la comisión</span>
             <input value={propina} onChange={(e) => setPropina(e.target.value)} inputMode="decimal" placeholder="0.00" className={cn(CAMPO, "tabular-nums")} />

@@ -33,6 +33,7 @@ import { FASE2_ACTIVA } from "@/lib/fase2";
 import { AvisoExistencias } from "@/components/inventario/aviso-existencias";
 import { EnlacePos } from "@/components/pos/enlace-pos";
 import { EnlaceClientes } from "@/components/clientes/enlace-clientes";
+import { EnlacesFase2 } from "@/components/inventario/enlaces-fase2";
 import { esErrorDeRed, mensajeParaUsuario, MENSAJE_SIN_CONEXION, type ErrorBase } from "@/lib/errores-base";
 import type { Club, ClubTable, Profile, Reservation } from "@/types";
 import { contarPendientes } from "@/lib/caja-cola";
@@ -1373,16 +1374,8 @@ export default function StaffPanelPage() {
               Descargar reportes
             </Button>
             <EnlacePos clubId={clubId} href="/staff/pos" />
-            {FASE2_ACTIVA && (
-              <Button
-                render={<Link href="/staff/catalogo" />}
-                nativeButton={false}
-                variant="outline"
-                className="w-full"
-              >
-                Catálogo e inventario
-              </Button>
-            )}
+            {/* Fase 2: solo con NEXT_PUBLIC_FASE2 y la bandera del antro. */}
+            {FASE2_ACTIVA && <EnlacesFase2 clubId={clubId} />}
           </div>
         )}
         {staffRole === "gerente" && clubId && <AvisoExistencias clubId={clubId} />}
