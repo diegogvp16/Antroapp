@@ -26,6 +26,7 @@ import { formatearFechaLarga } from "@/lib/fechas";
 import { ordenarMesas } from "@/lib/mesas";
 import { coverMontoATexto, validarCover } from "@/lib/cover";
 import { mensajeParaUsuario, type ErrorBase } from "@/lib/errores-base";
+import { EnlaceRevisionRps } from "@/components/fraude/enlace-revision-rps";
 import {
   FOTO_CLUB_ACCEPT,
   mensajeErrorStorageFoto,
@@ -626,6 +627,7 @@ export default function DuenoPanelPage() {
           >
             Descargar reportes (CSV)
           </Button>
+          <EnlaceRevisionRps href="/dueno/revision" className="col-span-2" />
         </div>
 
         <VerificacionAntro club={club} onCambioEstado={fetchClub} />

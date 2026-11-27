@@ -35,6 +35,7 @@ import { esErrorDeRed, mensajeParaUsuario, MENSAJE_SIN_CONEXION, type ErrorBase 
 import type { Club, ClubTable, Profile, Reservation } from "@/types";
 import { contarPendientes } from "@/lib/caja-cola";
 import { conLimite } from "@/lib/domain/caja-cola";
+import { EnlaceRevisionRps } from "@/components/fraude/enlace-revision-rps";
 
 type RPListItem = Pick<Profile, "id" | "nombre" | "activo">;
 
@@ -1343,6 +1344,7 @@ export default function StaffPanelPage() {
             >
               Descargar reportes
             </Button>
+            <EnlaceRevisionRps href="/staff/revision" clubId={clubId} />
             {FASE2_ACTIVA && (
               <Button
                 render={<Link href="/staff/catalogo" />}

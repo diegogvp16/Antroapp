@@ -20,6 +20,7 @@ import { VerificacionesPendientes } from "@/components/verificaciones-pendientes
 import { ErroresRecientes } from "@/components/errores-recientes";
 import { mensualidadActiva } from "@/lib/mensualidad/bandera";
 import type { Club } from "@/types";
+import { EnlaceRevisionRps } from "@/components/fraude/enlace-revision-rps";
 
 interface ConsumoBucket {
   rpTotal: number;
@@ -576,6 +577,7 @@ export default function AdminPage() {
 
         <section className="flex flex-col gap-4">
           <h2 className="text-lg font-semibold">Alertas de reporte</h2>
+          <EnlaceRevisionRps href="/admin/revision" className="self-start sm:w-auto" />
           <p className="text-xs text-muted-foreground">
             Compara, por antro, qué % de las reservas con check-in
             confirmado en los últimos 30 días tuvieron al menos un consumo
