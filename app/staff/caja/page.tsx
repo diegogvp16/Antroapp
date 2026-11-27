@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { esErrorDeRed } from "@/lib/errores-base";
 import { useEnLinea } from "@/lib/use-en-linea";
 import { FASE2_ACTIVA } from "@/lib/fase2";
+import { Fase2Provider } from "@/lib/fase2-contexto";
 import {
   formatearCentavos,
   nombreMesa,
@@ -419,6 +420,8 @@ export default function StaffCajaPage() {
   }, [datos, movimientos, resumenes]);
 
   return (
+    // Fase 2 (bloque 8): banderas del antro para inventario y propinas.
+    <Fase2Provider clubId={clubId}>
     <div className="theme-caja flex flex-1 flex-col items-center px-4 pt-3 pb-4 font-sans">
       <div className="flex w-full max-w-md min-w-0 flex-col gap-3">
         {!actual && !sesionAjena && (
@@ -539,5 +542,6 @@ export default function StaffCajaPage() {
         )}
       </div>
     </div>
+    </Fase2Provider>
   );
 }

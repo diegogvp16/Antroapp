@@ -4,8 +4,9 @@ import { useState } from "react";
 import { ArrowLeft, ChevronDown, CloudUpload, Lock, MoreHorizontal } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { FASE2_ACTIVA } from "@/lib/fase2";
-import { propinas } from "@/lib/domain/inventario";
+import { useFase2 } from "@/lib/fase2-contexto";
+import { totalPropinas } from "@/lib/domain/propinas";
+import { PropinaSinMesa, PropinasMesa, usePropinasSueltas } from "@/components/propinas/propinas-mesa";
 import { BotonPrincipal } from "@/components/caja/hoja";
 import { MensajeError, useAccion } from "@/components/caja/accion";
 import { HojaCobro, HojaConsumo, HojaCuadrar, HojaMotivo, HojaRecibir, type RenglonNuevo } from "@/components/caja/hojas-mesa";
@@ -86,8 +87,11 @@ export function DetalleMesa({
   const consumos = sesion ? datos.consumos.filter((c) => c.sesion_id === sesion.id) : [];
   const pagos = sesion ? datos.pagos.filter((p) => p.sesion_id === sesion.id) : [];
   const vigentes = consumos.filter((c) => !c.anulado);
-  // Fase 2: propinas del grupo actual (aparte del cobro y del saldo).
-  const propinasMesa = FASE2_ACTIVA ? propinas(pagos).total : 0;
+  // Fase 2: propinas del grupo actual (aparte del cobro y del saldo): las del
+  // cobro y las sueltas. Solo con la bandera «propinas» del antro.
+  const fase2 = useFase2();
+  const sueltas = usePropinasSueltas({ sesionId: sesion?.id ?? null, nocheId: datos.noche?.id ?? null }, fase2.propinas && !!sesion);
+  const propinasMesa = fase2.propinas ? totalPropinas(pagos, sueltas.lista, sueltas.cobrosAnulados).total : 0;
   const anulados = consumos.filter((c) => c.anulado);
   // Lo capturado de este grupo que todavía no llega a la base.
   const porEnviarConsumos = sesion ? movimientos.filter((x) => x.estado === "pendiente" && x.sesionId === sesion.id && x.tipo !== "pago") : [];
@@ -211,7 +215,7 @@ export function DetalleMesa({
             montoCentavos: centavos,
             descripcion:
               (metodo === "efectivo" ? "Cobro en efectivo" : metodo === "tarjeta" ? "Cobro con tarjeta" : "Cobro") +
-              (FASE2_ACTIVA && propina > 0 ? ` · propina ${formatearCentavos(propina)}` : ""),
+              (fase2.propinas && propina > 0 ? ` · propina ${formatearCentavos(propina)}` : ""),
             args: {
               p_sesion_id: sesion.id,
               p_cuenta_id: null,
@@ -222,8 +226,9 @@ export function DetalleMesa({
               // enviar): si otro ya cobró o agregó consumo, la base lo
               // rechaza en lugar de sobrepagar. Nunca se reintenta con otro.
               p_saldo_esperado: saldoVisto,
-              // La propina solo se manda con la fase 2 (sin ella la base puede no tener el parámetro).
-              ...(FASE2_ACTIVA ? { p_propina_centavos: propina } : {}),
+              // La propina solo se manda con la fase 2 y la bandera del antro
+              // (sin ellas, el cobro es exactamente el de antes).
+              ...(fase2.propinas ? { p_propina_centavos: propina } : {}),
             },
           },
         ]),
@@ -387,7 +392,7 @@ export function DetalleMesa({
       {sesion && (
         <p className="mt-1 text-sm text-caja-secundario tabular-nums">
           Consumo <span className="text-caja-texto">{formatearCentavos(m.consumo)}</span> · Cobrado <span className="text-caja-texto">{formatearCentavos(m.cobrado)}</span>
-          {FASE2_ACTIVA && propinasMesa > 0 && (
+          {propinasMesa > 0 && (
             <>
               {" "}
               · Propinas <span className="text-caja-texto">{formatearCentavos(propinasMesa)}</span>
@@ -510,7 +515,9 @@ export function DetalleMesa({
                               <span className={cn(p.anulado && "line-through")}>
                                 {horaCorta(p.registrado_en)}
                                 {p.referencia ? ` · ${p.referencia}` : ""}
-                                {FASE2_ACTIVA && (p.propina_centavos ?? 0) > 0 ? ` · propina ${formatearCentavos(p.propina_centavos ?? 0)}` : ""}
+                                {fase2.propinas && (p.propina_centavos ?? 0) > 0
+                                  ? ` · propina ${formatearCentavos(p.propina_centavos ?? 0)}${sueltas.cobrosAnulados.has(p.id) ? " (anulada)" : ""}`
+                                  : ""}
                                 {p.anulado ? ` — ${p.motivo_anulacion}` : ""}
                               </span>
                               <span className={cn("tabular-nums", p.anulado && "line-through")}>{formatearCentavos(p.monto_centavos)}</span>
@@ -523,8 +530,23 @@ export function DetalleMesa({
               </div>
             </section>
           )}
+
+          {/* Fase 2: propinas sueltas (solo con la bandera «propinas»). */}
+          <PropinasMesa
+            nocheId={datos.noche?.id ?? null}
+            sesionId={sesion.id}
+            cuentas={m.cuentas}
+            lista={sueltas.lista}
+            puedeRegistrar={!nocheCerrada && permisos.cobrar}
+            puedeAnular={!nocheCerrada && permisos.anular}
+            sinConexion={sinConexion}
+            onCambio={sueltas.recargar}
+          />
         </>
       )}
+
+      {/* Fase 2: mesa libre o ya cuadrada: la propina que dejaron va sin mesa. */}
+      {!sesion && <PropinaSinMesa nocheId={datos.noche?.id ?? null} puedeRegistrar={!nocheCerrada && permisos.cobrar} sinConexion={sinConexion} />}
 
       <AvisoColaMesa movimientos={movimientos} sesionActual={sesion?.id ?? null} onDescartar={onDescartar} />
 
