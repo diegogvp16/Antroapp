@@ -70,7 +70,7 @@ Reglas:
 - **Revisiones adversariales hechas:** POS, antifraude, clientes, landing y fase 2. Todos sus hallazgos están en corrección dentro de cada carril.
 - **14:40, límite de uso:** los 5 carriles en corrección se detuvieron y se reanudaron con su contexto a las 14:55.
 
-## Actualización 16:00
+## Actualización 15:20
 
 - **Integrados en `post-junta-3`, cada uno después de su revisión y sus correcciones:**
   - 7 reportes PDF;
