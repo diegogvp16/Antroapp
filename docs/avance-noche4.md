@@ -87,3 +87,32 @@ Reglas:
   - antifraude, que corrige sus 9 hallazgos;
   - bloque 9: extender C4 y la auditoría C1/C5 a lo nuevo, en dos carriles.
 - **Para el pase:** 80 y 81 requieren la fase 2 base (P11 del pase 2, opcional).
+
+## Actualización 17:05: cierre
+
+**Los 10 bloques de la cola están integrados en `post-junta-3`**, cada uno con su revisión independiente y sus hallazgos corregidos.
+
+| Bloque | Estado | Pruebas |
+|---|---|---|
+| 1 POS | ✔ | dominio 189, base 162, carga 29 (5,000 líneas en 3.4 s), pantalla 62 |
+| 2 PWA y escáner de respaldo | ✔ | 47 / 58 / 48 / 42 / 13 / 41 |
+| 3 Antifraude | ✔ | dominio 68, base 182, carga 12, pantalla 59 |
+| 4 Lista negra y no-show | ✔ | dominio 68, base 183, pantalla 111 |
+| 5 `/para-clubes` | ✔ | base 101, pantalla 66, CAPTCHA 12 |
+| 6 WhatsApp | ✔ | junto con el 4 |
+| 7 Reportes PDF | ✔ | 38 / 34 / 152 |
+| 8 Fase 2 | ✔ | base 206, dominio 32, pantalla 45 |
+| 9 Pruebas | ✔ | C4 112/112 y 19/19 dos veces seguidas; C1 14,116/14,116; C5 129/129 |
+| 10 Documentación | ✔ | manuales de staff y RP, `docs/pase-3.md`, `docs/avance.md` con porcentaje |
+
+**Después de la integración:**
+
+- **Revisión cruzada final**, sin críticos ni altos. Se corrigió:
+  - el `01` ahora valida en la misma transacción (en producción hay 0 filas largas);
+  - una sola clave de teléfono en antifraude, lista negra y WhatsApp;
+  - `wa.me` solo con números de México;
+  - código muerto.
+- **C5 encontró dos carreras de mensaje** (D1 lista negra, D2 mapeo del POS), corregidas con candado.
+- **QR con margen de ~4 módulos.** Con 2 fallaba a veces el lector, y la causa era real: fondo oscuro alrededor.
+- **Ensayo del pase 3:** 12/12. Dev revertido = final del pase 2.
+- **Simulación de privilegios de producción** (pase 2 + 3, 324 objetos): 0 abiertos sin probar.

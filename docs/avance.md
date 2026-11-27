@@ -1,5 +1,37 @@
 # Avance hacia la junta del 25/11/2026
 
+## Estado al 27/11/2026 (noche 4): porcentaje real
+
+**Cómo se mide** (para que el número no dependa de una opinión): pasos de
+esquema aplicados en producción contra el total de los tres pases, y bloques
+de la cola de la noche 4 terminados en dev. Terminado quiere decir:
+
+- construido;
+- revisado por un revisor independiente, con sus hallazgos corregidos;
+- integrado en `post-junta-3`;
+- con sus pruebas en verde.
+
+| Qué | Hecho | Total | % |
+|---|---|---|---|
+| Pasos de esquema en **producción** (pase 1: 10 pasos + el arreglo del perfil) | 11 | 61 (11 + pase 2: 38 + pase 3: 12) | **18 %** |
+| Pase 2 (`post-junta-2`) en producción | 0 | 38 pasos + merge | 0 % (ensayado: 38/38) |
+| Pase 3 (`post-junta-3`) en producción | 0 | 12 pasos + merge | 0 % (ensayado: 12/12) |
+| Cola de la noche 4 terminada en dev | 10 | 10 bloques | **100 %** en dev |
+
+Lo que el 100 % en dev **no** incluye:
+
+- **Nada se ha probado en teléfonos reales.** Solo Chromium a 390 y 360 px y la red apagada con Playwright.
+- **Ni con datos reales de clientes ni con exportes reales de un POS.**
+- **Hay decisiones pendientes de Diego** que pueden cambiar cosas: umbrales, quién ve qué, lista negra y aviso de privacidad, precio y fotos de `/para-clubes`. Están en `docs/post-junta-3/*.md`.
+
+**Ramas:**
+
+- `master` = producción;
+- `post-junta-2` = pase 2;
+- `post-junta-3` = pase 2 + pase 3, en GitHub.
+
+Orden y rollbacks: `docs/pase-2.md` y `docs/pase-3.md`. Bitácora de la noche: `docs/avance-noche4.md`.
+
 ## Estado al 25/11/2026 (noche 3)
 
 ### En producción
