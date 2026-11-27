@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { EquipoPersonal } from "@/components/equipo/equipo-personal";
 import { ImportarMesas } from "@/components/mesas/importar-mesas";
+import { EnlacePos } from "@/components/pos/enlace-pos";
 import { mensualidadActiva } from "@/lib/mensualidad/bandera";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -626,6 +627,7 @@ export default function DuenoPanelPage() {
           >
             Descargar reportes (CSV)
           </Button>
+          <EnlacePos clubId={club.id} href="/dueno/pos" className="col-span-2" />
         </div>
 
         <VerificacionAntro club={club} onCambioEstado={fetchClub} />
