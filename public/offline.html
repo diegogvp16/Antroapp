@@ -45,6 +45,30 @@ window.addEventListener("online", function () { location.reload(); });
     };
   } catch (e) {}
 })();
+// Cuántas entradas de la puerta (escáner de respaldo, lib/puerta-respaldo.ts)
+// esperan en este teléfono. Solo el número; si la base local no existe, no se crea.
+(function () {
+  try {
+    var r = indexedDB.open("antroapp-puerta");
+    r.onupgradeneeded = function () { r.transaction.abort(); };
+    r.onsuccess = function () {
+      var db = r.result;
+      if (!db.objectStoreNames.contains("entradas")) { db.close(); return; }
+      var g = db.transaction("entradas", "readonly").objectStore("entradas").getAll();
+      g.onsuccess = function () {
+        // Las vencidas (la noche ya cerró) ya no se van a enviar: no se cuentan.
+        var n = g.result.filter(function (x) { return x.estado === "pendiente" && !(x.venceEn && Date.parse(x.venceEn) <= Date.now()); }).length;
+        db.close();
+        if (n > 0) {
+          var p = document.createElement("small");
+          p.id = "puerta";
+          p.textContent = (n === 1 ? "Hay 1 entrada de la puerta guardada" : "Hay " + n + " entradas de la puerta guardadas") + " en este teléfono, pendientes de enviar. Se envían solas cuando vuelva la señal y la app de staff esté abierta con la cuenta que las confirmó; no las confirmes otra vez.";
+          document.querySelector("main").appendChild(p);
+        }
+      };
+    };
+  } catch (e) {}
+})();
 </script>
 </body>
 </html>

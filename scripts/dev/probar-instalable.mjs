@@ -56,6 +56,27 @@ async function entrar(p, clave, destino) {
 const navegador = await chromium.launch();
 let qrPrueba = null;
 try {
+  // ---------- Service worker: cabeceras y contenido (noche 4, bloque 2) ----------
+  // El navegador revisa sw.js en cada visita solo si no lo guarda en caché
+  // HTTP: así una versión nueva entra sin esperar. Y el SW no guarda nada
+  // con datos: ni páginas, ni /api, ni Supabase.
+  {
+    const r = await fetch(BASE + "/sw.js");
+    const cuerpo = await r.text();
+    const cc = r.headers.get("cache-control") ?? "";
+    nota("sw.js no se guarda en la caché HTTP", /max-age=0|no-cache|no-store/.test(cc), cc);
+    nota("sw.js: solo intercepta navegaciones y solo guarda /offline.html",
+      /request\.mode !== "navigate"/.test(cuerpo) && /cache\.add\(new Request\(OFFLINE/.test(cuerpo) && !/cache\.put\(/.test(cuerpo));
+    nota("sw.js: al activarse borra las cachés de versiones anteriores", /caches\.delete/.test(cuerpo) && /skipWaiting/.test(cuerpo) && /clients\.claim/.test(cuerpo));
+    for (const m of ["/manifest.webmanifest", "/staff.webmanifest", "/rp.webmanifest", "/dueno.webmanifest"]) {
+      const j = await (await fetch(BASE + m)).json();
+      const dentro = new URL(j.start_url, BASE).pathname.startsWith(new URL(j.scope, BASE).pathname);
+      nota(`${m}: start_url dentro del scope y lang es-MX`, dentro && j.lang === "es-MX", `${j.start_url} en ${j.scope}`);
+    }
+    const html = await (await fetch(BASE + "/")).text();
+    nota('la app declara lang="es-MX"', /<html[^>]*lang="es-MX"/.test(html));
+  }
+
   // ---------- Manifest e instalabilidad por área ----------
   const AREAS = [
     [null, "/", "/manifest.webmanifest", "AntroApp", "/"],
@@ -153,7 +174,7 @@ try {
   await pi.getByText("Prueba WhatsApp Instalable").waitFor({ timeout: 30000 }).catch(() => {});
   const boleto = await pi.locator("body").innerText();
   nota("el enlace abre el boleto en iPhone sin sesión", boleto.includes("Prueba WhatsApp Instalable") && (await pi.locator("svg").count()) > 0);
-  nota("el boleto muestra el aviso y la fecha legible", /no garantiza la entrada/.test(boleto) && !/\d{4}-\d{2}-\d{2}/.test(boleto));
+  nota("el boleto muestra el aviso y la fecha legible", /no garantiza (la entrada|el acceso)/.test(boleto) && !/\d{4}-\d{2}-\d{2}/.test(boleto));
   nota("el boleto no muestra el teléfono", !/5512345678|55 1234 5678/.test(boleto));
   await pi.screenshot({ path: SHOTS + "boleto-iphone.png", fullPage: true });
   await iphone.close();

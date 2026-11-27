@@ -35,6 +35,11 @@ import { esErrorDeRed, mensajeParaUsuario, MENSAJE_SIN_CONEXION, type ErrorBase 
 import type { Club, ClubTable, Profile, Reservation } from "@/types";
 import { contarPendientes } from "@/lib/caja-cola";
 import { conLimite } from "@/lib/domain/caja-cola";
+// Escáner de respaldo (bandera escaner_respaldo): código a mano y entradas sin señal.
+import { useEscanerRespaldo } from "@/lib/use-puerta-respaldo";
+import { EscanerRespaldo } from "@/components/puerta/escaner-respaldo";
+import { RespaldoPuertaPanel } from "@/components/puerta/respaldo-panel";
+import { borrarCopias, contarEntradasPendientes } from "@/lib/puerta-respaldo";
 
 type RPListItem = Pick<Profile, "id" | "nombre" | "activo">;
 
@@ -218,6 +223,9 @@ export default function StaffPanelPage() {
   const html5QrCodeAttendanceRef = useRef<Html5Qrcode | null>(null);
   const [camaraAsistenciaLista, setCamaraAsistenciaLista] = useState(false);
   const attendanceScanLockRef = useRef(false);
+
+  const respaldo = useEscanerRespaldo(clubId);
+  const escanerRespaldo = respaldo.activa;
 
   useEffect(() => {
     async function loadSession() {
@@ -585,10 +593,13 @@ export default function StaffPanelPage() {
       null,
     );
     const n = session ? await contarPendientes(session.user.id).catch(() => 0) : 0;
+    const np = session ? await contarEntradasPendientes(session.user.id).catch(() => 0) : 0;
+    if (np > 0 && !window.confirm(`Tienes ${np === 1 ? "1 entrada" : `${np} entradas`} de la puerta sin enviar en este teléfono. Se quedan guardadas y se envían cuando vuelvas a entrar con tu cuenta y haya señal. ¿Cerrar sesión de todos modos?`)) return;
     if (n > 0 && !window.confirm(`Tienes ${n === 1 ? "1 movimiento" : `${n} movimientos`} de caja sin enviar en este teléfono. Se quedan guardados y se envían cuando vuelvas a entrar con tu cuenta y haya señal. ¿Cerrar sesión de todos modos?`)) return;
     // Sin señal, signOut borra la sesión del teléfono aunque el servidor no
     // conteste (auth-js 2.110). Con señal mala la petición puede quedarse
     // colgada: no se deja el botón girando, se sale a los 8 s.
+    await borrarCopias().catch(() => {});
     await conLimite(supabase.auth.signOut().then(() => undefined, () => undefined), 8_000, undefined);
     router.replace("/cliente/login");
   }
@@ -903,12 +914,14 @@ export default function StaffPanelPage() {
   }
 
   useEffect(() => {
-    if (!scannerOpen) return;
+    // Con el escáner de respaldo, la cámara la abre EscanerRespaldo (si este
+    // también la abriera habría dos lectores y dos cámaras a la vez).
+    if (!scannerOpen || escanerRespaldo) return;
 
     let cancelled = false;
     let lector: Html5Qrcode | null = null;
 
-    void import("html5-qrcode")
+    const arranque = import("html5-qrcode")
       .then(({ Html5Qrcode: Lector }) => {
         if (cancelled) return;
         const html5QrCode = new Lector(QR_READER_ELEMENT_ID);
@@ -939,17 +952,18 @@ export default function StaffPanelPage() {
 
     return () => {
       cancelled = true;
-      const activo = lector;
-      if (activo) {
-        activo
-          .stop()
-          .then(() => activo.clear())
-          .catch(() => {});
-      }
+      // Se apaga cuando termina de arrancar: stop() a media arrancada falla y
+      // la cámara se quedaba prendida.
+      void arranque
+        .then(() => {
+          const activo = lector;
+          if (activo) return activo.stop().then(() => activo.clear());
+        })
+        .catch(() => {});
       html5QrCodeRef.current = null;
       setCamaraLista(false);
     };
-  }, [scannerOpen]);
+  }, [scannerOpen, escanerRespaldo]);
 
   useEffect(() => {
     if (!attendanceScannerOpen) return;
@@ -1013,6 +1027,10 @@ export default function StaffPanelPage() {
   const totalSinConsumo = reservas.filter(
     (r) => r.se_retiro_sin_consumir === true,
   ).length;
+
+  if (scannerOpen && escanerRespaldo && clubId) {
+    return <EscanerRespaldo clubId={clubId} onCerrar={closeScanner} onEntrada={() => fetchReservas(clubId)} />;
+  }
 
   if (scannerOpen) {
     return (
@@ -1297,6 +1315,14 @@ export default function StaffPanelPage() {
         >
           Escanear QR
         </Button>
+        {clubId && (
+          <RespaldoPuertaPanel
+            clubId={clubId}
+            activa={escanerRespaldo}
+            listo={respaldo.listo}
+            onEnviadas={() => fetchReservas(clubId)}
+          />
+        )}
 
         <Button
           render={<Link href={RUTA_CAJA} />}
