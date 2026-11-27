@@ -119,8 +119,8 @@ Estas funciones vienen apagadas. Solo AntroApp las enciende, por antro.
 - En **Clientes y mensajes** › **Noche**, cada reserva trae botones **Confirmación** y **Recordatorio** (si está por llegar) o **Aviso de no-show** (si no llegó). Abren WhatsApp con el mensaje escrito: tú decides si lo mandas.
 - Gerente: en **Mensajes** cambias los textos y tocas **Guardar**.
 
-**Revisión de RPs** (gerente; se está terminando)
-- Botón **Revisión de RPs** en el panel. Toca **Buscar alertas nuevas en estas noches** para revisar un rango de noches.
+**Revisión de RPs** (gerente)
+- Botón **Revisión de RPs** en el panel. Toca **Buscar alertas nuevas en estas noches** para revisar un rango de noches (una búsqueda cada 2 minutos por antro).
 - Cada alerta empieza "Por revisar". Escribe una **Nota (obligatoria)** con lo que revisaste y toca **Descartar** (no hubo abuso) o **Confirmar** (sí lo hubo). Puedes regresarla con **Volver a revisar**.
 
 **Ventas del POS** (gerente)
