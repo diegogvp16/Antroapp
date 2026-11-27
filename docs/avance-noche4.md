@@ -69,3 +69,21 @@ Reglas:
 - **`lib/funciones.ts` (`b124d9b`):** sin señal al abrir se usa la última respuesta guardada. Sale de la revisión de fase 2.
 - **Revisiones adversariales hechas:** POS, antifraude, clientes, landing y fase 2. Todos sus hallazgos están en corrección dentro de cada carril.
 - **14:40, límite de uso:** los 5 carriles en corrección se detuvieron y se reanudaron con su contexto a las 14:55.
+
+## Actualización 16:00
+
+- **Integrados en `post-junta-3`, cada uno después de su revisión y sus correcciones:**
+  - 7 reportes PDF;
+  - 2 PWA;
+  - 5 landing (11 hallazgos);
+  - 1 POS (9 hallazgos; 5,000 líneas en 3.4 s);
+  - 4 y 6 clientes (8 hallazgos, entre ellos la enumeración gratis de la lista negra);
+  - 8 fase 2 (10 hallazgos).
+- **Después de cada merge:** typecheck, lint y build limpios; C4 57/57.
+  - Una corrida intermitente falló: el cliente perdió la sesión, probablemente por el límite de Auth compartido entre carriles. Al repetirla salió 57/57.
+- **Conflictos resueltos:** enlaces en los paneles de staff y dueño, donde se quedaron todos. El botón de catálogo se cambió por `EnlacesFase2`, que respeta la bandera.
+- **`post-junta-3` en GitHub** (`d641849`), revisada antes sin secretos ni respaldos. `master` no se tocó.
+- **En curso:**
+  - antifraude, que corrige sus 9 hallazgos;
+  - bloque 9: extender C4 y la auditoría C1/C5 a lo nuevo, en dos carriles.
+- **Para el pase:** 80 y 81 requieren la fase 2 base (P11 del pase 2, opcional).
