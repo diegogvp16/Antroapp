@@ -1,5 +1,48 @@
 # Reporte: preparación del pase y de la junta (23/11/2026)
 
+## Estado real de producción (actualizado el 27/11/2026)
+
+| Qué | Cuándo | Estado |
+|---|---|---|
+| Pase 1, pasos 1 a 10 (tabla de abajo) | 24/11 | Aplicado y verificado: humo 84/84, recorrido 49/49 |
+| Ajustes de Club Demo (`scripts/ajustes-club-demo.mjs --si`) | 24/11, 21:02 | Aplicado y verificado |
+| Paso 11: `demo-datos` para la junta | 25/11, 10:00 | Aplicado y verificado (abajo) |
+| Hueco CRÍTICO del perfil: `sql/2026-11-25-perfil-sin-club-ajeno.sql` | 27/11 | Aplicado a mano por Diego y verificado (abajo) |
+
+Nada más se ha escrito en producción. El pase 2 (`post-junta-2`) **no** se ha hecho.
+
+### Paso 11: `demo-datos` del 25/11 (autorizado por Diego)
+
+- **Revisión previa (solo lectura):**
+  - fecha operativa 2026-11-25;
+  - Club Demo publicado;
+  - `staff.demo` activo en Club Demo;
+  - `demo-datos` no había corrido ese día.
+- **Respaldo:** `backups/prod-2026-11-25-antes-demo-datos/`, solo local. Trae reservas, consumos, comisiones y caja de Club Demo, más las tablas de RP de las cuentas `demo_*`.
+- **Corrida:** `node scripts/demo-datos.mjs --fecha=2026-11-25 --si`, de 10:00:28 a 10:01:55. Primero se simuló sin `--si`.
+- **Resultado:** 4 noches, 35 mesas, 173 consumos, 64 pagos, 32 cuadres y 66 comisiones. Cada noche quedó «✓ coincide con la base».
+- **Verificación (solo lectura):**
+  - cuadre sin diferencias al centavo, en 651 revisiones;
+  - solo cambió Club Demo: los otros antros siguen con 0 reservas y 0 caja, y grupos y antros siguen iguales;
+  - humo 84/84;
+  - ensayo del guion de la junta: sin fallas.
+- **Rollback** (no hizo falta): `sql/limpiar-demo-caja.sql` en el SQL Editor y luego reponer desde el respaldo.
+
+### Hueco CRÍTICO del perfil (aplicado el 27/11)
+
+- **El hueco:** `profiles_insert_propio` dejaba que una cuenta recién registrada creara su perfil como `dueno` con el `club_id` de **cualquier** antro. Con eso leía reservas con teléfono, personal, sueldos y comisiones de ese antro. Se probó en dev con sesión real.
+  - En producción había 0 perfiles de cliente o dueño con `club_id`, así que no se explotó.
+- **Arreglo:** `sql/2026-11-25-perfil-sin-club-ajeno.sql`. Rollback: `sql/2026-11-25-perfil-sin-club-ajeno-rollback.sql`.
+  - `profiles_insert_propio` ahora exige `club_id IS NULL`.
+  - La nueva restrictiva `profiles_insert_sin_club_restrictiva` exige lo mismo con AND.
+- **Respaldo previo:** `backups/prod-2026-11-25-antes-perfil/`, solo local. Trae 28 perfiles y las políticas de `profiles`.
+- **Verificación (27/11, solo lectura en producción):**
+  - catálogo: las 2 políticas de INSERT, tal como dice el archivo, y las otras 6 políticas de `profiles` sin cambios (8 en total; antes 7);
+  - prueba del hueco en dev (`scripts/dev/probar-perfil-club-ajeno.mjs`, rama `post-junta-2`): 4/4. El registro legítimo de cliente y dueño sigue funcionando, y un perfil con antro ajeno se rechaza con 42501;
+  - recorrido de los roles en producción: 49/49, con login de RP, cliente, staff, gerente, dueño de grupo y admin;
+  - humo 84/84, que incluye los registros de cliente y de dueño;
+  - no se crearon cuentas en producción.
+
 ## Pase ejecutado (24/11/2026)
 
 Rama del pase: **`pase-final`** (`bcfe50b`) = `candidato-pase` + solo
@@ -103,16 +146,15 @@ Notas, no son fallas:
   - el merge y push a `master` → deploy automático;
   - los ajustes de Club Demo (a, b, c) con el script de arriba.
 - **No:**
-  - `demo-datos` (se corre el 25/11 después de las 08:00);
+  - `demo-datos` (se corrió después, el 25/11: ver «Estado real» arriba);
   - ninguna contraseña existente ni ninguna llave;
   - nada en otros proyectos;
   - ningún dato real tocado fuera de los 4 campos de la ficha de Club Demo.
 - **Git:**
   - `master` = `771e7d3`, árbol idéntico a `pase-final`;
-  - `desarrollo` local se adelantó a `771e7d3` pero **no se subió** (origin/desarrollo sigue en `a469a5a`);
-  - este reporte y `scripts/ajustes-club-demo.mjs` quedan sin commit;
+  - `desarrollo` = `master` + este reporte y `scripts/ajustes-club-demo.mjs` (`5c8edfb`, subido el 24/11 en la noche);
   - sin credenciales ni respaldos en Git (`backups/` está ignorada).
-- **Pendiente:** `post-junta` debe adoptar 2b y 7d antes de su propio pase.
+- **Hecho después:** `post-junta` adoptó 2b, 7c/10a y 7d al integrar `master` (`85f5a5e`).
 
 ---
 
