@@ -48,6 +48,29 @@ export async function leerFuncionesDetalle(clubId: string): Promise<{ activas: S
  *  volver la red); mientras tanto `activa()` responde con lo último que se
  *  supo (al principio, nada). Quien borre datos porque una bandera está
  *  apagada debe revisar antes que `error` sea falso. */
+// Última respuesta de la base por antro, guardada en el navegador: si al abrir
+// no hay señal, la pantalla usa eso en vez de esconder todo (p. ej. el
+// catálogo de la caja). No es dato sensible (solo qué funciones están
+// encendidas). Nunca cuenta como "la base contestó" (respondio sigue falso).
+const CLAVE_CACHE = (clubId: string) => `antroapp:funciones:${clubId}`;
+function leerCache(clubId: string): Set<ClaveFuncion> | null {
+  try {
+    const crudo = window.localStorage.getItem(CLAVE_CACHE(clubId));
+    if (!crudo) return null;
+    const lista: unknown = JSON.parse(crudo);
+    return Array.isArray(lista) ? new Set(lista.filter(esClaveFuncion)) : null;
+  } catch {
+    return null;
+  }
+}
+function guardarCache(clubId: string, activas: Set<ClaveFuncion>) {
+  try {
+    window.localStorage.setItem(CLAVE_CACHE(clubId), JSON.stringify([...activas]));
+  } catch {
+    // Sin almacenamiento (modo privado, cuota): solo se pierde el respaldo.
+  }
+}
+
 export function useFunciones(clubId: string | null | undefined) {
   const [activas, setActivas] = useState<Set<ClaveFuncion>>(new Set());
   const [cargando, setCargando] = useState(Boolean(clubId));
@@ -55,6 +78,8 @@ export function useFunciones(clubId: string | null | undefined) {
   // Antro del que la base SÍ contestó (para no tomar "sin antro todavía" o
   // "todavía no pregunta" por "apagada").
   const [respuestaDe, setRespuestaDe] = useState<string | null>(null);
+  // Antro cuyas activas vienen del respaldo del navegador (sin confirmar).
+  const [cacheDe, setCacheDe] = useState<string | null>(null);
 
   useEffect(() => {
     let vivo = true;
@@ -65,7 +90,13 @@ export function useFunciones(clubId: string | null | undefined) {
       setCargando(false);
       setError(false);
       setRespuestaDe(null);
+      setCacheDe(null);
       return;
+    }
+    const enCache = leerCache(clubId);
+    if (enCache) {
+      setActivas(enCache);
+      setCacheDe(clubId);
     }
     setCargando(true);
     const preguntar = () => {
@@ -81,6 +112,7 @@ export function useFunciones(clubId: string | null | undefined) {
           setActivas(r.activas);
           setError(false);
           setRespuestaDe(clubId);
+          guardarCache(clubId, r.activas);
         }
         setCargando(false);
       });
@@ -99,8 +131,10 @@ export function useFunciones(clubId: string | null | undefined) {
 
   // respondio: la base contestó para ESTE antro y la última pregunta no
   // falló; solo entonces `activa(x) === false` quiere decir "apagada de
-  // verdad". activa(): lo último que contestó la base para este antro.
+  // verdad". activa(): lo último que contestó la base para este antro o, si
+  // todavía no contesta (sin señal), lo último guardado en este navegador.
   const deEsteAntro = Boolean(clubId) && respuestaDe === clubId;
   const respondio = deEsteAntro && !error;
-  return { cargando, error, respondio, activa: (clave: ClaveFuncion) => deEsteAntro && activas.has(clave) };
+  const conDatos = deEsteAntro || (Boolean(clubId) && cacheDe === clubId);
+  return { cargando, error, respondio, activa: (clave: ClaveFuncion) => conDatos && activas.has(clave) };
 }
