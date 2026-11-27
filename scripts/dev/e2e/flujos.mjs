@@ -697,7 +697,7 @@ export async function correrFlujos(c) {
     }, { pagina: () => c.pRp });
   });
 
-  // ---------------- 11–16) Después del cierre (flujos-n4.mjs) ----------------
+  // ---------------- 11–17) Después del cierre (flujos-n4.mjs) ----------------
   await flujosDespuesDelCierre(c, ayudas);
 }
 
