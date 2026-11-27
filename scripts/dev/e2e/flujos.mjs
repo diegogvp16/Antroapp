@@ -6,12 +6,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afirmar, leerQRDePantalla, videoDesdePNG } from "./utiles.mjs";
 import { COMISION_FIJA, ZONA } from "./datos.mjs";
+import { flujosAntesDelCierre, flujosDespuesDelCierre } from "./flujos-n4.mjs";
 
-const T_NAV = 90_000; // primera compilación de Turbopack
-const T_UI = 25_000;
+export const T_NAV = 90_000; // primera compilación de Turbopack
+export const T_UI = 25_000;
 
 // ---------- Ayudas de interfaz ----------
-async function nuevaPagina(c, nav, nombre, { camara = false } = {}) {
+export async function nuevaPagina(c, nav, nombre, { camara = false } = {}) {
   const ctx = await nav.newContext({
     viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2,
     locale: "es-MX", timezoneId: ZONA, ...(camara ? { permissions: ["camera"] } : {}),
@@ -26,7 +27,7 @@ async function nuevaPagina(c, nav, nombre, { camara = false } = {}) {
   return p;
 }
 
-async function entrar(c, p, usuario, destino) {
+export async function entrar(c, p, usuario, destino) {
   await p.goto(c.base + "/cliente/login", { timeout: T_NAV });
   await p.fill("#email", usuario.email);
   await p.fill("#password", c.esc.password);
@@ -59,21 +60,21 @@ async function qrEnPantalla(c, f, alcance, nombre) {
   return r;
 }
 
-const tarjeta = (p, texto) => p.locator("[data-slot=card]").filter({ hasText: texto }).first();
-const dialogo = (p, nombre) => p.getByRole("dialog", { name: nombre });
-const botonMesa = (p, numero) => p.getByRole("button", { name: new RegExp(`^Mesa ${numero},`) });
+export const tarjeta = (p, texto) => p.locator("[data-slot=card]").filter({ hasText: texto }).first();
+export const dialogo = (p, nombre) => p.getByRole("dialog", { name: nombre });
+export const botonMesa = (p, numero) => p.getByRole("button", { name: new RegExp(`^Mesa ${numero},`) });
 
-async function abrirCaja(c, p) {
+export async function abrirCaja(c, p) {
   await p.goto(c.base + "/staff/caja", { timeout: T_NAV });
   await botonMesa(p, 1).waitFor({ timeout: T_NAV });
 }
 
-async function abrirMesa(p, numero) {
+export async function abrirMesa(p, numero) {
   await botonMesa(p, numero).click();
   await p.getByRole("button", { name: "Volver a las mesas" }).waitFor();
 }
 
-async function agregarConsumo(p, { concepto, precio, cantidad = 1, delListo = null, total }) {
+export async function agregarConsumo(p, { concepto, precio, cantidad = 1, delListo = null, total }) {
   const hoja = dialogo(p, "Agregar consumo");
   await hoja.waitFor();
   if (delListo) {
@@ -91,7 +92,7 @@ async function agregarConsumo(p, { concepto, precio, cantidad = 1, delListo = nu
 
 // Espía las llamadas a una función de la API (POST /rest/v1/rpc/<nombre>):
 // guarda cada solicitud (url, cabeceras, cuerpo) y su respuesta.
-function espiarRpc(p, nombre) {
+export function espiarRpc(p, nombre) {
   const llamadas = [];
   const alPedir = async (req) => {
     if (req.method() !== "POST" || !req.url().includes(`/rest/v1/rpc/${nombre}`)) return;
@@ -124,14 +125,14 @@ async function reenviar(p, l) {
 }
 
 // ---------- Consultas a la base (solo datos de la corrida) ----------
-const una = async (db, sql, params) => (await db.q(sql, params))[0] ?? null;
+export const una = async (db, sql, params) => (await db.q(sql, params))[0] ?? null;
 
-async function reservaPorQr(c, qr) {
+export async function reservaPorQr(c, qr) {
   return una(c.db, `select id, qr_code, cliente_nombre, cliente_telefono, source, status, rp_id, cliente_id, club_id, fecha::text, personas, puerta_estado, entrada_por, mesa_id, consumo_monto::text
                     from public.reservations where qr_code = $1`, [qr]);
 }
 
-async function sesionesDeMesa(c, mesaId) {
+export async function sesionesDeMesa(c, mesaId) {
   return c.db.q(`select s.id, s.estado, s.cuadrada_por,
                         (select coalesce(sum(monto_centavos), 0) from public.caja_consumos k where k.sesion_id = s.id and not k.anulado)::int consumo,
                         (select count(*) from public.caja_pagos g where g.sesion_id = s.id and not g.anulado)::int pagos,
@@ -143,7 +144,7 @@ async function comisionesDe(c, reservaId) {
   return c.db.q(`select tipo, monto::text, status, rp_id, regla_id from public.commissions where reservation_id = $1`, [reservaId]);
 }
 
-const pesos = (centavos) =>
+export const pesos = (centavos) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: centavos % 100 ? 2 : 0, maximumFractionDigits: 2 }).format(centavos / 100);
 
 // ===================================================================
@@ -625,6 +626,12 @@ export async function correrFlujos(c) {
       if (f.vivo) c.segundoGrupo = true;
     });
 
+  // ---------------- 9 y 10) Antes del cierre (flujos-n4.mjs) ----------------
+  // Escáner de respaldo e inventario/propina en el cobro: necesitan la noche
+  // abierta, así que corren antes del 8 (el reporte los lista en este orden).
+  const ayudas = { nombres, tel, mesa };
+  await flujosAntesDelCierre(c, ayudas);
+
   // ---------------- 8) Cierre de noche ----------------
   await run.flujo("8", "Cierre de la noche y panel del RP", async () => {
     if (!c.cuadradas) return "no se cuadraron las mesas (flujo 6)";
@@ -635,7 +642,8 @@ export async function correrFlujos(c) {
   }, async (f) => {
     const p = c.pGerente;
     const efectivo = 125050 + (c.segundoGrupo ? 18000 : 0);
-    const tarjeta = 27000;
+    // + lo cobrado en tarjeta en la Mesa 3 por el flujo 10 (inventario), si corrió.
+    const tarjeta = 27000 + (c.extraTarjeta ?? 0);
     const faltante = 5000; // se cuentan $50 menos de efectivo
     await f.paso("«Cuadre de la noche»: todas las mesas cuadradas y los cobrados por método", async () => {
       await abrirCaja(c, p);
@@ -688,6 +696,9 @@ export async function correrFlujos(c) {
       return (await r.locator("main").innerText()).split("\n").slice(0, 6).join(" · ");
     }, { pagina: () => c.pRp });
   });
+
+  // ---------------- 11–16) Después del cierre (flujos-n4.mjs) ----------------
+  await flujosDespuesDelCierre(c, ayudas);
 }
 
 // Diagnóstico de la nómina, calculado en el momento (nada de texto fijo):
@@ -705,7 +716,7 @@ async function diagnosticoNomina(c, r) {
     const directo = await sb.from("reservations").select("id", { count: "exact", head: true }).eq("rp_id", c.esc.usuarios.rp.id);
     const fn = await sb.rpc("rp_mis_reservas", { p_desde: c.esc.noche, p_hasta: c.esc.noche });
     partes.push(`Con la sesión del RP: select a reservations → ${directo.error ? "error " + directo.error.code : directo.count + " fila(s)"}; rp_mis_reservas(noche) → ${fn.error ? "error " + fn.error.code : (fn.data?.length ?? 0) + " fila(s)"}.`);
-    await sb.auth.signOut().catch(() => {});
+    await sb.auth.signOut({ scope: "local" }).catch(() => {});
   } catch (e) {
     partes.push(`No se pudo abrir la sesión del RP para diagnosticar: ${String(e.message).slice(0, 120)}.`);
   }
