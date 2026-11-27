@@ -19,6 +19,7 @@ import {
 } from "@/lib/domain/grupo";
 import type { Profile } from "@/types";
 import { TemaReportesContenedor } from "@/components/tema-reportes";
+import { EnlaceReportesPdf } from "@/components/reportes/enlace-reportes-pdf";
 
 type Rol = Profile["role"];
 type RolPermitido = "dueno" | "gerente" | "admin";
@@ -198,6 +199,7 @@ export default function GrupoPage() {
             Configuración del grupo
           </Link>
         )}
+        <EnlaceReportesPdf clubIds={filas?.map((f) => f.club_id) ?? []} className="w-fit" />
 
         <SelectorRango
           atajo={atajo}
