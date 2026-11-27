@@ -43,6 +43,7 @@ import { useEscanerRespaldo } from "@/lib/use-puerta-respaldo";
 import { EscanerRespaldo } from "@/components/puerta/escaner-respaldo";
 import { RespaldoPuertaPanel } from "@/components/puerta/respaldo-panel";
 import { borrarCopias, contarEntradasPendientes } from "@/lib/puerta-respaldo";
+import { EnlaceRevisionRps } from "@/components/fraude/enlace-revision-rps";
 
 type RPListItem = Pick<Profile, "id" | "nombre" | "activo">;
 
@@ -1376,6 +1377,7 @@ export default function StaffPanelPage() {
             <EnlacePos clubId={clubId} href="/staff/pos" />
             {/* Fase 2: solo con NEXT_PUBLIC_FASE2 y la bandera del antro. */}
             {FASE2_ACTIVA && <EnlacesFase2 clubId={clubId} />}
+            <EnlaceRevisionRps href="/staff/revision" clubId={clubId} />
           </div>
         )}
         {staffRole === "gerente" && clubId && <AvisoExistencias clubId={clubId} />}
