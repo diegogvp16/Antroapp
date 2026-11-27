@@ -100,6 +100,9 @@ export async function crearEscenario(svc, { alCrear } = {}) {
       ["gerente", "gerente", clubId, `${MARCA}gerente ${sufijo}`],
       ["rp", "rp", clubId, `${MARCA}rp ${sufijo}`],
       ["cliente", "cliente", null, `${MARCA}cliente ${sufijo}`],
+      // Admin de la corrida: solo para ver el contacto de /para-clubes en
+      // /admin/contactos (flujo 16). Se borra al final como las demás.
+      ["admin", "admin", null, `${MARCA}admin ${sufijo}`],
     ];
     let tel = 0;
     for (const [clave, role, club_id, nombre] of cuentas) {
@@ -129,6 +132,39 @@ export async function crearEscenario(svc, { alCrear } = {}) {
   }
 }
 
+// Correo del formulario de /para-clubes de una corrida (flujo 16).
+export const correoContacto = (tag) => `${tag}_contacto@example.com`;
+
+const existe = async (db, tabla) => (await db.q("select to_regclass($1) is not null as hay", [`public.${tabla}`]))[0].hay;
+async function borrarDelAntro(db, tabla, clubIds) {
+  if (await existe(db, tabla)) await db.q(`delete from public.${tabla} where club_id = any($1::uuid[])`, [clubIds]);
+}
+
+// ---------- Banderas (sql/post-junta-3/00 y 50) ----------
+// Solo las del antro de la corrida: se escriben como postgres
+// (funcion_cambiar exige una sesión de admin) y se quitan al terminar cada
+// flujo; al final se borra el antro de todos modos. activa = null quita el
+// valor propio (apagada, como nace el antro).
+export async function banderaClub(db, clubId, funcion, activa) {
+  if (activa === null) await db.q("delete from public.club_funciones where club_id = $1 and funcion = $2", [clubId, funcion]);
+  else
+    await db.q(
+      `insert into public.club_funciones (club_id, funcion, activa) values ($1, $2, $3)
+       on conflict (club_id, funcion) do update set activa = excluded.activa, cambiado_en = now()`,
+      [clubId, funcion, activa]);
+}
+export async function banderasDelAntro(db, clubId) {
+  return (await db.q("select funcion, activa from public.club_funciones where club_id = $1 order by funcion", [clubId]));
+}
+// Bandera de plataforma (/para-clubes). Es GLOBAL en dev: se cambia solo
+// mientras dura el flujo 16 y se deja como estaba.
+export async function banderaPlataforma(db, clave) {
+  return (await db.q("select activa from public.plataforma_banderas where clave = $1", [clave]))[0]?.activa ?? null;
+}
+export async function ponerBanderaPlataforma(db, clave, activa) {
+  await db.q("update public.plataforma_banderas set activa = $2, cambiado_en = now() where clave = $1", [clave, activa]);
+}
+
 // Borra todo lo de una corrida aunque esté a medias. Abre su PROPIA conexión
 // (no la de los flujos, que pudo caerse) y la reintenta hasta 3 veces.
 export async function limpiarEscenario(svc, esc) {
@@ -145,6 +181,18 @@ export async function limpiarEscenario(svc, esc) {
       await db.q("begin");
       await db.q("set local antroapp.borrado_pruebas = 'on'");
       if (clubIds.length) {
+        // Post-junta-3 (flujos 9–16). Las tablas existen en dev; si alguna
+        // faltara (SQL deshecho por otro carril), se salta.
+        // POS: sus ventas apuntan a la caja (on delete set null + trigger).
+        for (const t of ["pos_ventas", "pos_importacion_lineas", "pos_importaciones", "pos_mapeos"]) await borrarDelAntro(db, t, clubIds);
+        // Propinas (fase 2): sin cascada y con candado (lo abre borrado_pruebas).
+        for (const t of ["propinas_reparto_lineas", "propinas_repartos", "propinas_cobro_anuladas", "caja_propinas", "propinas_config"])
+          await borrarDelAntro(db, t, clubIds);
+        // Lista negra y WhatsApp (también se irían en cascada con el antro).
+        for (const t of ["lista_negra_eventos", "club_bloqueos", "club_noshow_politica", "whatsapp_plantillas_cambios", "club_whatsapp_plantillas"])
+          await borrarDelAntro(db, t, clubIds);
+        // Banderas del antro y su bitácora.
+        for (const t of ["club_funciones", "funciones_cambios"]) await borrarDelAntro(db, t, clubIds);
         // Inventario (fase 2): sus movimientos apuntan a los consumos.
         await db.q("delete from public.producto_movimientos where club_id = any($1::uuid[])", [clubIds]);
         for (const t of ["caja_eventos", "caja_cuadres", "caja_pagos", "caja_consumos", "mesa_cuentas", "mesa_sesiones", "caja_noches", "caja_permisos"])
@@ -155,7 +203,14 @@ export async function limpiarEscenario(svc, esc) {
           await db.q(`delete from public.${t} where club_id = any($1::uuid[])`, [clubIds]);
         await db.q("delete from public.reservations where club_id = any($1::uuid[])", [clubIds]);
       }
+      // Contacto de /para-clubes (flujo 16): por el correo de la corrida.
+      if (esc.tag && (await existe(db, "contactos_clubes"))) {
+        const correo = correoContacto(esc.tag);
+        await db.q("delete from public.contactos_clubes where correo = $1", [correo]);
+        await db.q("delete from public.contacto_intentos where correo_hash = public.contacto_huella('correo:' || $1)", [correo]);
+      }
       if (ids.length) {
+        if (await existe(db, "para_clubes_bitacora")) await db.q("delete from public.para_clubes_bitacora where hecho_por = any($1::uuid[])", [ids]);
         await db.q("delete from public.commissions where rp_id = any($1::uuid[])", [ids]);
         await db.q("delete from public.reservations where cliente_id = any($1::uuid[]) or rp_id = any($1::uuid[])", [ids]);
         await db.q("delete from public.aceptaciones_legales where profile_id = any($1::uuid[])", [ids]);
@@ -210,6 +265,18 @@ export async function contarDeCorrida(db, esc) {
             (select count(*) from public.aceptaciones_legales where profile_id = any($1::uuid[]))::int aceptaciones`,
     [ids, clubIds, hashes, marca],
   );
+  // Post-junta-3 (flujos 9–16), solo las tablas que existan en dev.
+  const porAntro = ["pos_ventas", "pos_importaciones", "club_funciones", "club_bloqueos", "productos", "caja_propinas", "propinas_repartos", "caja_eventos"];
+  for (const t of porAntro) {
+    if (await existe(db, t)) r[t] = (await db.q(`select count(*)::int n from public.${t} where club_id = any($1::uuid[])`, [clubIds]))[0].n;
+  }
+  if (esc?.tag && (await existe(db, "contactos_clubes"))) {
+    const correo = correoContacto(esc.tag);
+    const [x] = await db.q(
+      `select (select count(*) from public.contactos_clubes where correo = $1)::int contactos,
+              (select count(*) from public.contacto_intentos where correo_hash = public.contacto_huella('correo:' || $1))::int intentos_contacto`, [correo]);
+    Object.assign(r, x);
+  }
   return r;
 }
 

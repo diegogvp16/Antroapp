@@ -6,6 +6,12 @@
 //   PLAYWRIGHT_DESDE=<carpeta con node_modules/playwright y qrcode> \
 //     node scripts/dev/e2e/correr.mjs [--base=http://localhost:3031]
 //
+// Los flujos de la fase 2 (10 y 11) necesitan el servidor con
+// NEXT_PUBLIC_FASE2=1 (con la bandera global apagada el catálogo y la
+// propina no aparecen y esos flujos fallan). En un worktree, Turbopack no
+// arranca: ahí se usa `set -a; . ./.env.dev; set +a; NEXT_PUBLIC_FASE2=1
+// npx next dev -p 3061` (webpack) y --base=http://localhost:3061.
+//
 // Deja el reporte autocontenido en screenshots-e2e/reporte.html (carpeta
 // ignorada por Git, regla /screenshots-*/): cada flujo, cada paso, tiempo,
 // OK/FALLA/NO CORRIÓ, detalle o error y su captura (embebida una vez; el
@@ -58,6 +64,58 @@
 //      la semana muestra $175 (si no, el error trae un diagnóstico calculado
 //      en el momento: pantalla, base, lo que ve el RP con su sesión, política
 //      y de dónde lee el panel).
+//
+// Post-junta-3 (scripts/dev/e2e/flujos-n4.mjs). Cada función va detrás de su
+// bandera (sql/post-junta-3/00, por antro): primero un paso revisa que con la
+// bandera APAGADA no se vea; luego se enciende SOLO para el antro de la
+// corrida (como postgres en club_funciones) y se comprueba que funciona, en
+// pantalla y en la base. Cada flujo deja su bandera como estaba al terminar.
+// El 9 y el 10 necesitan la noche abierta y corren ENTRE el 7 y el 8 (el
+// reporte lista los flujos en el orden en que corrieron):
+//   9) Escáner de respaldo (escaner_respaldo): apagada, el boleto no trae
+//      código corto; encendida, se lee el código de dos boletos /r/<código>,
+//      el staff (otro teléfono, cámara que no lee) escribe uno con señal y
+//      confirma la entrada, y el otro SIN señal (setOffline): la copia de la
+//      noche lo valida, queda pendiente y al volver la red se envía solo; en
+//      la base, usada/entró por el staff y un solo evento de cada tipo.
+//  10) Inventario y propina en el cobro (inventario + propinas, servidor con
+//      NEXT_PUBLIC_FASE2=1): apagadas, el panel del gerente no enlaza a la
+//      fase 2; encendidas, el gerente da de alta un producto con 10 piezas
+//      (producto_guardar con su sesión), el staff sienta un walk-in en la
+//      Mesa 3, vende 2 del catálogo (existencias 10 → 8 y bitácora ligada al
+//      consumo), cobra $300 en tarjeta con $50 de propina aparte y el gerente
+//      cuadra. El 8 suma esos $300 a la tarjeta esperada. Si el flujo se
+//      corta con la Mesa 3 abierta, se cobra y cuadra por la API para no
+//      dejar sin probar el cierre.
+// Después del cierre:
+//  11) Reparto de propinas: «Propinas de la noche» → «Ver cómo queda» →
+//      «Repartir $50»; en la base un reparto cuyas líneas suman $50.
+//  12) POS (pos_ventas): apagada, sin enlace; encendida, el gerente sube un
+//      CSV con un ticket por mesa a la hora de la caja (Mesa 2 se liga sola;
+//      Mesa 1, con dos grupos, se asigna a mano a la cuenta del RP), importa
+//      y concilia; en la base cada venta en su cuenta y la caja y las
+//      comisiones sin cambio.
+//  13) Reportes PDF (reportes_pdf): apagada, /grupo sin enlace; encendida,
+//      se descarga el PDF de la noche (sin hoja de compartir) y sus textos
+//      traen antro, consumo, cobrado por método, «Faltan $50.00» y
+//      comisiones, calculados de la base.
+//  14) Lista negra (lista_negra): apagada, sin «Clientes y mensajes»;
+//      encendida, el gerente bloquea un teléfono y la reserva sin cuenta con
+//      ese teléfono la rechaza la base (P0001) con el mensaje neutro, sin
+//      guardar reserva ni intento.
+//  15) WhatsApp (whatsapp): apagada, el staff no ve «Clientes y mensajes»;
+//      encendida, en «Mañana» la reserva trae Confirmación y Recordatorio; el
+//      enlace es wa.me/52<teléfono> con nombre, antro, personas, boleto y el
+//      aviso del QR; tocarlo abre wa.me (simulado) y no escribe nada.
+//  16) /para-clubes (bandera de PLATAFORMA para_clubes, global en dev: se
+//      cambia solo mientras dura el flujo y se deja como estaba, también si
+//      la corrida se corta): apagada 404; encendida 200, el contacto se
+//      guarda y lo ve el admin de la corrida en /admin/contactos.
+//   B) Banderas restauradas: el antro sin banderas propias y para_clubes como
+//      antes de la corrida.
+//   (Pendiente) Antifraude: sigue en otra rama; su lugar está marcado en
+//   flujos-n4.mjs («LUGAR PARA ANTIFRAUDE»).
+//
 //   Si un paso falla, el resto de su flujo sale como «NO CORRIÓ»; un flujo
 //   cuyos requisitos no se cumplieron sale OMITIDO con el motivo.
 //
@@ -78,9 +136,10 @@
 // Dev ni corre sembrar-dev/demo-datos. Usa una sola reserva sin cuenta real
 // por corrida (el cupo de 20 por IP y hora es compartido).
 //
-// Tarda 3–5 min con el servidor ya compilado (la primera vez Turbopack
-// compila cada ruta y puede tardar más). Si otro carril edita el árbol a
-// media corrida, la recarga de Turbopack puede tumbar un paso: repetir.
+// Tarda ~3 min (104 pasos; 162–168 s el 27/11/2026) con el servidor ya
+// compilado (la primera vez el servidor compila cada ruta y puede tardar
+// más). Si otro carril edita el árbol a media corrida, la recarga del
+// servidor puede tumbar un paso: repetir.
 //
 // Opciones:
 //   --base=<url>         servidor local (por defecto http://localhost:3031)
@@ -97,7 +156,7 @@ import { conectarDevEscritura, REF_DEV, REF_PROD, verificarEnvDev } from "../../
 import { abrirLector, cargarPlaywright, Corredor } from "./utiles.mjs";
 import {
   borrarTestigo, contarDeCorrida, contarMarcaGlobal, crearEscenario, escribirTestigo, limpiarEscenario,
-  restosViejos, testigosHuerfanos, totalRestos,
+  ponerBanderaPlataforma, restosViejos, testigosHuerfanos, totalRestos,
 } from "./datos.mjs";
 import { correrFlujos } from "./flujos.mjs";
 import { armarReporte } from "./reporte.mjs";
@@ -206,6 +265,16 @@ function cerrarYLimpiar() {
     await c.lector?.ctx.close().catch(() => {});
     await c.nav?.close().catch(() => {});
     await c.navCam?.close().catch(() => {});
+    for (const nav of c.navegadoresExtra ?? []) await nav.close().catch(() => {});
+    // /para-clubes (flujo 16): su bandera es de TODA la plataforma en dev;
+    // si la corrida se cortó a la mitad, se deja como estaba.
+    if (c.paraClubesPrevio !== undefined && c.paraClubesPrevio !== null) {
+      const db = await conectarDevEscritura().catch(() => null);
+      if (db) {
+        await ponerBanderaPlataforma(db, "para_clubes", c.paraClubesPrevio).catch((e) => console.log("NO SE PUDO RESTAURAR para_clubes: " + e.message));
+        await db.fin().catch(() => {});
+      }
+    }
     await c.db?.fin().catch(() => {});
     if (esc) {
       limpieza = await limpiarEscenario(svc, esc).catch((e) => ({ errores: ["limpieza: " + e.message] }));
