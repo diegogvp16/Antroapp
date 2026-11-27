@@ -36,3 +36,22 @@ Reglas:
   - Pantalla `/admin/funciones` y `lib/funciones.ts`.
   - Pruebas en dev: 31/31. Rollback idéntico y reaplicación igual.
 - **Máquina:** 16 núcleos, 31 GB de RAM, conectada a la corriente. Corren 5 carriles a la vez y luego los otros 2.
+
+## Actualización 14:15
+
+- **`01-largos-texto.sql` (`aaedb90`)**: la revisión del bloque 7 encontró que un RP puede ponerse un nombre de 20,000 letras.
+  - Se agregaron checks `NOT VALID`: nombre ≤ 120 y teléfono ≤ 30, en `profiles` y `reservations`.
+  - El mensaje de error es claro.
+  - Prueba: 10/10.
+- **Bloque 7, reportes PDF: integrado** (`0721dd4`).
+  - La revisión adversarial encontró 4 defectos y los 4 se corrigieron: rendimiento con nombres enormes, cuadre y anulaciones que faltaban, descarga en iOS y caracteres invisibles.
+  - Pruebas: 38/38, 34/34 y 152/152.
+  - Después del merge: typecheck, lint y build limpios; C4 57/57.
+- **Bloque 3, antifraude: terminado**, en corrección después de su revisión.
+  - Defecto alto: la detección no termina en un antro con volumen real; pasa del límite de 8 s.
+  - Reglas que no hacen lo que dicen: teléfonos con formato raro, una alerta por semana y escaneos duplicados que nunca disparan.
+- **Bloque 2, PWA y escáner: terminado**, en corrección después de su revisión.
+  - Defecto alto: con la bandera encendida se abren dos cámaras.
+  - Con mala señal se borraba la copia local.
+- **Bloque 1, POS: terminado** (160/160, 135/135, 50/50) y en revisión.
+- **En curso:** clientes (lista negra y WhatsApp), landing y fase 2.
