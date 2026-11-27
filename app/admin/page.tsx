@@ -383,6 +383,9 @@ export default function AdminPage() {
           <Button variant="outline" className="h-10" render={<Link href="/admin/correos" />} nativeButton={false}>
             Bandeja de correos
           </Button>
+          <Button variant="outline" className="h-10" render={<Link href="/admin/funciones" />} nativeButton={false}>
+            Funciones en prueba
+          </Button>
         </div>
 
         <VerificacionesPendientes onCambio={fetchClubs} />
