@@ -3,6 +3,8 @@
 -- Fecha: 2026-11-27 (noche 4). Rollback: sql/post-junta-3/02-ip-cliente-rollback.sql
 -- Prueba (dev): node scripts/dev/probar-ip-cliente.mjs
 -- Requiere: sql/post-junta-2/72 y 66 (reservations_antiabuso_anon).
+-- Orden: va CON EL PASE 2, como paso Q10b, justo después del Q10 (el 66).
+--        Verificación y rollback: docs/pase-2.md, «Q10b».
 --
 -- Hallazgo (revisión del bloque 5, CONFIRMADO en dev): el gateway de Supabase
 -- AGREGA la IP real al final de x-forwarded-for, después de lo que mande el
@@ -18,7 +20,7 @@
 -- NULL (sin tope por IP, como antes sin encabezados). Lo usan los topes de
 -- reservas sin cuenta (este archivo) y el formulario de /para-clubes (50).
 -- reservations_antiabuso_anon queda idéntica a la del 66 salvo la línea de
--- la IP. Este archivo va DESPUÉS de todo el pase 2.
+-- la IP. Nada de lo que va después en el pase 2 (Q11 en adelante) la redefine.
 -- ============================================================================
 begin;
 
