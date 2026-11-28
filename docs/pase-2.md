@@ -225,6 +225,8 @@ primeras aplicaciones). La base revertida solo difiere de producción en GRANT
 a `service_role`. El Q10b pasó su verificación en los tres estados y quedó
 intacto al final.
 
+**Segunda corrida (28/11, con otra semilla de datos: `sembrar-dev` + `demo-datos` nuevos): 39/39** en 10.3 min (62.6 s sumando las primeras aplicaciones; más datos que en la primera). Mismos resultados paso por paso y esquema final **idéntico** al de la primera corrida (0 líneas distintas). El pase 3 encima: 11/11, también idéntico.
+
 **Corrida anterior (sin el Q10b):**
 
 - **Resultado: 38/38.**
