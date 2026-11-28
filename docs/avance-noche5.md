@@ -16,13 +16,14 @@ Leyenda: ✔ hecho y verificado · ⚠ hecho con límites (ver nota) · ✘ no s
 | 6 | Material de venta | ✔ | `docs/venta/una-pagina.md`, `faq.md` (15), `guion-demo-video.md` (9 escenas) | Separa hoy / pase 2 / pase 3. Precio «[por definir]» (los $2,500 solo en notas internas «quitar antes de enviar»). Commit `e8036aa` |
 | 7 | Plan de piloto | ✔ | `docs/piloto-playbook.md` | Requisitos R1–R7 (pase 2 en producción primero); criterios son propuesta. Commit `212cec2` |
 | 8 | Revisión de privacidad | ✔ | `docs/privacidad-datos.md` | 19 hallazgos, 20 puntos para el aviso, 14 decisiones. Verificados a mano: base en ca-central-1, SHA-256 sin sal, campo «Últimos 4 dígitos». Commit `87162e0` |
-| 9 | Lista de lanzamiento | ☐ | `docs/lanzamiento-checklist.md` | Al final, con lo de los demás |
+| 9 | Lista de lanzamiento | ✔ | `docs/lanzamiento-checklist.md` | Piloto: 7 ✔ · 8 ⚠ · 13 ✘ · 6 ❓; cobro: 2 ⚠ · 9 ✘. Falta poner el resultado de la prueba de carga (renglón A1). Commit `1ca4439` |
 
 ## Siguiente paso exacto
 
-Esperar al agente del bloque 1 (los demás ya están).
-Al llegar cada uno: revisar su diff, typecheck y lint, y commit por bloque.
-Después: bloque 9 con lo de todos, y al final revisión del diff y subida de la rama.
+Esperar al agente del bloque 1 (los demás ya están). Al llegar: revisar, commit, y
+actualizar el renglón de carga en `docs/lanzamiento-checklist.md` (A1).
+Después: repetir el ensayo del pase 2 con otra semilla, revisar el diff completo
+(secretos, código muerto), subir `post-junta-4` y reporte final.
 
 ## Bitácora
 
@@ -33,3 +34,4 @@ Después: bloque 9 con lo de todos, y al final revisión del diff y subida de la
 - 27/11 — Bloque 5 recibido; pruebas repetidas por el coordinador (321/321 sin base, dominio 189/189); commits `c3b04a3` (arreglos) y `7276337` (archivos y prueba).
 - 28/11 — Bloque 2 recibido; exportación repetida por el coordinador (7/7 huellas); commit.
 - 28/11 — Bloque 3 recibido y en commit (incluye arreglo de una prueba vieja de probar-mensualidad, 60/60).
+- 28/11 — Bloque 9 escrito (`1ca4439`); `docs/avance.md` con 39 + 11 pasos.
