@@ -66,11 +66,16 @@ Git ni a Vercel.
 
 Los respaldos de Supabase cubren la base de datos, no los archivos. Hoy las
 fotos de los antros y los documentos de verificación solo existen en
-Storage. Opciones:
-- Mínimo: descargar periódicamente los buckets (Storage → bucket → descargar)
-  y guardarlos fuera de Supabase.
-- Mejor (cuando haya más antros): un script programado que copie los
-  buckets a otro almacenamiento. Se puede hacer como siguiente paso.
+Storage.
+
+Desde el 27/11/2026 hay script:
+- `node scripts/exportar-storage.mjs` exporta todos los buckets a `backups/storage-<fecha>-<origen>/`, con manifiesto y huellas. Solo lee.
+- `scripts/dev/importar-storage.mjs` lo sube a un proyecto que no sea producción, para restaurar.
+
+Uso, prueba en dev, frecuencia y la restauración completa en un proyecto
+nuevo: **`docs/recuperacion.md`**. Producción todavía no se ha exportado: lo
+corre Diego (`--env=<llaves de prod> --produccion`), cada semana y antes de
+cada pase.
 
 ## 4. Qué hacer antes del pase a producción (bloque 6)
 

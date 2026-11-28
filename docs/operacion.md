@@ -34,7 +34,9 @@ marcado **(pase 2)** existe solo después de aplicar el SQL y el código de
 ## Cada semana (lunes)
 
 1. Supabase → **Database → Backups**: un respaldo por día, en «Completed».
-   Si falta alguno, abre un ticket a Supabase.
+   Si falta alguno, abre un ticket a Supabase. Los archivos de Storage **no**
+   vienen ahí: `node scripts/exportar-storage.mjs --env=<llaves de prod> --produccion`
+   (`docs/recuperacion.md`).
 2. Supabase → **Advisors → Security**: sin avisos nuevos.
 3. Limpieza de intentos viejos **(pase 2)**: Supabase → SQL Editor:
    `select public.antiabuso_limpiar();`. Borra intentos de login y registro
@@ -135,6 +137,9 @@ Apagarlas: quita `ALERTAS_CORREO`.
 ## Restaurar un respaldo
 
 ### Producción (Supabase)
+
+> Si el proyecto entero se perdió (no solo datos dañados): restauración en un
+> proyecto nuevo, Storage incluido, en `docs/recuperacion.md`.
 
 > Restaurar reemplaza **toda** la base por la del momento del respaldo: lo
 > que pasó después (reservas, caja, cuentas nuevas) **se pierde**. Es el
