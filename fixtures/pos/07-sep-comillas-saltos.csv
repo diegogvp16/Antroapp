@@ -1,0 +1,6 @@
+sep=;
+Ticket;Fecha;Hora;Mesa;Producto;Cantidad;Total;Comensal
+"T-10";"21/11/2026";"22:30";"Mesa 2";"Tabla de quesos; carnes frías";"1";"345,00";"Mariana"
+"T-10";"21/11/2026";"22:31";"Mesa 2";"Coctel ""de la casa""
+(edición otoño)";"2";"300,00";"Mariana"
+"T-11";"21/11/2026";"23:05";"VIP 2";"Vino tinto copa";"1,5";"217,50";""

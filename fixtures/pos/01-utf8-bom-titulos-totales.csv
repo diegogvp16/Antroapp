@@ -1,0 +1,14 @@
+﻿"Reporte de ventas por producto"
+"Sucursal: Club Ficticio Centro"
+"Del 20/11/2026 al 21/11/2026"
+
+Folio,Fecha,Hora,Mesa,Producto,Cant.,Precio Unitario,Importe,Forma de Pago,Mesero
+A-1001,20/11/2026,22:45,Mesa 5,Piña colada,2,"$145.00","$290.00",Efectivo,Begoña
+A-1001,20/11/2026,22:47,Mesa 5,Jalapeño poppers,1,"$185.50","$185.50",Efectivo,Begoña
+A-1002,20/11/2026,23:10,VIP 1,Botella tequila añejo 750 ml,1,"$2,850.00","$2,850.00",Tarjeta,Andrés
+A-1002,20/11/2026,23:12,VIP 1,Agua mineral,6,"$45.00","$270.00",Tarjeta,Andrés
+
+A-1003,21/11/2026,00:35,12,Café americano,3,"$38.00","$114.00",Tarjeta,Sofía
+A-1004,21/11/2026,01:20,Barra,Cerveza clara,4,"$65.00","$260.00",Efectivo,Íñigo
+,,,,,,,,,
+,,,,TOTAL,,,"$3,969.50",,

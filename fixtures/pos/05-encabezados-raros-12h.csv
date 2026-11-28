@@ -1,0 +1,4 @@
+  No. de Orden , FECHA ,Hora de Apertura,Hora de Cierre,Área,Núm. de Mesa,Artículo / Descripción,Cant.,P. Unit.,Descuento,IVA,Importe Total ($),Propina,Método de Pago,Atendió,Estatus
+ C-77 ,20-nov-2026,10:45 p. m.,11:58 p. m.,Terraza,T-3,Margarita de tamarindo,2,"$ 95.00",0.00,30.40,"$ 190.00 ",20.00,Efectivo,Iñaki,Cerrada
+C-78,20-nov-2026,11:20 p.m.,1:05 AM,Salón,Mesa 9,Botella vodka 1 L,1,"MXN 1,180.00",0.00,188.80,"MXN 1,180.00",0.00,Tarjeta de crédito,Ximena,Cerrada
+C-79,21 de noviembre de 2026,12:15 a. m.,2:40 a. m.,Salón,Mesa 9,Alitas búfalo,1,250.00,25.00,36.00,250.00 M.N.,0,Tarjeta de débito,Ximena,Cerrada

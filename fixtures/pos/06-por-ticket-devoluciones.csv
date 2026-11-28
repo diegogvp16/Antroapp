@@ -1,0 +1,7 @@
+Cheque,Fecha Apertura,Hora Apertura,Mesa,Total,Tipo de Pago
+3301,2026-11-21,22:10:00,15,"1,540.00",Tarjeta
+3302,2026-11-21,23:45:00,16,860.5,Efectivo
+3303,2026-11-22,01:30:00,15,(250.00),Devolución
+3304,2026-11-22,02:00:00,17,0.00,Cortesía
+3305,2026/11/22,03:10:00,,320.00-,Cancelación
+,,,,"1,830.50",Gran total

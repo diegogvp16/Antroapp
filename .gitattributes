@@ -2,3 +2,6 @@
 # de Postgres hace que la base y el archivo dejen de ser idénticos.
 *.sql text eol=lf
 *.mjs text eol=lf
+# Archivos de ejemplo del POS: los bytes importan (BOM, CRLF, Windows-1252,
+# UTF-16). Git no les cambia los finales de línea.
+fixtures/pos/** -text

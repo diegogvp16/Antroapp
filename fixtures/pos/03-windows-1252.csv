@@ -1,0 +1,5 @@
+Núm. Ticket,Fecha,Hora,No. Mesa,Descripción,Cantidad,Precio,Total,Mesero,Observaciones
+00871,21/11/2026,21:55,04,Café de olla,2,"$42.00","$84.00",Ángeles,
+00871,21/11/2026,21:58,04,Limonada con chía,2,"$55.00","$110.00",Ángeles,"Sin hielo, con limón"
+00872,21/11/2026,23:30,07,Botella whisky 12 años,1,"$3,200.00","$3,200.00",Martín,"Pidió ""hielo aparte"""
+00873,22/11/2026,03:15,07,Agua de piña,5,"$40.00","$200.00",Martín,
