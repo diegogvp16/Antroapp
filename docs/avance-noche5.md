@@ -20,7 +20,7 @@ Leyenda: ✔ hecho y verificado · ⚠ hecho con límites (ver nota) · ✘ no s
 
 ## Siguiente paso exacto
 
-Los 9 bloques están y el ensayo se repitió. Falta: subir `post-junta-4`, revisar que Vercel solo cree Preview y el reporte final.
+**Cola terminada.** `post-junta-4` en GitHub (`0817e2d` + este cierre); Vercel solo creó Preview (Ready); producción sigue en `2f87e63`. Siguiente paso: que Diego revise las decisiones del reporte final.
 
 ## Bitácora
 
@@ -34,3 +34,4 @@ Los 9 bloques están y el ensayo se repitió. Falta: subir `post-junta-4`, revis
 - 28/11 — Bloque 9 escrito (`1ca4439`); `docs/avance.md` con 39 + 11 pasos.
 - 28/11 — Bloque 1 recibido; dev comparado con la foto del final del pase 3: 0 líneas distintas. Commit y renglón A1 de la lista de lanzamiento.
 - 28/11 — Si sobra tiempo: ensayo del pase 2 con otra semilla (sembrar-dev + demo-datos nuevos): 39/39 en 10.3 min, mismos resultados y esquema final idéntico a la primera corrida; pase 3 11/11 idéntico. Banderas de dev en 0. Revisión del diff de la noche: sin secretos, correos reales, backups, console.log ni sondas.
+- 28/11 — Typecheck y lint de toda la rama limpios. Rama subida; Preview Ready. Cierre.
