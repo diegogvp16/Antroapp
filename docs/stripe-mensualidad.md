@@ -35,9 +35,15 @@ producción salvo que pongas a propósito `STRIPE_PERMITIR_PRODUCCION=1`.
      (`/api/cron/mensualidad`, 16:00 UTC = 10:00 CDMX), después del corte.
    - Aun vencido, **la puerta, la caja, la nómina y los reportes siguen
      funcionando**. Solo deja de mostrarse al público y de recibir reservas
-     nuevas.
+     nuevas **del público** (clientes y sin cuenta). Los RPs del antro sí
+     pueden seguir apartando, y el boleto de una reserva previa sigue
+     abriendo (sin la dirección del antro). Tabla completa por estado en
+     `docs/stripe-prueba-dev.md`.
 6. Los antros que ya existen **sin** suscripción no se tocan: la tarea
    diaria solo despublica a los que tienen suscripción vencida o cancelada.
+   Ojo: si el dueño de un antro de cortesía empieza a pagar y ese primer pago
+   nunca se completa (`incomplete_expired`), queda «Cancelada» y la tarea
+   diaria **sí** lo despublica (hallazgo 1 de `docs/stripe-prueba-dev.md`).
 7. Con el cobro real (`config_plataforma.mensualidad_real = true`) el dueño ya
    no puede activar la suscripción con el botón ni mandarla al crear un antro:
    solo el webhook y el admin la cambian (resuelve la deuda 2 de `CLAUDE.md`).
@@ -121,7 +127,10 @@ arriba a la derecha del Dashboard de Stripe.
 1. **Settings** (engrane) → **Billing** → **Customer portal**.
 2. Activa: **Update payment methods**, **View invoice history** y **Cancel
    subscriptions** → **Cancel at end of billing period** (pregunta 8).
-3. Deja **desactivado** «Switch plans» mientras haya un solo plan.
+3. Deja **desactivado** «Switch plans» mientras haya un solo plan. Si lo
+   activas, **cada** precio que ofrezca el portal tiene que estar dado de alta
+   como plan en `/admin/mensualidad`: con un precio que no es de ningún plan,
+   la app sigue mostrando el plan anterior.
 4. **Business information**: nombre y enlaces a `/terminos` y `/privacidad`
    (cuando estén publicados).
 5. **Save**.
@@ -133,7 +142,10 @@ arriba a la derecha del Dashboard de Stripe.
 2. Reintentos: los que Stripe recomienda (Smart Retries).
 3. **If all retries fail**: **Mark the subscription as unpaid** (no
    «cancel»). La app trata `unpaid` como gracia o vencida, y si el dueño paga
-   después, vuelve sola a «activa».
+   después, vuelve sola a «activa». Para pagar, el dueño usa el enlace
+   «Factura» de su historial o «Administrar pago»: «Suscribirme» le responde
+   que ya tiene una suscripción, porque la `unpaid` sigue viva en Stripe.
+   Con «cancel», la cancelación corta la gracia al siguiente 08:00.
 
 ## Pasos en Vercel
 
@@ -167,11 +179,14 @@ arriba a la derecha del Dashboard de Stripe.
 
 ## Probar en modo de prueba (con tus llaves)
 
-Con la **CLI de Stripe** (`stripe login` una vez) y la app local contra dev:
+Con la **CLI de Stripe** (`stripe login` una vez) y la app local contra dev
+**con la bandera encendida** (el servidor de 3001 la tiene apagada y el
+webhook responde 404):
 
 ```bash
-stripe listen --forward-to localhost:3001/api/stripe/webhook
-# Copia el whsec_… que imprime y úsalo como STRIPE_WEBHOOK_SECRET del servidor local.
+stripe listen --forward-to localhost:3043/api/stripe/webhook
+# Copia el whsec_… que imprime y úsalo como STRIPE_WEBHOOK_SECRET del servidor local:
+# STRIPE_SECRET_KEY=sk_test_… STRIPE_WEBHOOK_SECRET=whsec_… CRON_SECRET=<inventado> # NEXT_DIST_DIR=.next-stripe PUERTO=3043 NEXT_PUBLIC_MENSUALIDAD=1 node scripts/dev/servidor-dev.mjs
 ```
 
 1. Inicia como dueño, ve a `/dueno/mensualidad` → **Suscribirme** → en
@@ -182,17 +197,26 @@ stripe listen --forward-to localhost:3001/api/stripe/webhook
 2. Cobro fallido: en el portal de Stripe cambia la tarjeta por
    `4000 0000 0000 0341` (se acepta al guardarla y falla al cobrar). Luego, en
    el Dashboard de Stripe, abre la suscripción → **Actions → Update
-   subscription → reset billing cycle**, o usa un *test clock*.
+   subscription → reset billing cycle**, o usa un *test clock*. Un cliente
+   solo entra a un reloj al crearlo y el checkout crea el suyo: para usar
+   un reloj, crea el cliente en él y ponlo en `suscripciones` del antro de
+   prueba en dev antes de pagar (pasos en `docs/stripe-prueba-dev.md`).
    **Qué deberías ver**: «En periodo de gracia» con la fecha y hora en que
    termina (08:00).
 3. La tarea diaria a mano:
    `curl -H "Authorization: Bearer <CRON_SECRET>" https://<url>/api/cron/mensualidad`
 4. Cancelar desde el portal → «Se cancela el <fecha>» y, al llegar la fecha,
-   «Cancelada».
+   «Cancelada». Revisa en `stripe listen` que el evento traiga
+   `cancel_at_period_end: true`: si solo trae `cancel_at`, la app no marca
+   la cancelación y el dueño sigue viendo «Próximo cobro».
 
 Pruebas automáticas sin llaves (firma, idempotencia, desorden, gracia, tarea
-diaria, RLS, candado): `node scripts/dev/probar-mensualidad.mjs` (56/56;
-instrucciones en su cabecera).
+diaria, RLS, candado): `node scripts/dev/probar-mensualidad.mjs` (60/60 el
+27/11/2026; instrucciones en su cabecera). Recorridos completos (reintentos
+y acceso por estado, alta de punta a punta, paso de plan, cancelación al
+final del periodo): `node scripts/dev/probar-mensualidad-recorridos.mjs`
+(80/80). Qué cubre cada una y qué falta probar con llaves reales:
+`docs/stripe-prueba-dev.md`.
 
 ## Pasar a producción (cuando todo funcione en prueba)
 
