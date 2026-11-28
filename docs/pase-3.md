@@ -10,9 +10,9 @@
 
 1. **El pase 2 debe estar completo.**
    - El 80 y el 81 (inventario y propinas) además requieren la fase 2 base (P11 del pase 2, opcional). Si el pase 2 se hizo sin la fase 2, **se saltan** el 80 y el 81 (y su bandera no se enciende).
-2. **El `02` (IP real en los topes) es un arreglo de seguridad del pase 2.**
-   - Si el pase 2 sale antes que este, el `02` debe ir **con el pase 2**, justo después del 66.
+2. **El `02` (IP real en los topes) va con el pase 2**, como paso **Q10b** de `docs/pase-2.md`: justo después del 66, con su verificación y su rollback.
    - Sin él, el tope de reservas sin cuenta por IP se esquiva con un encabezado inventado. Se confirmó en dev: 21 de 21 pasaron.
+   - En este pase, el T3 se salta si ya se aplicó como Q10b; para saberlo, correr la consulta de verificación del Q10b.
 3. **Diagnóstico obligatorio del `01`** (solo conteos): `node scripts/db/conteos-prod.mjs`, consulta `largos_texto`.
    - Las cuatro cifras deben ser 0. El 27/11 dieron 0, 0, 0 y 0.
    - Si alguna no es 0, el `01` falla entero sin dejar nada: hay que acortar esas filas antes.
@@ -29,7 +29,7 @@ rollback.
 |---|---|---|---|
 | T1 | `00-funciones-club.sql` | Banderas por antro y por grupo (`club_funciones`, `grupo_funciones`, bitácora), todas apagadas | Base de todo lo demás |
 | T2 | `01-largos-texto.sql` | Nombre ≤ 120 y teléfono ≤ 30 en `profiles` y `reservations` (validados) | Diagnóstico antes (arriba) |
-| T3 | `02-ip-cliente.sql` | `ip_cliente()` y la IP real en los topes de reservas sin cuenta | Si no fue con el pase 2 |
+| T3 | `02-ip-cliente.sql` | `ip_cliente()` y la IP real en los topes de reservas sin cuenta | **Normalmente ya fue con el pase 2 (Q10b)**: entonces se salta |
 | T4 | `10-pos-ventas.sql` | Ventas del POS: mapeos, importaciones, ventas, conciliación | |
 | T5 | `20-escaner-respaldo.sql` | Código corto del boleto y entradas sin señal | Índice parcial en `caja_eventos` |
 | T6 | `30-antifraude-rps.sql` | Reglas, alertas y revisión de RPs | |
@@ -44,6 +44,35 @@ rollback.
 
 Después de cada SQL: verificar por introspección (catálogo de producción en
 solo lectura) que quedó, como en los pases 1 y 2.
+
+### Dependencias con lo que aún no está en producción
+
+Revisado el 27/11 de dos formas:
+
+- **Contra el catálogo de producción de hoy**, en solo lectura: qué objetos usa cada archivo que no existen en producción ni los crea un archivo anterior del pase 3.
+- **En dev**, en una transacción que se deshizo: dev llevado al esquema de producción, sin el pase 2, y cada archivo aplicado en orden. Después, lo mismo con el pase 2 completo, pero sin la fase 2.
+
+Ningún archivo depende de algo que **no** esté en el pase 2. Pero varios
+necesitan pasos del pase 2, que hoy no está en producción:
+
+| Archivo | Necesita del pase 2 | Sin ese paso |
+|---|---|---|
+| `00`, `01` | Nada: solo el pase 1, que ya está en producción | Se aplican |
+| `02` | Q9 (`72`) y Q10 (`66`): la tabla `reserva_intentos` y el trigger | **Se aplica, pero no sirve**: la función queda sin trigger y su rollback dejaría la versión del 66. Por eso va como **Q10b** |
+| `10`, `20`, `30` | Nada: solo el pase 1 y el `00` | Se aplican |
+| `40` | **Q2** (`61-sesion-sin-acceso`: `sesion_sin_acceso()`) | **Falla** (no existe la función) y no deja nada |
+| `50` | El `02` (`ip_cliente()`); nada más del pase 2 | Se aplica |
+| `60` | El `40`, y por él el **Q2** | **Falla** y no deja nada |
+| `70` | **Q19** (`30-cierre-noche`: `reporte_cierre_noche()`) | **Se aplica, pero no sirve**: el reporte falla al pedirlo, porque esa llamada se revisa al usarse, no al crearse |
+| `80`, `81` | **P11** (fase 2 base: `productos`, `producto_movimientos`, `caja_pagos.propina_centavos`) | **Fallan** y no dejan nada. Con el pase 2 sin la fase 2, se saltan |
+| T13 (código) | El merge del pase 2 (`post-junta-3` sale de `post-junta-2`) y su SQL completo | No se hace: el código llama funciones del pase 2 |
+
+Con el pase 2 completo sin la fase 2, se aplican del `00` al `70`; solo
+fallan el `80` y el `81`, como se espera. Con el pase 2 completo, se aplican
+los 12 (ensayo de abajo).
+
+**Regla:** el pase 3 empieza solo con el pase 2 **completo** y verificado,
+incluido el Q10b.
 
 ### Merge (T13)
 
@@ -62,7 +91,7 @@ En orden inverso (T12 → T1), cada uno con su `-rollback.sql`. Cuidados:
 
 - **81 (propinas):** su rollback **borra registros de dinero** (propinas y repartos). El archivo empieza con una consulta de respaldo; exportar antes.
 - **40 (lista negra):** borra bloqueos y su historial. Respaldar antes si ya se usó (`docs/respaldos.md`).
-- **50:** su rollback no toca `ip_cliente`. El del `02` va después y regresa la función del 66 exacta.
+- **50:** su rollback no toca `ip_cliente`. Si el `02` fue con el pase 2 (Q10b), **no** se revierte con el pase 3: es parte del pase 2. Si fue aquí (T3), su rollback va después del 50 y regresa la función del 66 exacta.
 - **00:** va al final, porque todos los demás usan `funcion_activa`.
 - **El código:** Instant Rollback de Vercel. El SQL es compatible con el código anterior, así que se puede revertir el código sin revertir el SQL.
 
