@@ -31,7 +31,7 @@ mkdirSync(DIR, { recursive: true });
 const PASOS = [
   ["P3-00", "post-junta-3/00-funciones-club"],
   ["P3-01", "post-junta-3/01-largos-texto"],
-  ["P3-02", "post-junta-3/02-ip-cliente"],
+  // El 02 (ip_cliente) ya no va aquí: es el Q10b del pase 2 (scripts/dev/ensayo-pase2-paso-a-paso.mjs).
   ["P3-10", "post-junta-3/10-pos-ventas"],
   ["P3-20", "post-junta-3/20-escaner-respaldo"],
   ["P3-30", "post-junta-3/30-antifraude-rps"],

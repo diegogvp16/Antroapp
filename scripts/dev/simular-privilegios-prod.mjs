@@ -32,7 +32,8 @@ const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const fuenteEnsayo = readFileSync(path.join(RAIZ, "scripts/dev/ensayo-pase2.mjs"), "utf8");
 const fuentePase3 = readFileSync(path.join(RAIZ, "scripts/dev/ensayo-pase3-paso-a-paso.mjs"), "utf8");
 const PASOS = [
-  ...[...fuenteEnsayo.matchAll(/"((?:post-junta|post-junta-2|fase2)\/[^"]+)"/g)].map((m) => m[1]),
+  // (incluye el Q10b, post-junta-3/02, que va con el pase 2)
+  ...[...fuenteEnsayo.matchAll(/"((?:post-junta|post-junta-2|post-junta-3|fase2)\/[^"]+)"/g)].map((m) => m[1]),
   ...[...fuentePase3.matchAll(/"(post-junta-3\/[^"]+)"/g)].map((m) => m[1]),
 ];
 const leer = (p) => readFileSync(path.join(RAIZ, "sql", p + ".sql"), "utf8").replace(/\r/g, "").replace(/^\s*(begin|commit);\s*$/gim, "");

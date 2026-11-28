@@ -68,8 +68,8 @@ necesitan pasos del pase 2, que hoy no está en producción:
 | T13 (código) | El merge del pase 2 (`post-junta-3` sale de `post-junta-2`) y su SQL completo | No se hace: el código llama funciones del pase 2 |
 
 Con el pase 2 completo sin la fase 2, se aplican del `00` al `70`; solo
-fallan el `80` y el `81`, como se espera. Con el pase 2 completo, se aplican
-los 12 (ensayo de abajo).
+fallan el `80` y el `81`, como se espera. Con el pase 2 completo (el `02`
+ya dentro, como Q10b), se aplican los 11 restantes (ensayo de abajo).
 
 **Regla:** el pase 3 empieza solo con el pase 2 **completo** y verificado,
 incluido el Q10b.
@@ -127,15 +127,20 @@ la foto del final del ensayo del pase 2. Después, para cada paso:
 - corre el rollback y revisa que el esquema quede idéntico al de antes;
 - vuelve a aplicar y revisa que quede idéntico al primer aplicar.
 
-**Resultado del ensayo (27/11):**
+El `02` ya **no** está en este ensayo: es el Q10b del pase 2 y se ensaya con
+`scripts/dev/ensayo-pase2-paso-a-paso.mjs` (39/39, con su verificación por
+catálogo).
 
-- **12/12 pasos** con rollback exacto y reaplicación igual, en 2.8 min.
-- Revertir toda la cadena dejó dev **idéntico** al final del ensayo del pase 2.
-- En dev, por script, cada archivo tarda de 1.3 a 1.5 s.
+**Resultado del ensayo (27/11, sin el 02):**
+
+- **11/11 pasos** con rollback exacto y reaplicación igual, en 2.5 min.
+- Revertir toda la cadena dejó dev **idéntico** al final del ensayo del pase 2, que ya incluye el Q10b.
+- En dev, por script, cada archivo tarda de 1.3 a 1.4 s.
+- Una corrida anterior, con el 02 dentro del pase 3, dio 12/12.
 
 **Privilegios de producción:** `node scripts/dev/simular-privilegios-prod.mjs`
 copia en dev los privilegios por defecto de producción y corre la cadena del
-pase 2 + pase 3 (50 pasos, 324 objetos). Resultado: **0** funciones o tablas
+pase 2 (con el Q10b) + pase 3 (50 pasos, 324 objetos). Resultado: **0** funciones o tablas
 quedarían abiertas en producción sin haberse probado en dev. Un control
 confirma que la simulación sí reproduce producción.
 
@@ -144,7 +149,7 @@ confirma que la simulación sí reproduce producción.
 | Bloque | Pegadas | Estimado |
 |---|---|---|
 | Diagnóstico (conteos) y respaldo visible | — | 10 min |
-| T1–T12 (sin el 02 si ya fue con el pase 2) | 11–12 | 25 min |
+| T1–T12 (sin el 02, que va con el pase 2) | 11 | 25 min |
 | T13: merge y deploy | — | 10 min |
 | T14: humo, `/api/salud` y recorrido | — | 30 min |
 | **Total** | | **≈ 1 h 15 min** |
@@ -152,7 +157,8 @@ confirma que la simulación sí reproduce producción.
 ## Pruebas en dev (27/11, con todo integrado)
 
 ```bash
-node scripts/dev/ensayo-pase3-paso-a-paso.mjs      # 12/12, base = final del pase 2
+node scripts/dev/ensayo-pase2-paso-a-paso.mjs      # 39/39 con el Q10b (02) y su verificación
+node scripts/dev/ensayo-pase3-paso-a-paso.mjs      # 11/11, base = final del pase 2 (con el Q10b)
 node scripts/dev/simular-privilegios-prod.mjs      # 0 abiertos sin probar (pase 2 + 3)
 PLAYWRIGHT_DESDE=<carpeta> node scripts/dev/e2e/correr.mjs --base=http://localhost:3031   # 112/112, 19/19, dos veces seguidas (servidor con NEXT_PUBLIC_FASE2=1)
 node scripts/dev/auditoria-rls.mjs --estricto      # C1: 14,116/14,116 (dos corridas)

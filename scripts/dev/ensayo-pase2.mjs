@@ -47,6 +47,7 @@ const PASOS = [
     "post-junta-2/68-un-antro-por-dueno-candado", // después del 62
     "post-junta-2/72-reservas-antiabuso",
     "post-junta-2/66-reservas-antiabuso-concurrencia", // después del 72
+    "post-junta-3/02-ip-cliente", // Q10b: IP real en los topes del 72/66, justo después del 66
     "post-junta-2/10-alta-club-reglas",
     "post-junta-2/11-clonar-club",
     "post-junta-2/12-config-grupo",

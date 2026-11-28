@@ -12,6 +12,9 @@
 // 3. Q23 usa la versión de PRODUCCIÓN de los índices
 //    (70-indices-prod.sql, CONCURRENTLY): una sentencia a la vez, fuera de
 //    transacción, igual que se pegaría en el SQL Editor; su rollback también.
+// 4. Q10b (sql/post-junta-3/02-ip-cliente.sql) va justo después del Q10 y
+//    además se verifica por catálogo (la consulta de docs/pase-2.md, «Q10b»):
+//    aplicado, revertido (huella del 66) y reaplicado, y otra vez al final.
 // Al final dev queda con todo el pase 2 aplicado (como antes de correrlo).
 // Ojo: revertir borra los datos de las tablas nuevas de dev.
 import { spawnSync } from "node:child_process";
@@ -52,6 +55,7 @@ const PASOS = [
   ["Q8", "post-junta-2/68-un-antro-por-dueno-candado"],
   ["Q9", "post-junta-2/72-reservas-antiabuso"],
   ["Q10", "post-junta-2/66-reservas-antiabuso-concurrencia"],
+  ["Q10b", "post-junta-3/02-ip-cliente"], // IP real en los topes del 72/66 (verificación abajo)
   ["Q11", "post-junta-2/10-alta-club-reglas"],
   ["Q12", "post-junta-2/11-clonar-club"],
   ["Q13", "post-junta-2/12-config-grupo"],
@@ -101,6 +105,52 @@ async function aplicar(archivo) {
   return seg(t0);
 }
 
+// Verificación por catálogo de pasos puntuales (la misma consulta que
+// docs/pase-2.md pide correr en producción). Cada una devuelve una lista de
+// fallas (vacía = bien) para el estado "aplicado" o "revertido".
+const VERIFICAR_Q10B = `
+  select p.proname as funcion,
+         has_function_privilege('anon', p.oid, 'EXECUTE') as anon,
+         has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated,
+         position('public.ip_cliente()' in pg_get_functiondef(p.oid)) > 0 as usa_ip_cliente,
+         (select count(*)::int from pg_trigger t
+           where t.tgfoid = p.oid and t.tgrelid = 'public.reservations'::regclass and not t.tgisinternal) as triggers_en_reservations,
+         md5(pg_get_functiondef(p.oid)) as huella
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.proname in ('ip_cliente', 'reservations_antiabuso_anon')
+   order by 1`;
+// Huellas de docs/pase-2.md («Q10b»).
+const HUELLA = { ip_cliente: "336e7ed649f30e72f38c40ca18d71408", antiabusoCon02: "00ffb63bcff2c6b029ebe90938268614", antiabuso66: "9aba03eb4e1be96e8f3c9c548ec47fe3" };
+const VERIFICAR = {
+  async Q10b(estado) {
+    const db = await conectarDevEscritura();
+    let filas;
+    try { filas = await db.q(VERIFICAR_Q10B); } finally { await db.fin(); }
+    const f = Object.fromEntries(filas.map((x) => [x.funcion, x]));
+    const fallas = [];
+    const anti = f.reservations_antiabuso_anon;
+    if (!anti) return ["no existe reservations_antiabuso_anon"];
+    if (anti.anon || anti.authenticated) fallas.push("anon o authenticated ejecutan reservations_antiabuso_anon");
+    if (anti.triggers_en_reservations !== 1) fallas.push(`reservations_antiabuso_anon con ${anti.triggers_en_reservations} triggers (debe ser 1)`);
+    if (estado === "aplicado") {
+      if (!f.ip_cliente) fallas.push("no existe ip_cliente");
+      else {
+        if (f.ip_cliente.anon || f.ip_cliente.authenticated) fallas.push("anon o authenticated ejecutan ip_cliente");
+        if (f.ip_cliente.huella !== HUELLA.ip_cliente) fallas.push(`huella de ip_cliente ${f.ip_cliente.huella}`);
+      }
+      if (!anti.usa_ip_cliente) fallas.push("reservations_antiabuso_anon no usa ip_cliente");
+      if (anti.huella !== HUELLA.antiabusoCon02) fallas.push(`huella de reservations_antiabuso_anon ${anti.huella}`);
+    } else {
+      if (f.ip_cliente) fallas.push("ip_cliente sigue existiendo");
+      if (anti.usa_ip_cliente) fallas.push("reservations_antiabuso_anon sigue usando ip_cliente");
+      if (anti.huella !== HUELLA.antiabuso66) fallas.push(`huella de reservations_antiabuso_anon ${anti.huella} (debe ser la del 66)`);
+    }
+    return fallas;
+  },
+};
+
 const resultados = [];
 const tInicio = performance.now();
 try {
@@ -137,7 +187,17 @@ try {
       const final = foto(clave + "-2");
       r.reaplicaIgual = igual(despues, final);
       if (!r.reaplicaIgual) r.difReaplicar = dif(despues, final);
-      r.ok = r.cambia && r.rollbackExacto && r.reaplicaIgual;
+      if (VERIFICAR[clave]) {
+        // Se repite el ciclo para verificar cada estado por catálogo.
+        r.verificacion = [];
+        r.verificacion.push(...(await VERIFICAR[clave]("aplicado")).map((x) => "aplicado: " + x));
+        await aplicar(archivo + "-rollback");
+        r.verificacion.push(...(await VERIFICAR[clave]("revertido")).map((x) => "revertido: " + x));
+        await aplicar(archivo);
+        r.verificacion.push(...(await VERIFICAR[clave]("aplicado")).map((x) => "reaplicado: " + x));
+        if (!igual(final, foto(clave + "-3"))) r.verificacion.push("el esquema no quedó igual tras la verificación");
+      }
+      r.ok = r.cambia && r.rollbackExacto && r.reaplicaIgual && !(r.verificacion?.length);
       antes = final;
     } catch (e) {
       r.error = e.message.slice(0, 300);
@@ -147,7 +207,14 @@ try {
     }
     resultados.push(r);
     console.log(`${r.ok ? "OK   " : "REVISAR"} ${clave.padEnd(5)} ${archivo.padEnd(50)} aplicar ${r.aplicar.toFixed(1)} s · rollback ${r.rollback.toFixed(1)} s ${r.rollbackExacto ? "exacto" : "NO EXACTO"} · reaplicar ${r.reaplicaIgual ? "igual" : "DISTINTO"}${r.cambia ? "" : " · NO CAMBIÓ NADA"}`);
+    if (r.verificacion) console.log(`        verificación por catálogo: ${r.verificacion.length ? r.verificacion.join("; ") : "aplicado, revertido y reaplicado bien (huellas de docs/pase-2.md)"}`);
     for (const l of [...(r.difRollback ?? []), ...(r.difReaplicar ?? [])]) console.log("        " + l);
+  }
+  // Q10b al final: nada de lo que va después del Q10b lo cambia.
+  if (!SOLO || SOLO.includes("Q10b")) {
+    const fallas = resultados.length === PASOS.length || SOLO ? await VERIFICAR.Q10b("aplicado") : ["el ensayo no llegó al final"];
+    console.log(`\nQ10b al final del pase 2: ${fallas.length ? "FALLA " + fallas.join("; ") : "intacto (mismas huellas)"}`);
+    if (fallas.length) process.exitCode = 1;
   }
   // Q22 (40) se probó con el 41 ya revertido; el estado final es el de siempre.
 } finally {
@@ -157,4 +224,4 @@ const ok = resultados.filter((r) => r.ok).length;
 const total = SOLO ? SOLO.length : PASOS.length;
 console.log(`\nResultado: ${ok}/${total} pasos con rollback exacto y reaplicación igual. Tiempo total del ensayo: ${(seg(tInicio) / 60).toFixed(1)} min.`);
 console.log(`Suma de las primeras aplicaciones (dev, por script): ${resultados.reduce((s, r) => s + (r.aplicar ?? 0), 0).toFixed(1)} s. Detalle: backups/ensayo-pase2-paso-a-paso/resultados.json`);
-process.exit(ok === total ? 0 : 1);
+process.exit(ok === total && !process.exitCode ? 0 : 1);

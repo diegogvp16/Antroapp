@@ -129,6 +129,10 @@ Resultados:
 - el resto del pase 2 se aplica sin cambiarlo;
 - cada paso tardó unos 130 ms.
 
+También está en el ensayo paso a paso del repo
+(`scripts/dev/ensayo-pase2-paso-a-paso.mjs`, que corre la misma
+verificación): 39/39 (abajo).
+
 Con los privilegios por defecto de producción, la simulación
 (`simular-privilegios-prod.mjs`, que incluye el 02) no deja nada abierto. La
 prueba de comportamiento por el gateway real es
@@ -203,15 +207,25 @@ esquema de producción. Antes de empezar, compara contra el catálogo de
 producción en solo lectura: solo difieren GRANT a `service_role`, que vienen
 de los privilegios por defecto de cada proyecto.
 
-Para cada uno de los 38 pasos de arriba, en orden:
+Para cada uno de los 39 pasos de arriba (Q10b incluido), en orden:
 - aplica el paso;
 - corre su rollback y revisa que el esquema quede **idéntico** al de antes del paso;
 - lo vuelve a aplicar y revisa que quede **idéntico** al primer aplicar.
 
 Q23 se probó con la versión de producción (`CONCURRENTLY`, una sentencia a la vez, sin transacción).
 
-El Q10b (`post-junta-3/02`) no está en ese script: se agregó después y se
-ensayó aparte, en su lugar (ver «Q10b» arriba).
+**Q10b**, además, se revisa con la consulta de verificación de arriba, comparada con sus huellas:
+- aplicado;
+- revertido, que debe dar la huella del 66;
+- reaplicado;
+- y otra vez al final del pase 2.
+
+**Corrida con el Q10b (27/11): 39/39** en 8.8 min (51.5 s sumando las
+primeras aplicaciones). La base revertida solo difiere de producción en GRANT
+a `service_role`. El Q10b pasó su verificación en los tres estados y quedó
+intacto al final.
+
+**Corrida anterior (sin el Q10b):**
 
 - **Resultado: 38/38.**
   - En la primera corrida, Q1 (`60`) dejaba de más un GRANT a `service_role` en `personal_cambiar_estado` después del rollback.
