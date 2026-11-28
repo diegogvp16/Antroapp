@@ -71,7 +71,11 @@ async function inflar(datos: Uint8Array, max = MAX_DESCOMPRIMIDO): Promise<Uint8
   const trozos: Uint8Array[] = [];
   let total = 0;
   for (;;) {
-    const { done, value } = await lector.read();
+    // Datos comprimidos dañados: el navegador (o Node) lanza un error sin
+    // mensaje útil (en Node, vacío); aquí se vuelve uno claro.
+    const { done, value } = await lector.read().catch(() => {
+      throw new Error("El archivo de Excel está dañado (una parte no se pudo descomprimir): vuelve a exportarlo o usa CSV.");
+    });
     if (done) break;
     total += value.length;
     if (total > max) {

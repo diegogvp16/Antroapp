@@ -111,14 +111,25 @@ function puntaje(campo: CampoPos, encabezado: string): number {
 }
 
 /** Fila de encabezados: entre las primeras 15, la que más nombres
- *  reconoce; si ninguna reconoce 2 o más, la primera fila. */
+ *  reconoce; si ninguna reconoce 2 o más, la primera fila. Cada celda
+ *  cuenta para un solo dato (el de mejor puntaje): un título como
+ *  «Ventas por ticket, fecha y hora, mesa y producto» es UNA celda y no
+ *  le gana al encabezado de verdad. */
 export function elegirEncabezado(cruda: TablaCruda): TablaPos {
   const primeras = cruda.filas.slice(0, 15);
   let mejor = 0;
   let idx = 0;
   primeras.forEach((f, i) => {
     const reconocidos = new Set<CampoPos>();
-    for (const celda of f.celdas) for (const c of CAMPOS_POS) if (puntaje(c.campo, celda) >= 50) reconocidos.add(c.campo);
+    for (const celda of f.celdas) {
+      let campo: CampoPos | null = null;
+      let p = 0;
+      for (const c of CAMPOS_POS) {
+        const q = puntaje(c.campo, celda);
+        if (q > p) [campo, p] = [c.campo, q];
+      }
+      if (campo && p >= 50) reconocidos.add(campo);
+    }
     if (reconocidos.size > mejor) {
       mejor = reconocidos.size;
       idx = i;

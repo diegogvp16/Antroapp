@@ -36,7 +36,7 @@ export async function leerArchivoPos(bytes: Uint8Array, nombreArchivo: string): 
     if (!tabla.filas.length) return { ok: false, error: "El archivo solo trae encabezados, sin ventas." };
     return { ok: true, formato: adaptador.formato, tabla };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "No se pudo leer el archivo." };
+    return { ok: false, error: e instanceof Error && e.message ? e.message : "No se pudo leer el archivo." };
   }
 }
 
