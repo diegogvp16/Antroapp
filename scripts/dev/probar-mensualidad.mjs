@@ -231,7 +231,9 @@ try {
   await svc.from("config_plataforma").update({ valor: true }).eq("clave", "mensualidad_real");
   const candado = await dueno.c.from("clubs").update({ suscripcion_activa: false }).eq("id", club.id).select("id");
   revisar(!!candado.error && /mensualidad/.test(candado.error.message), "con cobro real, el dueño ya no la cambia a mano");
-  const ins = await dueno.c.from("clubs").insert({ nombre: `Mens Segundo ${suf}`, direccion: "Calle 3", horario: "Vie", dueno_id: dueno.id, suscripcion_activa: true }).select("id, suscripcion_activa").single();
+  // Un dueño SIN antro: desde sql/post-junta-2/68 un dueño que ya tiene uno no puede crear otro.
+  const duenoNuevo = await cuenta("dueno_nuevo", "dueno");
+  const ins = await duenoNuevo.c.from("clubs").insert({ nombre: `Mens Segundo ${suf}`, direccion: "Calle 3", horario: "Vie", dueno_id: duenoNuevo.id, suscripcion_activa: true }).select("id, suscripcion_activa").single();
   if (ins.data) clubs.push(ins.data.id);
   revisar(ins.data?.suscripcion_activa === false, "con cobro real, un antro nuevo del dueño nace sin suscripción aunque la mande");
   revisar(!(await admin.from("clubs").update({ suscripcion_activa: true }).eq("id", club.id)).error, "el admin sí la cambia");
