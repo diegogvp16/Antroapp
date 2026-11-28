@@ -13,9 +13,9 @@ de la cola de la noche 4 terminados en dev. Terminado quiere decir:
 
 | Qué | Hecho | Total | % |
 |---|---|---|---|
-| Pasos de esquema en **producción** (pase 1: 10 pasos + el arreglo del perfil) | 11 | 61 (11 + pase 2: 38 + pase 3: 12) | **18 %** |
-| Pase 2 (`post-junta-2`) en producción | 0 | 38 pasos + merge | 0 % (ensayado: 38/38) |
-| Pase 3 (`post-junta-3`) en producción | 0 | 12 pasos + merge | 0 % (ensayado: 12/12) |
+| Pasos de esquema en **producción** (pase 1: 10 pasos + el arreglo del perfil) | 11 | 61 (11 + pase 2: 39 con el Q10b + pase 3: 11) | **18 %** |
+| Pase 2 (`post-junta-2`) en producción | 0 | 39 pasos + merge | 0 % (ensayado: 39/39 con el Q10b, 27/11) |
+| Pase 3 (`post-junta-3`) en producción | 0 | 11 pasos + merge | 0 % (ensayado: 11/11; el 02 pasó al pase 2) |
 | Cola de la noche 4 terminada en dev | 10 | 10 bloques | **100 %** en dev |
 
 Lo que el 100 % en dev **no** incluye:
