@@ -8,7 +8,7 @@ Leyenda: ✔ hecho y verificado · ⚠ hecho con límites (ver nota) · ✘ no s
 
 | # | Bloque | Estado | Entregable | Nota |
 |---|---|---|---|---|
-| 1 | Prueba de carga (club grande) | ⏳ | `docs/prueba-carga.md`, script en `scripts/dev/` | |
+| 1 | Prueba de carga (club grande) | ✔ | `docs/prueba-carga.md`, `probar-carga-noche.mjs`, `sql/post-junta-4/10-indices-carga*.sql` | Base holgada; cuello en la caja (relee toda la noche cada 10 s) y 6 políticas por fila (propuesta con rollback, equivalencia 63/63, sin aplicar). Dev comprobado idéntico al de antes |
 | 2 | Recuperación ante desastres | ✔ | `docs/recuperacion.md`, `scripts/exportar-storage.mjs`, `scripts/dev/importar-storage.mjs` | Probado en dev (huellas OK, importación en buckets temporales). RTO ≈ 4 h; RPO base ≤ 24 h. Storage de producción **nunca exportado**: lo corre Diego |
 | 3 | Stripe en modo prueba (dev) | ⚠ | `docs/stripe-prueba-dev.md`, `probar-mensualidad-recorridos.mjs` | 80/80 nuevos + 60/60 existentes, con eventos firmados localmente (no hay CLI ni llaves de prueba en el equipo). Falta lo que solo se ve con Stripe real (Checkout/portal reales, calendario de Smart Retries, campo que manda el portal al cancelar). 7 hallazgos, ninguno arreglado |
 | 4 | Guía de teléfonos reales | ✔ | `docs/prueba-telefonos.md` | 27 pruebas con casilla Android/iPhone, en el Preview (base dev). Commit `212cec2` |
@@ -20,9 +20,7 @@ Leyenda: ✔ hecho y verificado · ⚠ hecho con límites (ver nota) · ✘ no s
 
 ## Siguiente paso exacto
 
-Esperar al agente del bloque 1 (los demás ya están). Al llegar: revisar, commit, y
-actualizar el renglón de carga en `docs/lanzamiento-checklist.md` (A1).
-Después: repetir el ensayo del pase 2 con otra semilla, revisar el diff completo
+Los 9 bloques están. Ahora: Después: repetir el ensayo del pase 2 con otra semilla, revisar el diff completo
 (secretos, código muerto), subir `post-junta-4` y reporte final.
 
 ## Bitácora
@@ -35,3 +33,4 @@ Después: repetir el ensayo del pase 2 con otra semilla, revisar el diff complet
 - 28/11 — Bloque 2 recibido; exportación repetida por el coordinador (7/7 huellas); commit.
 - 28/11 — Bloque 3 recibido y en commit (incluye arreglo de una prueba vieja de probar-mensualidad, 60/60).
 - 28/11 — Bloque 9 escrito (`1ca4439`); `docs/avance.md` con 39 + 11 pasos.
+- 28/11 — Bloque 1 recibido; dev comparado con la foto del final del pase 3: 0 líneas distintas. Commit y renglón A1 de la lista de lanzamiento.

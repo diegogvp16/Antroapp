@@ -35,7 +35,7 @@ decisiones de precio, IVA y factura.
 | ✘ | El `02` (IP real en los topes) **con** el pase 2, como Q10b | `docs/pase-2.md`, «Q10b». Sin él, el tope por IP se esquiva |
 | ⚠ | Pase 3 (banderas por antro): opcional para el piloto | `docs/pase-3.md`: ensayado 11/11. Todo nace apagado |
 | ✔ | Ensayos y rollbacks probados | Pase 2: 39/39; pase 3: 11/11; simulación de privilegios de producción: 0 abiertos |
-| ⚠ | Prueba de carga de un club grande (500 reservas, 60 mesas, 7 operando a la vez) | `docs/prueba-carga.md` (bloque 1 de la noche 5). Los índices que propone **no** están aplicados |
+| ⚠ | Prueba de carga de un club grande (500 reservas, 60 mesas, 7 operando a la vez) | `docs/prueba-carga.md`: la base aguanta con holgura (funciones p95 ≤ 175 ms, cuadre al centavo). Pendiente: la caja vuelve a bajar toda la noche cada 10 s (~330 MB/h por teléfono) y la propuesta de RLS (`sql/post-junta-4/10-indices-carga*.sql`, sin aplicar). Medido en dev con CPU compartido, no en teléfono real |
 
 ### A2. Teléfonos y operación en la noche
 
